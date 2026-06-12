@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Clair – Task & Project Tracker",
+  "version": "1.0.0",
+  "description": "A minimal personal workspace for managing projects and daily tasks.",
+  "permissions": ["storage", "tabs", "downloads"],
+  "action": {
+    "default_title": "Open Clair"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "assets/icon16.png",
+    "48": "assets/icon48.png",
+    "128": "assets/icon128.png"
+  }
+}
