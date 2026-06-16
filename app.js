@@ -247,12 +247,20 @@ const getTaskStage = (task) => {
   return 'ongoing';
 };
 
-const updateDeveloperDropdown = (projectId, selectId, currentValue) => {
+const updateDeveloperDropdown = (projectIdOrIds, selectId, currentValue) => {
   const select = document.getElementById(selectId);
   if (!select) return;
   let devs = state.developers;
-  if (projectId) {
-    devs = state.developers.filter(d => d.projectIds.includes(projectId));
+  if (projectIdOrIds) {
+    if (Array.isArray(projectIdOrIds)) {
+      if (projectIdOrIds.length > 0) {
+        devs = state.developers.filter(d => 
+          (d.projectIds || []).some(pid => projectIdOrIds.includes(pid))
+        );
+      }
+    } else {
+      devs = state.developers.filter(d => (d.projectIds || []).includes(projectIdOrIds));
+    }
   }
   select.innerHTML = `<option value="">— None —</option>` +
     devs.map(d => `<option value="${d.id}" ${currentValue === d.id ? 'selected' : ''}>${d.name}</option>`).join('');
@@ -1577,10 +1585,7 @@ const attachCardListeners = () => {
       }
       else if (action === 'remove-checklist-row') {
         // Save current values
-        document.querySelectorAll('.rp-cl-text').forEach(inp => {
-          const i = parseInt(inp.dataset.idx);
-          if (rpChecklistItems[i]) rpChecklistItems[i].text = inp.value;
-        });
+        syncChecklistItemsFromDOM();
         const idx = parseInt(btn.dataset.idx);
         rpChecklistItems.splice(idx, 1);
         renderChecklistEditor();
@@ -2938,11 +2943,17 @@ const renderReleasePoints = () => {
   if (q) {
     filtered = filtered.filter(r =>
       r.title.toLowerCase().includes(q) ||
-      (state.projects.find(p => p.id === r.projectId) || { name: '' }).name.toLowerCase().includes(q) ||
+      (r.projectIds || (r.projectId ? [r.projectId] : [])).some(pid => 
+        (state.projects.find(p => p.id === pid) || { name: '' }).name.toLowerCase().includes(q)
+      ) ||
       (r.versions || []).some(v => v.toLowerCase().includes(q))
     );
   }
-  if (state.releasePtFilters.project) filtered = filtered.filter(r => r.projectId === state.releasePtFilters.project);
+  if (state.releasePtFilters.project) {
+    filtered = filtered.filter(r => 
+      (r.projectIds || (r.projectId ? [r.projectId] : [])).includes(state.releasePtFilters.project)
+    );
+  }
   if (state.releasePtFilters.releaseType) filtered = filtered.filter(r => r.releaseType === state.releasePtFilters.releaseType);
   if (state.releasePtFilters.completion === 'completed') filtered = filtered.filter(r => r.isCompleted);
   else if (state.releasePtFilters.completion === 'incomplete') filtered = filtered.filter(r => !r.isCompleted);
@@ -2956,7 +2967,9 @@ const renderReleasePoints = () => {
 
   // Per-project breakdown for sidebar
   const projBreakdown = state.projects.map(p => {
-    const pts = rps.filter(r => r.projectId === p.id);
+    const pts = rps.filter(r => 
+      (r.projectIds || (r.projectId ? [r.projectId] : [])).includes(p.id)
+    );
     const done = pts.filter(r => r.isCompleted).length;
     return pts.length ? { name: p.name, total: pts.length, done } : null;
   }).filter(Boolean);
@@ -2978,46 +2991,46 @@ const renderReleasePoints = () => {
   return `
     ${hero}
 
-    <!-- Page Body: Sidebar + Main -->
-    <div class="rp-page-body">
-
-      <!-- Left Sidebar Summary -->
-      <aside class="rp-sidebar-panel">
-        <div class="rp-sidebar-section">
-          <div class="rp-sidebar-label">Status Breakdown</div>
-          <div class="rp-sidebar-stat-list">
-            <div class="rp-sidebar-stat-row">
-              <span class="rp-sidebar-dot green"></span>
-              <span>Completed</span>
-              <strong>${completed}</strong>
-            </div>
-            <div class="rp-sidebar-stat-row">
-              <span class="rp-sidebar-dot blue"></span>
-              <span>In Progress</span>
-              <strong>${inProgress}</strong>
-            </div>
-            <div class="rp-sidebar-stat-row">
-              <span class="rp-sidebar-dot amber"></span>
-              <span>Not Started</span>
-              <strong>${total - completed - inProgress}</strong>
-            </div>
-            <div class="rp-sidebar-stat-row">
-              <span class="rp-sidebar-dot orange"></span>
-              <span>Yet to Release</span>
-              <strong>${upcoming}</strong>
-            </div>
-            <div class="rp-sidebar-stat-row">
-              <span class="rp-sidebar-dot indigo"></span>
-              <span>Released</span>
-              <strong>${released}</strong>
-            </div>
+    <!-- Top Dashboard Row -->
+    <div class="rp-dashboard-row">
+      
+      <!-- Card 1: Status Breakdown -->
+      <div class="rp-dashboard-card">
+        <div class="rp-sidebar-label">Status Breakdown</div>
+        <div class="rp-dashboard-status-grid">
+          <div class="rp-dashboard-status-item">
+            <span class="rp-sidebar-dot green"></span>
+            <span class="rp-status-name">Completed</span>
+            <strong class="rp-status-count">${completed}</strong>
+          </div>
+          <div class="rp-dashboard-status-item">
+            <span class="rp-sidebar-dot blue"></span>
+            <span class="rp-status-name">In Progress</span>
+            <strong class="rp-status-count">${inProgress}</strong>
+          </div>
+          <div class="rp-dashboard-status-item">
+            <span class="rp-sidebar-dot amber"></span>
+            <span class="rp-status-name">Not Started</span>
+            <strong class="rp-status-count">${total - completed - inProgress}</strong>
+          </div>
+          <div class="rp-dashboard-status-item">
+            <span class="rp-sidebar-dot orange"></span>
+            <span class="rp-status-name">Yet to Release</span>
+            <strong class="rp-status-count">${upcoming}</strong>
+          </div>
+          <div class="rp-dashboard-status-item">
+            <span class="rp-sidebar-dot indigo"></span>
+            <span class="rp-status-name">Released</span>
+            <strong class="rp-status-count">${released}</strong>
           </div>
         </div>
+      </div>
 
-        ${projBreakdown.length ? `
-        <div class="rp-sidebar-section">
-          <div class="rp-sidebar-label">By Project</div>
-          ${projBreakdown.map(pb => `
+      <!-- Card 2: Projects Progress -->
+      <div class="rp-dashboard-card">
+        <div class="rp-sidebar-label">By Project</div>
+        <div class="rp-dashboard-projects-list">
+          ${projBreakdown.length ? projBreakdown.map(pb => `
             <div class="rp-sidebar-proj-row">
               <div class="rp-sidebar-proj-name">${pb.name}</div>
               <div class="rp-sidebar-proj-bar-wrap">
@@ -3027,80 +3040,81 @@ const renderReleasePoints = () => {
                 <span class="rp-sidebar-proj-count">${pb.done}/${pb.total}</span>
               </div>
             </div>
-          `).join('')}
+          `).join('') : '<div style="color:var(--text-muted);font-size:12.5px;font-style:italic;text-align:center;padding:12px 0;">No active projects</div>'}
         </div>
-        ` : ''}
-
-        ${recentRps.length ? `
-        <div class="rp-sidebar-section">
-          <div class="rp-sidebar-label">Recently Updated</div>
-          ${recentRps.map(rp => {
-    const items = rp.checklistItems || [];
-    const done = items.filter(i => i.done).length;
-    const pct = items.length === 0 ? 0 : Math.round(done / items.length * 100);
-    return `
-            <div class="rp-sidebar-recent-row">
-              <div class="rp-sidebar-recent-title">${rp.title}</div>
-              <div class="rp-sidebar-recent-meta">${pct}% · ${timeAgo(rp.updatedAt || rp.createdAt)}</div>
-            </div>`;
-  }).join('')}
-        </div>
-        ` : ''}
-      </aside>
-
-      <!-- Main Content -->
-      <div class="rp-main-content">
-
-        <!-- Filters Bar -->
-        <div class="filters-bar" style="margin-bottom:16px;">
-          <div class="page-search-wrap">
-            <svg class="page-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-            <input type="text" class="page-search-input" id="releasePtSearchInput" placeholder="Search release points…" value="${state.releasePtSearch || ''}" />
-            ${state.releasePtSearch ? `<button class="page-search-clear" id="clearReleasePtSearch">✕</button>` : ''}
-          </div>
-          <select class="filter-select" data-rptfilter="project">
-            <option value="">All Projects</option>
-            ${projectOptions}
-          </select>
-          <select class="filter-select" data-rptfilter="releaseType">
-            <option value="">All Types</option>
-            <option value="upcoming" ${state.releasePtFilters.releaseType === 'upcoming' ? 'selected' : ''}>⏳ Upcoming</option>
-            <option value="released" ${state.releasePtFilters.releaseType === 'released' ? 'selected' : ''}>✓ Released</option>
-          </select>
-          <select class="filter-select" data-rptfilter="completion">
-            <option value="">All Statuses</option>
-            <option value="completed" ${state.releasePtFilters.completion === 'completed' ? 'selected' : ''}>✅ Completed</option>
-            <option value="incomplete" ${state.releasePtFilters.completion === 'incomplete' ? 'selected' : ''}>⏳ Incomplete</option>
-          </select>
-          ${(state.releasePtFilters.project || state.releasePtFilters.releaseType || state.releasePtFilters.completion) ? `
-            <button class="btn-ghost" id="clearReleasePtFilters" style="font-size:12px;padding:6px 10px;">✕ Clear</button>
-          ` : ''}
-          <span class="section-count" style="margin-left:auto;">${filtered.length} item${filtered.length !== 1 ? 's' : ''}</span>
-        </div>
-
-        ${filtered.length === 0 ? `
-          <div class="rp-empty-page">
-            <div class="rp-empty-icon-wrap">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M9 11l3 3L22 4"/>
-                <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
-              </svg>
-            </div>
-            <h3>${q || state.releasePtFilters.project ? 'No release points match' : 'No release points yet'}</h3>
-            <p>${q || state.releasePtFilters.project ? 'Try adjusting your search or filters.' : 'Click "Add Release Point" beside the Add Project button to create your first release checklist.'}</p>
-            ${!q && !state.releasePtFilters.project ? `
-              <button class="btn-accent" id="emptyAddReleasePtBtn" style="margin-top:16px;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;"><path d="M12 5v14M5 12h14"/></svg>
-                Add Release Point
-              </button>
-            ` : ''}
-          </div>
-        ` : `
-          <div class="rp-card-grid">
-            ${filtered.map(rp => renderReleasePtCard(rp, q)).join('')}
-          </div>
-        `}
       </div>
+
+      <!-- Card 3: Recently Updated -->
+      <div class="rp-dashboard-card">
+        <div class="rp-sidebar-label">Recently Updated</div>
+        <div class="rp-dashboard-recent-list">
+          ${recentRps.length ? recentRps.map(rp => {
+            const items = rp.checklistItems || [];
+            const done = items.filter(i => i.done).length;
+            const pct = items.length === 0 ? 0 : Math.round(done / items.length * 100);
+            return `
+              <div class="rp-sidebar-recent-row">
+                <div class="rp-sidebar-recent-title">${rp.title}</div>
+                <div class="rp-sidebar-recent-meta">${pct}% completed · ${timeAgo(rp.updatedAt || rp.createdAt)}</div>
+              </div>`;
+          }).join('') : '<div style="color:var(--text-muted);font-size:12.5px;font-style:italic;text-align:center;padding:12px 0;">No updates yet</div>'}
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Filters & Content -->
+    <div class="rp-main-content">
+
+      <!-- Filters Bar -->
+      <div class="filters-bar" style="margin-bottom:16px;">
+        <div class="page-search-wrap">
+          <svg class="page-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          <input type="text" class="page-search-input" id="releasePtSearchInput" placeholder="Search release points…" value="${state.releasePtSearch || ''}" />
+          ${state.releasePtSearch ? `<button class="page-search-clear" id="clearReleasePtSearch">✕</button>` : ''}
+        </div>
+        <select class="filter-select" data-rptfilter="project">
+          <option value="">All Projects</option>
+          ${projectOptions}
+        </select>
+        <select class="filter-select" data-rptfilter="releaseType">
+          <option value="">All Types</option>
+          <option value="upcoming" ${state.releasePtFilters.releaseType === 'upcoming' ? 'selected' : ''}>⏳ Upcoming</option>
+          <option value="released" ${state.releasePtFilters.releaseType === 'released' ? 'selected' : ''}>✓ Released</option>
+        </select>
+        <select class="filter-select" data-rptfilter="completion">
+          <option value="">All Statuses</option>
+          <option value="completed" ${state.releasePtFilters.completion === 'completed' ? 'selected' : ''}>✅ Completed</option>
+          <option value="incomplete" ${state.releasePtFilters.completion === 'incomplete' ? 'selected' : ''}>⏳ Incomplete</option>
+        </select>
+        ${(state.releasePtFilters.project || state.releasePtFilters.releaseType || state.releasePtFilters.completion) ? `
+          <button class="btn-ghost" id="clearReleasePtFilters" style="font-size:12px;padding:6px 10px;">✕ Clear</button>
+        ` : ''}
+        <span class="section-count" style="margin-left:auto;">${filtered.length} item${filtered.length !== 1 ? 's' : ''}</span>
+      </div>
+
+      ${filtered.length === 0 ? `
+        <div class="rp-empty-page">
+          <div class="rp-empty-icon-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M9 11l3 3L22 4"/>
+              <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+            </svg>
+          </div>
+          <h3>${q || state.releasePtFilters.project ? 'No release points match' : 'No release points yet'}</h3>
+          <p>${q || state.releasePtFilters.project ? 'Try adjusting your search or filters.' : 'Click "Add Release Point" beside the Add Project button to create your first release checklist.'}</p>
+          ${!q && !state.releasePtFilters.project ? `
+            <button class="btn-accent" id="emptyAddReleasePtBtn" style="margin-top:16px;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;"><path d="M12 5v14M5 12h14"/></svg>
+              Add Release Point
+            </button>
+          ` : ''}
+        </div>
+      ` : `
+        <div class="rp-card-grid">
+          ${filtered.map(rp => renderReleasePtCard(rp, q)).join('')}
+        </div>
+      `}
     </div>
   `;
 };
@@ -3130,8 +3144,12 @@ const buildProgressRing = (done, total) => {
 };
 
 const renderReleasePtCard = (rp, q = '') => {
-  const proj = rp.projectId ? state.projects.find(p => p.id === rp.projectId) : null;
-  const projName = proj ? proj.name : '—';
+  const projectIds = rp.projectIds || (rp.projectId ? [rp.projectId] : []);
+  const projects = projectIds.map(pid => state.projects.find(p => p.id === pid)).filter(Boolean);
+  const projectPills = projects.map(p => `
+    <span class="test-pill test-proj" style="font-size:10px;padding:2px 6px;">${highlight(p.name, q)}</span>
+  `).join('') || '<span class="test-pill test-proj" style="font-size:10px;padding:2px 6px;background:var(--border);color:var(--text-muted);">No Project</span>';
+
   const linkedRelease = rp.releaseId ? state.releases.find(r => r.id === rp.releaseId) : null;
 
   const items = rp.checklistItems || [];
@@ -3148,14 +3166,61 @@ const renderReleasePtCard = (rp, q = '') => {
     </span>` : '';
   }).join('');
 
-  const checklistHtml = items.map(item => `
-    <div class="rp-checklist-item ${item.done ? 'done' : ''}" data-action="toggle-checklist-item" data-rp-id="${rp.id}" data-item-id="${item.id}">
-      <div class="rp-check-circle">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+  const renderTicketInline = (ticket) => {
+    if (!ticket) return '';
+    const isUrl = /^(https?:\/\/|www\.)[^\s/$.?#].[^\s]*$/i.test(ticket.trim());
+    const href = isUrl ? (ticket.trim().startsWith('www.') ? 'https://' + ticket.trim() : ticket.trim()) : null;
+    if (href) {
+      let display = ticket.trim();
+      try {
+        const url = new URL(href);
+        if (url.pathname && url.pathname !== '/') {
+          display = url.hostname.replace('www.', '') + url.pathname;
+          if (display.length > 20) display = display.substring(0, 17) + '...';
+        }
+      } catch(e) {}
+      return `
+        <a href="${href}" target="_blank" class="rp-item-ticket link" title="View Ticket: ${ticket}" onclick="event.stopPropagation();">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
+          <span>${display}</span>
+        </a>
+      `;
+    } else {
+      return `
+        <span class="rp-item-ticket text" title="Ticket: ${ticket}">
+          <span>${ticket}</span>
+        </span>
+      `;
+    }
+  };
+
+  const checklistHtml = items.map(item => {
+    const dev = item.developerId ? state.developers.find(d => d.id === item.developerId) : null;
+    const ticketHtml = item.ticket ? renderTicketInline(item.ticket) : '';
+    const devHtml = dev ? `
+      <span class="rp-item-dev" title="Assigned to ${dev.name}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+        <span>${dev.name}</span>
+      </span>
+    ` : '';
+
+    return `
+      <div class="rp-checklist-item ${item.done ? 'done' : ''}" data-action="toggle-checklist-item" data-rp-id="${rp.id}" data-item-id="${item.id}">
+        <div class="rp-check-circle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <div class="rp-checklist-item-content">
+          <span class="rp-checklist-item-text">${item.text}</span>
+          ${(ticketHtml || devHtml) ? `
+            <div class="rp-checklist-item-meta">
+              ${ticketHtml}
+              ${devHtml}
+            </div>
+          ` : ''}
+        </div>
       </div>
-      <span class="rp-checklist-item-text">${item.text}</span>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 
   const cardClass = isCompleted ? 'rp-card rp-completed' : (rp.releaseType === 'released' ? 'rp-card rp-released' : 'rp-card');
 
@@ -3166,7 +3231,7 @@ const renderReleasePtCard = (rp, q = '') => {
           <div class="rp-card-title-wrap">
             <div class="rp-card-title">${highlight(rp.title, q)}</div>
             <div class="rp-card-badges">
-              <span class="test-pill test-proj" style="font-size:10px;padding:2px 6px;">${highlight(projName, q)}</span>
+              ${projectPills}
               <span class="rp-type-badge ${rp.releaseType || 'upcoming'}">
                 ${rp.releaseType === 'released' ? '✓ Released' : '⏳ Upcoming'}
               </span>
@@ -3239,44 +3304,70 @@ const toggleReleasePtChecklistItem = async (rpId, itemId) => {
 // ─── Release Points Modal ─────────────────────────────────
 let rpChecklistItems = []; // local checklist buffer
 
-const populateReleasePtVersions = (projectId, selectedVersions = []) => {
+const populateReleasePtVersions = (projectIdOrIds, selectedVersions = []) => {
   const container = document.getElementById('releasePtVersions');
   if (!container) return;
-  const proj = state.projects.find(p => p.id === projectId);
-  if (!proj) {
-    container.innerHTML = '<span style="color:var(--text-muted);font-size:12.5px;">Select a project first.</span>';
+  const pids = Array.isArray(projectIdOrIds) ? projectIdOrIds : (projectIdOrIds ? [projectIdOrIds] : []);
+  if (pids.length === 0) {
+    container.innerHTML = '<span style="color:var(--text-muted);font-size:12.5px;">Select project(s) first.</span>';
     return;
   }
-  const versions = getProjectVersions(proj);
-  if (versions.length === 0) {
-    container.innerHTML = '<span style="color:var(--text-muted);font-size:12.5px;">No versions configured for this project.</span>';
-    return;
+  let html = '';
+  pids.forEach(pid => {
+    const proj = state.projects.find(p => p.id === pid);
+    if (!proj) return;
+    const versions = getProjectVersions(proj);
+    if (versions.length > 0) {
+      html += `<div style="font-weight:600; font-size:11.5px; color:var(--text-secondary); width:100%; margin-top:8px; margin-bottom:4px; border-bottom: 1px dashed var(--border); padding-bottom: 2px;">${proj.name}</div>`;
+      html += versions.map(v => `
+        <label class="rp-version-checkbox-label">
+          <input type="checkbox" name="rpVersionCheck" value="${v}" ${selectedVersions.includes(v) ? 'checked' : ''} />
+          ${v}
+        </label>
+      `).join('');
+    }
+  });
+  if (!html) {
+    container.innerHTML = '<span style="color:var(--text-muted);font-size:12.5px;">No versions configured for the selected project(s).</span>';
+  } else {
+    container.innerHTML = html;
   }
-  container.innerHTML = versions.map(v => `
-    <label class="rp-version-checkbox-label">
-      <input type="checkbox" name="rpVersionCheck" value="${v}" ${selectedVersions.includes(v) ? 'checked' : ''} />
-      ${v}
-    </label>
-  `).join('');
 };
 
-const populateReleasePtReleases = (projectId, selectedReleaseId = '') => {
+const populateReleasePtReleases = (projectIdOrIds, selectedReleaseId = '') => {
   const select = document.getElementById('releasePtRelease');
   if (!select) return;
-  const projectReleases = (state.releases || []).filter(r => r.projectId === projectId);
+  const pids = Array.isArray(projectIdOrIds) ? projectIdOrIds : (projectIdOrIds ? [projectIdOrIds] : []);
+  if (pids.length === 0) {
+    select.innerHTML = `<option value="">— Select Release —</option>`;
+    return;
+  }
+  let projectReleases = [];
+  pids.forEach(pid => {
+    const pReleases = (state.releases || []).filter(r => r.projectId === pid);
+    projectReleases = projectReleases.concat(pReleases);
+  });
   select.innerHTML = `<option value="">— Select Release —</option>` +
-    projectReleases.map(r => `<option value="${r.id}" ${selectedReleaseId === r.id ? 'selected' : ''}>${r.name} (${r.version})</option>`).join('');
+    projectReleases.map(r => {
+      const proj = state.projects.find(p => p.id === r.projectId);
+      const prefix = proj ? `${proj.name}: ` : '';
+      return `<option value="${r.id}" ${selectedReleaseId === r.id ? 'selected' : ''}>${prefix}${r.name} (${r.version})</option>`;
+    }).join('');
 };
 
-const populateReleasePtDevs = (projectId, selectedDevIds = []) => {
+const populateReleasePtDevs = (projectIdOrIds, selectedDevIds = []) => {
   const container = document.getElementById('releasePtDevChecklist');
   if (!container) return;
-  let devs = state.developers;
-  if (projectId) {
-    devs = state.developers.filter(d => (d.projectIds || []).includes(projectId));
+  const pids = Array.isArray(projectIdOrIds) ? projectIdOrIds : (projectIdOrIds ? [projectIdOrIds] : []);
+  if (pids.length === 0) {
+    container.innerHTML = '<span style="color:var(--text-muted);font-size:12.5px;">Select project(s) first.</span>';
+    return;
   }
+  const devs = state.developers.filter(d => 
+    (d.projectIds || []).some(pid => pids.includes(pid))
+  );
   if (devs.length === 0) {
-    container.innerHTML = '<span style="color:var(--text-muted);font-size:12.5px;">No developers for this project.</span>';
+    container.innerHTML = '<span style="color:var(--text-muted);font-size:12.5px;">No developers for the selected project(s).</span>';
     return;
   }
   container.innerHTML = devs.map(d => `
@@ -3287,6 +3378,20 @@ const populateReleasePtDevs = (projectId, selectedDevIds = []) => {
   `).join('');
 };
 
+const syncChecklistItemsFromDOM = () => {
+  document.querySelectorAll('.rp-checklist-row').forEach(row => {
+    const idx = parseInt(row.dataset.clIdx);
+    if (rpChecklistItems[idx]) {
+      const textInp = row.querySelector('.rp-cl-text');
+      const ticketInp = row.querySelector('.rp-cl-ticket');
+      const devSel = row.querySelector('.rp-cl-developer');
+      if (textInp) rpChecklistItems[idx].text = textInp.value;
+      if (ticketInp) rpChecklistItems[idx].ticket = ticketInp.value;
+      if (devSel) rpChecklistItems[idx].developerId = devSel.value;
+    }
+  });
+};
+
 const renderChecklistEditor = () => {
   const container = document.getElementById('checklistItemsContainer');
   if (!container) return;
@@ -3294,31 +3399,68 @@ const renderChecklistEditor = () => {
     container.innerHTML = '<div style="color:var(--text-muted);font-size:12.5px;font-style:italic;text-align:center;padding:8px 0;">Click "Add Item" to add checklist items.</div>';
     return;
   }
-  container.innerHTML = rpChecklistItems.map((item, idx) => `
-    <div class="rp-checklist-row" data-cl-idx="${idx}">
-      <input type="text" class="rp-cl-text" data-idx="${idx}" value="${item.text.replace(/"/g, '&quot;')}" placeholder="e.g. QA sign-off received" />
-      <button type="button" class="rp-checklist-remove-btn" data-action="remove-checklist-row" data-idx="${idx}" title="Remove">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
-      </button>
-    </div>
+
+  // Get currently selected projects in the modal to filter developers
+  const projectChecks = document.querySelectorAll('input[name="rpProjectCheck"]:checked');
+  const projectIds = Array.from(projectChecks).map(cb => cb.value);
+  let filteredDevs = state.developers;
+  if (projectIds.length > 0) {
+    filteredDevs = state.developers.filter(d => 
+      (d.projectIds || []).some(pid => projectIds.includes(pid))
+    );
+  }
+
+  container.innerHTML = rpChecklistItems.map((item, idx) => {
+    const devOptions = `<option value="">— Assignee —</option>` +
+      filteredDevs.map(d => `<option value="${d.id}" ${item.developerId === d.id ? 'selected' : ''}>${d.name}</option>`).join('');
+
+    return `
+      <div class="rp-checklist-row" data-cl-idx="${idx}">
+        <input type="text" class="rp-cl-text" data-idx="${idx}" value="${item.text.replace(/"/g, '&quot;')}" placeholder="e.g. QA sign-off received" />
+        <input type="text" class="rp-cl-ticket" data-idx="${idx}" value="${(item.ticket || '').replace(/"/g, '&quot;')}" placeholder="Ticket (e.g. #101 or Link)" />
+        <select class="rp-cl-developer" data-idx="${idx}">
+          ${devOptions}
+        </select>
+        <button type="button" class="rp-checklist-remove-btn" data-action="remove-checklist-row" data-idx="${idx}" title="Remove">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+        </button>
+      </div>
+    `;
+  }).join('');
+};
+
+const loadReleasePtProjectsList = (selectedProjectIds = []) => {
+  const container = document.getElementById('releasePtProjects');
+  if (!container) return;
+  container.innerHTML = state.projects.map(p => `
+    <label class="dev-project-label">
+      <input type="checkbox" name="rpProjectCheck" value="${p.id}" ${selectedProjectIds.includes(p.id) ? 'checked' : ''} />
+      <span>${p.name}</span>
+    </label>
   `).join('');
+
+  // Wire checkbox change to reload lists
+  container.querySelectorAll('input[name="rpProjectCheck"]').forEach(cb => {
+    cb.onchange = () => {
+      syncChecklistItemsFromDOM();
+      const checkedIds = Array.from(container.querySelectorAll('input[name="rpProjectCheck"]:checked')).map(c => c.value);
+      populateReleasePtVersions(checkedIds);
+      populateReleasePtReleases(checkedIds);
+      populateReleasePtDevs(checkedIds);
+      renderChecklistEditor();
+    };
+  });
 };
 
 const openReleasePtModal = (id = null) => {
   document.getElementById('releasePtModalTitle').textContent = id ? 'Edit Release Point' : 'New Release Point';
   document.getElementById('releasePtId').value = '';
 
-  // Populate project dropdown
-  const projSel = document.getElementById('releasePtProject');
-  projSel.innerHTML = `<option value="">— Select Project —</option>` +
-    state.projects.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
-
   if (id) {
     const rp = (state.releasePoints || []).find(r => r.id === id);
     if (!rp) return;
     document.getElementById('releasePtId').value = rp.id;
     document.getElementById('releasePtTitle').value = rp.title;
-    document.getElementById('releasePtProject').value = rp.projectId || '';
     document.getElementById('releasePtType').value = rp.releaseType || 'upcoming';
 
     // Set type toggle UI
@@ -3326,21 +3468,23 @@ const openReleasePtModal = (id = null) => {
       btn.classList.toggle('active', btn.dataset.rtype === (rp.releaseType || 'upcoming'));
     });
 
-    populateReleasePtVersions(rp.projectId, rp.versions || []);
-    populateReleasePtReleases(rp.projectId, rp.releaseId || '');
-    populateReleasePtDevs(rp.projectId, rp.developerIds || []);
+    const projectIds = rp.projectIds || (rp.projectId ? [rp.projectId] : []);
+    loadReleasePtProjectsList(projectIds);
+    populateReleasePtVersions(projectIds, rp.versions || []);
+    populateReleasePtReleases(projectIds, rp.releaseId || '');
+    populateReleasePtDevs(projectIds, rp.developerIds || []);
 
     rpChecklistItems = (rp.checklistItems || []).map(i => ({ ...i }));
   } else {
     document.getElementById('releasePtTitle').value = '';
-    document.getElementById('releasePtProject').value = '';
     document.getElementById('releasePtRelease').innerHTML = `<option value="">— Select Release —</option>`;
     document.getElementById('releasePtType').value = 'upcoming';
     document.querySelectorAll('.rp-type-btn').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.rtype === 'upcoming');
     });
-    populateReleasePtVersions('');
-    populateReleasePtDevs('');
+    loadReleasePtProjectsList([]);
+    populateReleasePtVersions([]);
+    populateReleasePtDevs([]);
     rpChecklistItems = [];
   }
 
@@ -3355,24 +3499,11 @@ const openReleasePtModal = (id = null) => {
     };
   });
 
-  // Wire project change
-  document.getElementById('releasePtProject').onchange = (e) => {
-    const pid = e.target.value;
-    populateReleasePtVersions(pid);
-    populateReleasePtReleases(pid);
-    populateReleasePtDevs(pid);
-  };
-
   // Wire add checklist item button
   document.getElementById('addChecklistItemBtn').onclick = () => {
-    // Save current text values before re-render
-    document.querySelectorAll('.rp-cl-text').forEach(inp => {
-      const idx = parseInt(inp.dataset.idx);
-      if (rpChecklistItems[idx]) rpChecklistItems[idx].text = inp.value;
-    });
-    rpChecklistItems.push({ id: uid(), text: '', done: false });
+    syncChecklistItemsFromDOM();
+    rpChecklistItems.push({ id: uid(), text: '', ticket: '', developerId: '', done: false });
     renderChecklistEditor();
-    // focus last
     const inputs = document.querySelectorAll('.rp-cl-text');
     if (inputs.length) inputs[inputs.length - 1].focus();
   };
@@ -3381,20 +3512,18 @@ const openReleasePtModal = (id = null) => {
 };
 
 const saveReleasePoint = async () => {
-  // Sync checklist text before saving
-  document.querySelectorAll('.rp-cl-text').forEach(inp => {
-    const idx = parseInt(inp.dataset.idx);
-    if (rpChecklistItems[idx] !== undefined) rpChecklistItems[idx].text = inp.value;
-  });
+  syncChecklistItemsFromDOM();
 
   const id = document.getElementById('releasePtId').value;
   const title = document.getElementById('releasePtTitle').value.trim();
-  const projectId = document.getElementById('releasePtProject').value;
+  const projectChecks = document.querySelectorAll('input[name="rpProjectCheck"]:checked');
+  const projectIds = Array.from(projectChecks).map(cb => cb.value);
+  const projectId = projectIds.length > 0 ? projectIds[0] : '';
   const releaseId = document.getElementById('releasePtRelease').value;
   const releaseType = document.getElementById('releasePtType').value || 'upcoming';
 
   if (!title) { showToast('Release point title is required', 'error'); return; }
-  if (!projectId) { showToast('Please select a project', 'error'); return; }
+  if (projectIds.length === 0) { showToast('Please select at least one project', 'error'); return; }
 
   const versionChecks = document.querySelectorAll('input[name="rpVersionCheck"]:checked');
   const versions = Array.from(versionChecks).map(cb => cb.value);
@@ -3413,7 +3542,7 @@ const saveReleasePoint = async () => {
     if (idx === -1) return;
     state.releasePoints[idx] = {
       ...state.releasePoints[idx],
-      title, projectId, releaseId, releaseType, versions, developerIds,
+      title, projectId, projectIds, releaseId, releaseType, versions, developerIds,
       checklistItems, isCompleted, updatedAt: now
     };
     logActivity(`Updated release point "${title}"`, 'project');
@@ -3421,7 +3550,7 @@ const saveReleasePoint = async () => {
   } else {
     if (!state.releasePoints) state.releasePoints = [];
     state.releasePoints.unshift({
-      id: uid(), title, projectId, releaseId, releaseType, versions,
+      id: uid(), title, projectId, projectIds, releaseId, releaseType, versions,
       developerIds, checklistItems, isCompleted, createdAt: now, updatedAt: now
     });
     logActivity(`Created release point "${title}"`, 'project');

@@ -3649,7 +3649,7 @@ body {
 
 /* Modal wider for release points */
 .modal.modal-rp {
-  width: min(580px, calc(100vw - 40px));
+  width: min(900px, calc(100vw - 40px));
 }
 
 /* ─── Release Type Toggle ─── */
@@ -3859,9 +3859,9 @@ body {
 }
 
 .rp-card:hover {
-  box-shadow: var(--shadow);
-  border-color: var(--border-hover);
-  transform: translateY(-2px);
+  box-shadow: 0 12px 30px -5px rgba(0, 0, 0, 0.08), 0 8px 20px -6px rgba(0, 0, 0, 0.04);
+  border-color: rgba(45, 106, 79, 0.25);
+  transform: translateY(-3px) scale(1.002);
 }
 
 .rp-card.rp-completed {
@@ -4049,8 +4049,8 @@ body {
 }
 
 .rp-checklist-item.done .rp-checklist-item-text {
-  text-decoration: line-through;
   color: var(--text-muted);
+  opacity: 0.75;
 }
 
 /* Collapsed checklist - show only 3 on card */
@@ -4431,18 +4431,11 @@ body {
   white-space: nowrap;
 }
 
-/* ─── Page Body (sidebar + main) ─── */
+/* ─── Page Body (vertical flow) ─── */
 .rp-page-body {
-  display: grid;
-  grid-template-columns: 240px 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 20px;
-  align-items: start;
-}
-
-@media (max-width: 860px) {
-  .rp-page-body {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* ─── Left Sidebar Panel ─── */
@@ -4643,4 +4636,187 @@ body {
   max-width: 340px;
   margin: 0;
   line-height: 1.6;
+}
+
+/* ─── Release Point & Notes UI Enhancements ─── */
+#releaseNotes {
+  min-height: 240px;
+  font-family: 'DM Mono', Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  resize: vertical;
+}
+
+.rp-checklist-row input.rp-cl-text {
+  flex: 2;
+}
+
+.rp-checklist-row input.rp-cl-ticket {
+  flex: 1;
+  max-width: 200px;
+}
+
+.rp-checklist-row select.rp-cl-developer {
+  flex: 1;
+  max-width: 180px;
+  padding: 7px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+  transition: all var(--transition);
+}
+
+.rp-checklist-row select.rp-cl-developer:focus {
+  border-color: var(--accent);
+}
+
+.rp-checklist-item-content {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.rp-checklist-item-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.rp-item-ticket {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-decoration: none;
+}
+
+.rp-item-ticket.text {
+  background: var(--surface-3);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.rp-item-ticket.link {
+  background: rgba(26, 115, 232, 0.06);
+  color: #1a73e8;
+  border: 1px solid rgba(26, 115, 232, 0.15);
+}
+
+.rp-item-ticket.link:hover {
+  background: rgba(26, 115, 232, 0.12);
+  border-color: #1a73e8;
+}
+
+.rp-item-ticket svg {
+  width: 9px;
+  height: 9px;
+  flex-shrink: 0;
+}
+
+.rp-item-dev {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  background: #e8eaf6;
+  color: #3949ab;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.rp-item-dev svg {
+  width: 9px;
+  height: 9px;
+  color: #3949ab;
+  flex-shrink: 0;
+}
+
+/* ─── Top Dashboard Row Redesign ─── */
+.rp-dashboard-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+@media (max-width: 900px) {
+  .rp-dashboard-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.rp-dashboard-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  transition: all var(--transition);
+}
+
+.rp-dashboard-card:hover {
+  box-shadow: var(--shadow);
+  border-color: var(--border-hover);
+}
+
+.rp-dashboard-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px 14px;
+}
+
+.rp-dashboard-status-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.rp-dashboard-status-item strong {
+  margin-left: auto;
+  font-weight: 700;
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+.rp-dashboard-projects-list,
+.rp-dashboard-recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 120px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.rp-dashboard-projects-list::-webkit-scrollbar,
+.rp-dashboard-recent-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.rp-dashboard-projects-list::-webkit-scrollbar-thumb,
+.rp-dashboard-recent-list::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 99px;
 }

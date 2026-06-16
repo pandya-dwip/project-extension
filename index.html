@@ -581,7 +581,7 @@
           </button>
         </div>
         <textarea id="releaseNotes" placeholder="Dynamically generate or enter custom mail notes..."
-          rows="3"></textarea>
+          rows="12"></textarea>
       </div>
 
     </div>
@@ -928,20 +928,20 @@
         <input type="text" id="releasePtTitle" placeholder="e.g. Q2 Feature Drop Readiness" />
       </div>
 
-      <!-- Project + Release row -->
-      <div class="form-row" style="grid-template-columns: 1fr 1fr;">
-        <div class="form-group">
-          <label>Project <span class="req">*</span></label>
-          <select id="releasePtProject">
-            <option value="">— Select Project —</option>
-          </select>
+      <!-- Project(s) checklist (Multi-select) -->
+      <div class="form-group">
+        <label>Project(s) <span class="req">*</span> <span class="hint">(select multiple)</span></label>
+        <div class="dev-project-checklist" id="releasePtProjects" style="max-height:120px;">
+          <!-- Loaded by JS -->
         </div>
-        <div class="form-group">
-          <label>Linked Release <span class="hint">(optional)</span></label>
-          <select id="releasePtRelease">
-            <option value="">— Select Release —</option>
-          </select>
-        </div>
+      </div>
+
+      <!-- Linked Release -->
+      <div class="form-group">
+        <label>Linked Release <span class="hint">(optional)</span></label>
+        <select id="releasePtRelease">
+          <option value="">— Select Release —</option>
+        </select>
       </div>
 
       <!-- Release Type toggle -->
