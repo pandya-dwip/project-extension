@@ -1,0 +1,9 @@
+const fs = require('fs');
+
+const csvContent = `ID,Test Scenario,Simplified Test Scenario,Test Steps,Expected Result,Actual Result,Priority,Severity,Status,Tested By,Execution Date,Defect ID,Comments / Run Notes,Module / Folder Name,Test Type
+TC-101,Verify login with correct credentials and active session redirect,Login with correct credentials,Steps...,Expected...,Actual...,Critical,S2 - Critical,Passed,Dwip Pandya,2026-05-28,,Verified automatically,User Authentication,Automated
+TC-999,Verify logout clears all storage tokens,Logout clears tokens,1. Click logout button,Tokens are removed from localStorage,Tokens removed,High,S3 - Major,Passed,Dwip Pandya,2026-06-20,,Verified manually,User Authentication,Manual
+`;
+
+fs.writeFileSync('testcases_to_import.csv', csvContent.trim(), 'utf8');
+console.log('testcases_to_import.csv created successfully! 🎉');

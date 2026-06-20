@@ -9,7 +9,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=DM+Mono:wght@400;500&display=swap"
     rel="stylesheet" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=2" />
 </head>
 
 <body>
@@ -70,7 +70,8 @@
           <span class="nav-section-label">Quality &amp; Testing</span>
           <button class="nav-item" data-view="testcases">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-              <path d="M9 3v7.2a4 4 0 01-1.3 2.9l-3.4 3.1A2 2 0 005.7 20h12.6a2 2 0 001.4-3.8l-3.4-3.1A4 4 0 0115 10.2V3" />
+              <path
+                d="M9 3v7.2a4 4 0 01-1.3 2.9l-3.4 3.1A2 2 0 005.7 20h12.6a2 2 0 001.4-3.8l-3.4-3.1A4 4 0 0115 10.2V3" />
               <path d="M6 3h12M12 3v7M8.5 13h7" />
             </svg>
             <span>Test Case Management</span>
@@ -110,7 +111,8 @@
           <button class="nav-item" data-view="settings">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
               <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" />
+              <path
+                d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" />
             </svg>
             <span>Settings</span>
           </button>
@@ -603,7 +605,7 @@
     </div>
     <div class="modal-body" style="padding-top: 0;">
       <input type="hidden" id="testCaseId" />
-      
+
       <!-- Modal Tabs Headers -->
       <div class="modal-tabs">
         <button class="modal-tab active" type="button" data-target="tab-scenario">Scenario & Steps</button>
@@ -615,7 +617,8 @@
       <div class="modal-tab-content active" id="tab-scenario">
         <div class="form-group">
           <label>Test Scenario <span class="req">*</span></label>
-          <input type="text" id="testCaseScenario" placeholder="e.g. Verify checkout calculation with 10% coupon code" />
+          <input type="text" id="testCaseScenario"
+            placeholder="e.g. Verify checkout calculation with 10% coupon code" />
         </div>
         <div class="form-group">
           <label>Simplified Test Scenario</label>
@@ -623,11 +626,13 @@
         </div>
         <div class="form-group">
           <label>Description / Preconditions</label>
-          <textarea id="testCaseDesc" placeholder="Describe preconditions, test environment, or summary…" rows="2"></textarea>
+          <textarea id="testCaseDesc" placeholder="Describe preconditions, test environment, or summary…"
+            rows="2"></textarea>
         </div>
         <div class="form-group">
           <label>Test Steps <span class="req">*</span></label>
-          <textarea id="testCaseSteps" placeholder="1. Go to checkout&#10;2. Add item costing $100&#10;3. Apply 10% coupon..." rows="3"></textarea>
+          <textarea id="testCaseSteps"
+            placeholder="1. Go to checkout&#10;2. Add item costing $100&#10;3. Apply 10% coupon..." rows="3"></textarea>
         </div>
       </div>
 
@@ -635,7 +640,8 @@
       <div class="modal-tab-content" id="tab-results">
         <div class="form-group">
           <label>Expected Result <span class="req">*</span></label>
-          <textarea id="testCaseExpected" placeholder="Checkout total reflects $90 ($10 discount applied)..." rows="2"></textarea>
+          <textarea id="testCaseExpected" placeholder="Checkout total reflects $90 ($10 discount applied)..."
+            rows="2"></textarea>
         </div>
         <div class="form-group">
           <label>Actual Result</label>
@@ -644,7 +650,7 @@
         <div class="form-group">
           <label>Status</label>
           <select id="testCaseStatus">
-            <option value="Untested" selected>Untested</option>
+            <option value="Not executed" selected>Not executed</option>
             <option value="Passed">Passed</option>
             <option value="Failed">Failed</option>
             <option value="Blocked">Blocked</option>
@@ -652,7 +658,8 @@
         </div>
         <div class="form-group">
           <label>Comments / Run Notes</label>
-          <textarea id="testCaseComments" placeholder="Add run notes, configuration details, or logs…" rows="3"></textarea>
+          <textarea id="testCaseComments" placeholder="Add run notes, configuration details, or logs…"
+            rows="3"></textarea>
         </div>
       </div>
 
@@ -779,7 +786,8 @@
     <div class="modal-body">
       <div class="excel-import-wrap">
         <div class="excel-dropzone" id="excelDropzone">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width: 40px; height: 40px; color: var(--text-muted); margin-bottom: 8px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+            style="width: 40px; height: 40px; color: var(--text-muted); margin-bottom: 8px;">
             <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
             <polyline points="14 2 14 8 20 8" />
             <line x1="16" y1="13" x2="8" y2="13" />
@@ -787,20 +795,25 @@
             <polyline points="10 9 9 9 8 9" />
           </svg>
           <h4 style="margin-bottom:4px; font-weight:600; font-size:14px;">Drag & Drop Excel sheet here</h4>
-          <span style="font-size: 12px; color: var(--text-muted); margin: 4px 0 12px; display:block;">or click to select file from computer (.xlsx, .xls, .csv)</span>
+          <span style="font-size: 12px; color: var(--text-muted); margin: 4px 0 12px; display:block;">or click to select
+            file from computer (.xlsx, .xls, .csv)</span>
           <input type="file" id="excelFileInput" style="display: none;" accept=".xlsx, .xls, .csv" />
-          <button class="btn-ghost" id="selectExcelFileBtn" style="padding: 6px 12px; font-size: 12px;">Choose File</button>
+          <button class="btn-ghost" id="selectExcelFileBtn" style="padding: 6px 12px; font-size: 12px;">Choose
+            File</button>
         </div>
 
         <div id="excelPreviewSection" style="display: none; margin-top: 16px; animation: fadeIn 0.2s ease;">
-          <h4 style="margin-bottom: 8px; font-size: 13px; color: var(--text-secondary); display: flex; align-items: center; justify-content: space-between;">
+          <h4
+            style="margin-bottom: 8px; font-size: 13px; color: var(--text-secondary); display: flex; align-items: center; justify-content: space-between;">
             <span>Detected Columns & Mapping</span>
-            <span id="excelFileBadge" class="status-pill na" style="font-size: 10px; padding: 2px 6px;">sample.xlsx</span>
+            <span id="excelFileBadge" class="status-pill na"
+              style="font-size: 10px; padding: 2px 6px;">sample.xlsx</span>
           </h4>
           <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
             We matched these columns from your sheet. Adjust mappings if necessary:
           </p>
-          <div class="mapping-grid-container" style="max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px; margin-bottom: 16px; background: var(--surface-2);">
+          <div class="mapping-grid-container"
+            style="max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px; margin-bottom: 16px; background: var(--surface-2);">
             <div class="mapping-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
               <!-- Dynamic mappings will be injected here -->
             </div>
@@ -808,11 +821,27 @@
 
           <div class="form-group" style="margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
             <input type="checkbox" id="excelImportReplaceDupes" style="width: auto; cursor: pointer; margin: 0;" />
-            <label for="excelImportReplaceDupes" style="font-size: 12.5px; font-weight: 500; color: var(--text-secondary); cursor: pointer; user-select: none;">
+            <label for="excelImportReplaceDupes"
+              style="font-size: 12.5px; font-weight: 500; color: var(--text-secondary); cursor: pointer; user-select: none;">
               Overwrite existing test cases with identical duplicates
             </label>
           </div>
-          
+
+          <!-- Duplicate Cases Section -->
+          <div id="excelImportDuplicatesSection"
+            style="display: none; margin-bottom: 16px; border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; background: rgba(239, 68, 68, 0.02); border-color: rgba(239, 68, 68, 0.15);">
+            <h4
+              style="margin-top: 0; margin-bottom: 8px; font-size: 12.5px; color: #c0392b; font-weight: 600; display: flex; align-items: center; justify-content: space-between;">
+              <span>System duplicates matching this sheet</span>
+              <span id="excelImportDupesCount" class="status-pill rolledback"
+                style="font-size: 10px; padding: 2px 6px;">0 duplicates</span>
+            </h4>
+            <div id="excelDupesListContainer"
+              style="max-height: 140px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px;">
+              <!-- Dynamic duplicate items -->
+            </div>
+          </div>
+
           <div class="form-row" style="grid-template-columns: 1fr 1fr; margin-bottom: 8px; gap: 12px;">
             <div class="form-group" style="margin-bottom:0;">
               <label style="font-size:11.5px;">Import into Project</label>
@@ -830,9 +859,13 @@
           </div>
         </div>
 
-        <div id="excelLoadingSection" style="display: none; padding: 32px 0; text-align: center; flex-direction: column; align-items: center; justify-content: center; gap: 12px;">
-          <div class="excel-spinner" style="width: 32px; height: 32px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px;"></div>
-          <span style="font-weight: 500; font-size: 13px; color: var(--text-secondary);" id="excelLoadingText">Parsing spreadsheet columns...</span>
+        <div id="excelLoadingSection"
+          style="display: none; padding: 32px 0; text-align: center; flex-direction: column; align-items: center; justify-content: center; gap: 12px;">
+          <div class="excel-spinner"
+            style="width: 32px; height: 32px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 12px;">
+          </div>
+          <span style="font-weight: 500; font-size: 13px; color: var(--text-secondary);" id="excelLoadingText">Parsing
+            spreadsheet columns...</span>
         </div>
       </div>
     </div>
@@ -853,10 +886,11 @@
       </button>
     </div>
     <div class="modal-body">
-      <div id="bulkUpdateInfoCard" style="background: var(--accent-light); border: 1px solid rgba(45,106,79,0.15); padding: 10px 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px; line-height: 1.5; color: var(--accent);">
+      <div id="bulkUpdateInfoCard"
+        style="background: var(--accent-light); border: 1px solid rgba(45,106,79,0.15); padding: 10px 14px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 13px; line-height: 1.5; color: var(--accent);">
         <!-- Injected dynamically: "This will update X test cases in this view." -->
       </div>
-      
+
       <div class="form-group">
         <label>Select Field to Update <span class="req">*</span></label>
         <select id="bulkUpdateField" style="background: var(--surface);">
@@ -949,16 +983,18 @@
         <label>Release Type <span class="req">*</span></label>
         <div class="rp-type-toggle" id="releasePtTypeToggle">
           <button type="button" class="rp-type-btn active" data-rtype="upcoming">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;">
-              <circle cx="12" cy="12" r="10"/>
-              <path d="M12 6v6l4 2"/>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+              style="width:14px;height:14px;">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 6v6l4 2" />
             </svg>
             Yet to be Released
           </button>
           <button type="button" class="rp-type-btn" data-rtype="released">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;">
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-              <polyline points="22 4 12 14.01 9 11.01"/>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+              style="width:14px;height:14px;">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+              <polyline points="22 4 12 14.01 9 11.01" />
             </svg>
             Released
           </button>
@@ -986,9 +1022,10 @@
       <div class="form-group">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
           <label style="margin-bottom:0;">Checklist Items <span class="req">*</span></label>
-          <button type="button" class="btn-ghost" id="addChecklistItemBtn" style="padding:4px 10px;font-size:12px;height:auto;">
+          <button type="button" class="btn-ghost" id="addChecklistItemBtn"
+            style="padding:4px 10px;font-size:12px;height:auto;">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;">
-              <path d="M12 5v14M5 12h14"/>
+              <path d="M12 5v14M5 12h14" />
             </svg>
             Add Item
           </button>
@@ -1006,7 +1043,7 @@
   </div>
 
   <script src="xlsx.full.min.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=6"></script>
 </body>
 
 </html>

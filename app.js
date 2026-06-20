@@ -72,7 +72,8 @@ let state = {
   filters: { status: '', previousVersion: '', upcomingVersion: '', date: '', taskProject: '', taskPriority: '', taskDeadline: '' },
   testFilters: { project: '', developer: '', status: '', assignedStatus: '' },
   releaseFilters: { status: '' },
-  releasePtFilters: { project: '', releaseType: '', completion: '' }
+  releasePtFilters: { project: '', releaseType: '', completion: '' },
+  inlineEditing: null
 };
 
 let confirmCallback = null;
@@ -176,6 +177,67 @@ const trimText = (text, maxLength = 120) => {
   if (!text) return '';
   if (text.length <= maxLength) return text;
   return text.substring(0, maxLength) + '...';
+};
+
+const escapeHtml = (str) => {
+  if (!str) return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+};
+
+const incrementVersion = (ver) => {
+  if (!ver) return '1.0.0';
+  
+  // Try to parse standard semantic version like v1.0.0 or 1.0.0
+  const semverMatch = ver.trim().match(/^([vV]?)(\d+)\.(\d+)\.(\d+)$/);
+  if (semverMatch) {
+    const prefix = semverMatch[1];
+    const major = parseInt(semverMatch[2], 10);
+    const minor = parseInt(semverMatch[3], 10);
+    const patch = parseInt(semverMatch[4], 10);
+    
+    let nextMajor = major;
+    let nextMinor = minor;
+    let nextPatch = patch;
+    
+    if (minor === 0 && patch === 9) {
+      nextMinor = 2;
+      nextPatch = 0;
+    } else if (patch === 9) {
+      if (minor === 9) {
+        nextMajor = major + 1;
+        nextMinor = 0;
+        nextPatch = 0;
+      } else {
+        nextMinor = minor + 1;
+        nextPatch = 0;
+      }
+    } else {
+      nextPatch = patch + 1;
+    }
+    
+    return `${prefix}${nextMajor}.${nextMinor}.${nextPatch}`;
+  }
+  
+  // Fallback to original increment logic for other formats
+  const match = ver.match(/^(.*?)(\d+)$/);
+  if (match) {
+    const prefix = match[1];
+    const num = parseInt(match[2], 10);
+    return prefix + (num + 1);
+  }
+  const digits = ver.match(/\d+/g);
+  if (digits) {
+    const lastDigit = digits[digits.length - 1];
+    const idx = ver.lastIndexOf(lastDigit);
+    const num = parseInt(lastDigit, 10);
+    return ver.substring(0, idx) + (num + 1) + ver.substring(idx + lastDigit.length);
+  }
+  return ver + '.1';
 };
 
 const formatCardDescription = (desc) => {
@@ -448,8 +510,10 @@ const render = () => {
     case 'settings': ct.innerHTML = renderSettings(); break;
   }
 
-  if (state.view === 'testcases') {
+  if (state.view === 'testcases' || state.view === 'releasepoints') {
     if (ct) ct.scrollTop = scrollPos;
+  }
+  if (state.view === 'testcases') {
     const textareas = document.querySelectorAll('.table-inline-textarea');
     textareas.forEach(ta => {
       ta.style.height = 'auto';
@@ -669,37 +733,89 @@ const renderProjectCard = (p, q = '') => {
   const isApp = p.projectType === 'app';
 
   const versionBlock = isApp ? `
-    <div class="project-release-timeline" style="display:flex;flex-direction:column;gap:6px;margin:12px 0;font-size:11.5px;background:var(--surface-2);padding:10px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);">
-      <div style="display:flex;align-items:center;gap:8px;">
+    <div class="project-release-timeline" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;font-size:11px;background:var(--surface-2);padding:8px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);">
+      <div style="display:flex;align-items:center;gap:6px;width:100%;">
         <span class="platform-badge android">Android</span>
-        <span style="color:var(--text-muted);font-size:10px;text-transform:uppercase;font-weight:500;">Prev:</span>
+        <span style="color:var(--text-muted);font-size:9.5px;text-transform:uppercase;font-weight:500;">Prev:</span>
         <strong style="color:var(--text-secondary);">${highlight(p.androidPreviousVersion || '–', q)}</strong>
         <span style="color:var(--text-muted);font-weight:300;">→</span>
-        <span style="color:var(--text-muted);font-size:10px;text-transform:uppercase;font-weight:500;">Up:</span>
+        <span style="color:var(--text-muted);font-size:9.5px;text-transform:uppercase;font-weight:500;">Up:</span>
         <strong style="color:var(--accent);">${highlight(p.androidUpcomingVersion || '–', q)}</strong>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;">
+      <div style="display:flex;align-items:center;gap:6px;width:100%;">
         <span class="platform-badge ios">iOS</span>
-        <span style="color:var(--text-muted);font-size:10px;text-transform:uppercase;font-weight:500;">Prev:</span>
+        <span style="color:var(--text-muted);font-size:9.5px;text-transform:uppercase;font-weight:500;">Prev:</span>
         <strong style="color:var(--text-secondary);">${highlight(p.iosPreviousVersion || '–', q)}</strong>
         <span style="color:var(--text-muted);font-weight:300;">→</span>
-        <span style="color:var(--text-muted);font-size:10px;text-transform:uppercase;font-weight:500;">Up:</span>
+        <span style="color:var(--text-muted);font-size:9.5px;text-transform:uppercase;font-weight:500;">Up:</span>
         <strong style="color:var(--accent);">${highlight(p.iosUpcomingVersion || '–', q)}</strong>
       </div>
     </div>
   ` : `
-    <div class="project-release-timeline" style="display:flex;align-items:center;gap:8px;margin:12px 0;font-size:11.5px;color:var(--text-secondary);background:var(--surface-2);padding:8px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);">
+    <div class="project-release-timeline" style="display:flex;align-items:center;gap:6px;margin-bottom:12px;font-size:11px;color:var(--text-secondary);background:var(--surface-2);padding:8px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);width:100%;justify-content:space-between;">
       <div style="display:flex;align-items:center;gap:4px;">
-        <span style="color:var(--text-muted);font-size:10px;text-transform:uppercase;font-weight:500;">Previous:</span>
+        <span style="color:var(--text-muted);font-size:9.5px;text-transform:uppercase;font-weight:500;">Prev:</span>
         <strong style="color:var(--text-secondary);">${highlight(p.previousVersion || '–', q)}</strong>
       </div>
       <div style="color:var(--text-muted);font-weight:300;">→</div>
       <div style="display:flex;align-items:center;gap:4px;">
-        <span style="color:var(--text-muted);font-size:10px;text-transform:uppercase;font-weight:500;">Upcoming:</span>
+        <span style="color:var(--text-muted);font-size:9.5px;text-transform:uppercase;font-weight:500;">Up:</span>
         <strong style="color:var(--accent);">${highlight(p.upcomingVersion || p.version || '–', q)}</strong>
       </div>
     </div>
   `;
+
+  const actionBlock = isApp ? `
+    <div class="project-release-actions" style="margin-bottom: 12px;">
+      ${p.androidUpcomingVersion ? `
+        <button class="btn-release-action" data-action="release-platform" data-project-id="${p.id}" data-platform="android" title="Release Android Version">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4.5 16.5c-1.5 1.25-2.5 3.5-2.5 3.5s2.25-1 3.5-2.5m5.5-11.5L4 13m16-9l-9 9m9-9a3 3 0 1 1-6-6 3 3 0 0 1 6 6z"/></svg>
+          <span>Release Android</span>
+        </button>
+      ` : ''}
+      ${p.iosUpcomingVersion ? `
+        <button class="btn-release-action" data-action="release-platform" data-project-id="${p.id}" data-platform="ios" title="Release iOS Version">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4.5 16.5c-1.5 1.25-2.5 3.5-2.5 3.5s2.25-1 3.5-2.5m5.5-11.5L4 13m16-9l-9 9m9-9a3 3 0 1 1-6-6 3 3 0 0 1 6 6z"/></svg>
+          <span>Release iOS</span>
+        </button>
+      ` : ''}
+    </div>
+  ` : `
+    <div class="project-release-actions" style="margin-bottom: 12px;">
+      ${(p.upcomingVersion || p.version) ? `
+        <button class="btn-release-action" data-action="release-platform" data-project-id="${p.id}" data-platform="web" title="Release Web Version">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4.5 16.5c-1.5 1.25-2.5 3.5-2.5 3.5s2.25-1 3.5-2.5m5.5-11.5L4 13m16-9l-9 9m9-9a3 3 0 1 1-6-6 3 3 0 0 1 6 6z"/></svg>
+          <span>Release Version</span>
+        </button>
+      ` : ''}
+    </div>
+  `;
+
+  // History build
+  const history = p.releaseHistory || [];
+  const displayHistory = [...history];
+  if (displayHistory.length === 0 && p.lastReleaseAt) {
+    displayHistory.push({
+      version: p.previousVersion || p.androidPreviousVersion || p.iosPreviousVersion || 'v1.0.0',
+      platform: isApp ? 'App' : 'Web',
+      releasedAt: p.lastReleaseAt,
+      log: p.lastReleaseLog
+    });
+  }
+
+  const historyHtml = displayHistory.length ? displayHistory.slice(0, 3).map(h => {
+    const relativeTime = timeAgo(h.releasedAt);
+    const displayLog = h.log || `${h.platform ? h.platform + ' ' : ''}${h.version} released`;
+    return `
+      <div class="history-item">
+        <div class="history-dot"></div>
+        <div class="history-content">
+          <span class="history-version">${displayLog}</span>
+          <span class="history-time">${relativeTime}</span>
+        </div>
+      </div>
+    `;
+  }).join('') : `<div class="history-empty">No releases logged yet</div>`;
 
   const primaryStatus = (p.statuses || []).includes('Stable') ? 'stable' :
     (p.statuses || []).includes('Testing') ? 'testing' :
@@ -707,26 +823,49 @@ const renderProjectCard = (p, q = '') => {
 
   return `
   <div class="project-card status-${primaryStatus}" data-id="${p.id}">
-    <div class="project-card-top">
-      <div class="project-name">${highlight(p.name, q)}</div>
-      ${isApp ? `<span class="project-type-badge app">App</span>` : `<span class="project-type-badge web">Web</span>`}
-    </div>
-    ${p.description ? `<div class="project-desc">${highlight(formatCardDescription(p.description), q)}</div>` : ''}
-    ${versionBlock}
-    <div class="project-statuses">
-      ${(p.statuses || []).map(s => statusPill(s)).join('')}
-    </div>
-    <div class="project-card-footer">
-      <span class="card-time">Updated ${timeAgo(p.updatedAt)}</span>
-      <div class="card-actions">
-        <button class="icon-btn" data-action="edit-project" data-id="${p.id}" title="Edit">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-        </button>
-        <button class="icon-btn danger" data-action="delete-project" data-id="${p.id}" title="Delete">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
-        </button>
+    
+    <!-- Left Column: Info & Actions -->
+    <div class="project-card-left-col">
+      <div class="project-card-top">
+        <div class="project-name">${highlight(p.name, q)}</div>
+        ${isApp ? `<span class="project-type-badge app">App</span>` : `<span class="project-type-badge web">Web</span>`}
+      </div>
+      ${p.description ? `<div class="project-desc">${highlight(formatCardDescription(p.description), q)}</div>` : ''}
+      <div class="project-statuses">
+        ${(p.statuses || []).map(s => statusPill(s)).join('')}
+      </div>
+      <div class="project-card-left-footer">
+        <span class="card-time">Updated ${timeAgo(p.updatedAt)}</span>
+        <div class="card-actions">
+          <button class="icon-btn" data-action="edit-project" data-id="${p.id}" title="Edit">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <button class="icon-btn danger" data-action="delete-project" data-id="${p.id}" title="Delete">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+          </button>
+        </div>
       </div>
     </div>
+    
+    <!-- Right Column: Versions, Actions & History -->
+    <div class="project-card-right-col">
+      ${versionBlock}
+      ${actionBlock}
+      
+      <!-- Release History -->
+      <div class="project-release-history">
+        <div class="history-title">
+          <span>Release History</span>
+          ${displayHistory.length ? `
+            <button class="clear-history-btn" data-action="clear-release-history" data-id="${p.id}" title="Clear Release History">Clear</button>
+          ` : ''}
+        </div>
+        <div class="history-list">
+          ${historyHtml}
+        </div>
+      </div>
+    </div>
+    
   </div>
 `;
 };
@@ -1553,7 +1692,7 @@ const attachCardListeners = () => {
   });
 
   // Click delegation
-  content.addEventListener('click', e => {
+  content.addEventListener('click', async e => {
     const btn = e.target.closest('[data-action]');
     if (btn) {
       const { action, id } = btn.dataset;
@@ -1562,6 +1701,7 @@ const attachCardListeners = () => {
 
       if (action === 'edit-project') openProjectModal(cardId);
       else if (action === 'delete-project') confirmDeleteProject(cardId);
+      else if (action === 'clear-release-history') confirmClearReleaseHistory(cardId);
       else if (action === 'edit-task') openTaskModal(cardId);
       else if (action === 'delete-task') confirmDeleteTask(cardId);
       else if (action === 'complete-task') completeTask(cardId);
@@ -1579,9 +1719,52 @@ const attachCardListeners = () => {
       else if (action === 'edit-release-pt') openReleasePtModal(cardId);
       else if (action === 'delete-release-pt') confirmDeleteReleasePt(cardId);
       else if (action === 'toggle-checklist-item') {
+        if (e.target.closest('.rp-item-ticket') || e.target.closest('.rp-item-dev') || e.target.closest('.rp-item-edit-btn') || e.target.closest('.editing')) {
+          return;
+        }
         const rpId = btn.dataset.rpId;
         const itemId = btn.dataset.itemId;
         toggleReleasePtChecklistItem(rpId, itemId);
+      }
+      else if (action === 'edit-checklist-item-inline') {
+        const rpId = btn.dataset.rpId;
+        const itemId = btn.dataset.itemId;
+        state.inlineEditing = { rpId, itemId };
+        render();
+      }
+      else if (action === 'cancel-checklist-item-inline') {
+        state.inlineEditing = null;
+        render();
+      }
+      else if (action === 'save-checklist-item-inline') {
+        const rpId = btn.dataset.rpId;
+        const itemId = btn.dataset.itemId;
+        const parent = btn.closest('.rp-checklist-item.editing');
+        if (parent) {
+          const textVal = parent.querySelector('.rp-inline-edit-text').value;
+          const ticketVal = parent.querySelector('.rp-inline-edit-ticket').value;
+          const devVal = parent.querySelector('.rp-inline-edit-dev').value;
+          
+          const rp = (state.releasePoints || []).find(r => r.id === rpId);
+          if (rp) {
+            const item = (rp.checklistItems || []).find(i => i.id === itemId);
+            if (item) {
+              item.text = textVal;
+              item.ticket = ticketVal;
+              item.developerId = devVal;
+              rp.updatedAt = new Date().toISOString();
+              await storage.save();
+              showToast('Checklist item updated!');
+            }
+          }
+        }
+        state.inlineEditing = null;
+        render();
+      }
+      else if (action === 'release-platform') {
+        const projectId = btn.dataset.projectId;
+        const platform = btn.dataset.platform;
+        await releaseProjectVersion(projectId, platform);
       }
       else if (action === 'remove-checklist-row') {
         // Save current values
@@ -1644,6 +1827,19 @@ const attachCardListeners = () => {
     }
 
     if (e.target.closest('.task-check') || e.target.closest('a')) {
+      return;
+    }
+
+    // Overview "View Project" card button
+    const gotoProjectBtn = e.target.closest('[data-action="goto-tc-project"]');
+    if (gotoProjectBtn) {
+      state.activeTestCaseProjectId = gotoProjectBtn.dataset.projectId;
+      state.activeTestCaseModuleId = null;
+      if (state.selectedTestCaseIds) state.selectedTestCaseIds.clear();
+      state.testCaseSelectionMode = false;
+      state.visibleTestCaseCount = 100;
+      if (content) content.scrollTop = 0;
+      render();
       return;
     }
 
@@ -2280,6 +2476,28 @@ const deleteProject = async (id) => {
   render();
   updateStorageInfo();
   showToast('Project deleted');
+};
+
+const confirmClearReleaseHistory = (projectId) => {
+  const p = state.projects.find(proj => proj.id === projectId);
+  if (!p) return;
+  document.getElementById('confirmMessage').textContent =
+    `Clear all release history for "${p.name}"? This action cannot be undone.`;
+  confirmCallback = () => clearReleaseHistory(projectId);
+  showModal('confirmModal');
+};
+
+const clearReleaseHistory = async (projectId) => {
+  const p = state.projects.find(proj => proj.id === projectId);
+  if (!p) return;
+  p.releaseHistory = [];
+  delete p.lastReleaseAt;
+  delete p.lastReleaseLog;
+  p.updatedAt = new Date().toISOString();
+  await storage.save();
+  closeModals();
+  showToast('Release history cleared!');
+  render();
 };
 
 // ─── Task Modal ──────────────────────────────────────────
@@ -3195,6 +3413,31 @@ const renderReleasePtCard = (rp, q = '') => {
   };
 
   const checklistHtml = items.map(item => {
+    if (state.inlineEditing && state.inlineEditing.rpId === rp.id && state.inlineEditing.itemId === item.id) {
+      return `
+        <div class="rp-checklist-item editing" data-rp-id="${rp.id}" data-item-id="${item.id}">
+          <input type="text" class="rp-inline-edit-text" value="${escapeHtml(item.text)}" placeholder="Item text..." />
+          <div class="rp-inline-edit-row">
+            <input type="text" class="rp-inline-edit-ticket" value="${escapeHtml(item.ticket || '')}" placeholder="Ticket / Link..." />
+            <select class="rp-inline-edit-dev">
+              <option value="">Unassigned</option>
+              ${state.developers.map(d => `<option value="${d.id}" ${item.developerId === d.id ? 'selected' : ''}>${d.name}</option>`).join('')}
+            </select>
+          </div>
+          <div class="rp-inline-edit-actions">
+            <button class="rp-inline-save-btn" data-action="save-checklist-item-inline" data-rp-id="${rp.id}" data-item-id="${item.id}" title="Save">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+              <span>Save</span>
+            </button>
+            <button class="rp-inline-cancel-btn" data-action="cancel-checklist-item-inline" title="Cancel">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              <span>Cancel</span>
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
     const dev = item.developerId ? state.developers.find(d => d.id === item.developerId) : null;
     const ticketHtml = item.ticket ? renderTicketInline(item.ticket) : '';
     const devHtml = dev ? `
@@ -3218,6 +3461,9 @@ const renderReleasePtCard = (rp, q = '') => {
             </div>
           ` : ''}
         </div>
+        <button class="rp-item-edit-btn" data-action="edit-checklist-item-inline" data-rp-id="${rp.id}" data-item-id="${item.id}" title="Edit Item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
       </div>
     `;
   }).join('');
@@ -3282,6 +3528,58 @@ const renderReleasePtCard = (rp, q = '') => {
       </div>
     </div>
   `;
+};
+
+// ─── Release Project Version Automation ─────────────────────
+const releaseProjectVersion = async (projectId, platform) => {
+  const p = state.projects.find(proj => proj.id === projectId);
+  if (!p) return;
+  const now = new Date().toISOString();
+  let oldUp = '';
+  
+  const formatVersionLabel = (v) => {
+    if (!v) return '';
+    return v.toLowerCase().startsWith('v') ? v : 'v' + v;
+  };
+
+  if (platform === 'android') {
+    oldUp = p.androidUpcomingVersion || '1.0.0';
+    p.androidPreviousVersion = oldUp;
+    p.androidUpcomingVersion = incrementVersion(oldUp);
+    p.lastReleaseLog = `Android ${formatVersionLabel(oldUp)} released`;
+  } else if (platform === 'ios') {
+    oldUp = p.iosUpcomingVersion || '1.0.0';
+    p.iosPreviousVersion = oldUp;
+    p.iosUpcomingVersion = incrementVersion(oldUp);
+    p.lastReleaseLog = `iOS ${formatVersionLabel(oldUp)} released`;
+  } else {
+    // web
+    oldUp = p.upcomingVersion || p.version || '1.0.0';
+    p.previousVersion = oldUp;
+    p.upcomingVersion = incrementVersion(oldUp);
+    p.lastReleaseLog = `${formatVersionLabel(oldUp)} released`;
+  }
+  
+  p.lastReleaseAt = now;
+  p.updatedAt = now;
+  
+  p.releaseHistory = p.releaseHistory || [];
+  p.releaseHistory.unshift({
+    version: oldUp,
+    platform: platform.toUpperCase(),
+    releasedAt: now,
+    log: p.lastReleaseLog
+  });
+  if (p.releaseHistory.length > 10) {
+    p.releaseHistory = p.releaseHistory.slice(0, 10);
+  }
+  
+  // Log activity
+  logActivity(`Project "${p.name}" version ${oldUp} (${platform.toUpperCase()}) was marked as released! 🚀`, 'project');
+  showToast(`🚀 Version ${oldUp} released!`);
+  
+  await storage.save();
+  render();
 };
 
 // ─── Toggle Checklist Item ────────────────────────────────
@@ -3752,7 +4050,7 @@ const prepopulateMockData = () => {
         actual: '',
         priority: 'Critical',
         severity: 'S1 - Blocker',
-        status: 'Untested',
+        status: 'Not executed',
         type: 'Automated',
         assignee: 'Dwip Pandya',
         executionDate: '',
@@ -3810,7 +4108,7 @@ const prepopulateMockData = () => {
 };
 
 const renderSingleTestCaseRow = (tc, index, projModules, developers, selectedTestCaseIds) => {
-  const statusCls = tc.status ? tc.status.toLowerCase() : 'untested';
+  const statusCls = tc.status ? tc.status.toLowerCase().replace(/ /g, '-') : 'not-executed';
   const priorityCls = tc.priority ? tc.priority.toLowerCase() : 'medium';
   const severityCls = tc.severity ? tc.severity.toLowerCase().split(' ')[0] : 'medium';
 
@@ -3851,7 +4149,7 @@ const renderSingleTestCaseRow = (tc, index, projModules, developers, selectedTes
       <!-- Status Dropdown -->
       <td style="text-align: center; vertical-align: middle;">
         <select class="table-inline-select select-status-${statusCls}" style="font-weight:600;" data-field="status" data-id="${tc.id}">
-          <option value="Untested" ${tc.status === 'Untested' ? 'selected' : ''}>Untested</option>
+          <option value="Not executed" ${tc.status === 'Not executed' || tc.status === 'Untested' ? 'selected' : ''}>Not executed</option>
           <option value="Passed" ${tc.status === 'Passed' ? 'selected' : ''}>Passed</option>
           <option value="Failed" ${tc.status === 'Failed' ? 'selected' : ''}>Failed</option>
           <option value="Blocked" ${tc.status === 'Blocked' ? 'selected' : ''}>Blocked</option>
@@ -3964,8 +4262,11 @@ const renderTestCaseManagement = () => {
     `;
   }
 
-  const activeProj = state.projects.find(p => p.id === state.activeTestCaseProjectId) || state.projects[0];
-  state.activeTestCaseProjectId = activeProj.id;
+  const isOverviewMode = state.activeTestCaseProjectId === '__all__';
+  if (!isOverviewMode) {
+    const activeProj = state.projects.find(p => p.id === state.activeTestCaseProjectId) || state.projects[0];
+    state.activeTestCaseProjectId = activeProj.id;
+  }
   const activeProjId = state.activeTestCaseProjectId;
 
   // 1. Pre-group test cases by moduleId and projectId for O(1) lookups
@@ -3975,7 +4276,7 @@ const renderTestCaseManagement = () => {
 
   state.testCases.forEach(tc => {
     projectCounts[tc.projectId] = (projectCounts[tc.projectId] || 0) + 1;
-    if (tc.projectId === activeProjId) {
+    if (!isOverviewMode && tc.projectId === activeProjId) {
       projectCases.push(tc);
       const mid = tc.moduleId || '';
       if (!moduleCasesMap[mid]) {
@@ -4044,7 +4345,7 @@ const renderTestCaseManagement = () => {
     if (tc.status === 'Passed') passed++;
     else if (tc.status === 'Failed') failed++;
     else if (tc.status === 'Blocked') blocked++;
-    else if (tc.status === 'Untested') untested++;
+    else if (tc.status === 'Not executed' || tc.status === 'Untested' || !tc.status) untested++;
 
     if (tc.type === 'Automated') automated++;
   });
@@ -4052,14 +4353,33 @@ const renderTestCaseManagement = () => {
   const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
   const autoRate = total > 0 ? Math.round((automated / total) * 100) : 0;
 
+  // ─── Overall stats across ALL projects (for header banner + overview mode) ───
+  let overallPassed = 0, overallFailed = 0, overallBlocked = 0, overallUntested = 0, overallAutomated = 0;
+  state.testCases.forEach(tc => {
+    if (tc.status === 'Passed') overallPassed++;
+    else if (tc.status === 'Failed') overallFailed++;
+    else if (tc.status === 'Blocked') overallBlocked++;
+    else if (tc.status === 'Not executed' || tc.status === 'Untested' || !tc.status) overallUntested++;
+    if (tc.type === 'Automated') overallAutomated++;
+  });
+  const overallTotal = state.testCases.length;
+  const overallPassRate = overallTotal > 0 ? Math.round((overallPassed / overallTotal) * 100) : 0;
+  const overallAutoRate = overallTotal > 0 ? Math.round((overallAutomated / overallTotal) * 100) : 0;
+
   // Donut SVG Math
   const circumference = 2 * Math.PI * 30; // 188.49
   const strokeDash = `${(passRate / 100) * circumference} ${circumference}`;
 
   // Tabs HTML
-  const tabsHtml = state.projects.map(p => {
+  const allTabActive = isOverviewMode ? 'active' : '';
+  const tabsHtml = `
+    <button class="project-tab ${allTabActive}" data-project-id="__all__">
+      <span>All Projects</span>
+      <span class="project-tab-count">${overallTotal}</span>
+    </button>
+  ` + state.projects.map(p => {
     const count = projectCounts[p.id] || 0;
-    const isActive = p.id === state.activeTestCaseProjectId ? 'active' : '';
+    const isActive = (!isOverviewMode && p.id === state.activeTestCaseProjectId) ? 'active' : '';
     return `
       <button class="project-tab ${isActive}" data-project-id="${p.id}">
         <span>${p.name}</span>
@@ -4067,6 +4387,161 @@ const renderTestCaseManagement = () => {
       </button>
     `;
   }).join('');
+
+  // ─── Overview Mode: render cross-project dashboard and return early ───
+  if (isOverviewMode) {
+    const overallCircumference = 2 * Math.PI * 30;
+    const overallStrokeDash = `${(overallPassRate / 100) * overallCircumference} ${overallCircumference}`;
+
+    const projectOverviewCards = state.projects.map(p => {
+      let pPassed = 0, pFailed = 0, pBlocked = 0, pUntested = 0, pAutomated = 0;
+      const pCases = state.testCases.filter(tc => tc.projectId === p.id);
+      pCases.forEach(tc => {
+        if (tc.status === 'Passed') pPassed++;
+        else if (tc.status === 'Failed') pFailed++;
+        else if (tc.status === 'Blocked') pBlocked++;
+        else pUntested++;
+        if (tc.type === 'Automated') pAutomated++;
+      });
+      const pTotal = pCases.length;
+      const pPassRate = pTotal > 0 ? Math.round((pPassed / pTotal) * 100) : 0;
+      const pAutoRate = pTotal > 0 ? Math.round((pAutomated / pTotal) * 100) : 0;
+      const pCirc = 2 * Math.PI * 24;
+      const pStroke = `${(pPassRate / 100) * pCirc} ${pCirc}`;
+      const pPassColor = pPassRate >= 80 ? '#2d6a4f' : pPassRate >= 50 ? '#d4a017' : '#c0392b';
+      return `
+        <div class="tc-project-card">
+          <div class="tc-project-card-header">
+            <span class="tc-project-card-name" title="${p.name}">${p.name}</span>
+            <span class="tc-project-card-count">${pTotal} cases</span>
+          </div>
+          <div class="tc-project-card-body">
+            <div style="position:relative;width:72px;height:72px;display:grid;place-items:center;flex-shrink:0;">
+              <svg style="transform:rotate(-90deg);width:72px;height:72px;">
+                <circle cx="36" cy="36" r="24" fill="none" stroke="var(--border)" stroke-width="10"></circle>
+                <circle cx="36" cy="36" r="24" fill="none" stroke="${pPassColor}" stroke-width="10"
+                  stroke-dasharray="${pStroke}" stroke-dashoffset="0"
+                  style="transition:stroke-dasharray 0.3s ease;"></circle>
+              </svg>
+              <div style="position:absolute;display:flex;flex-direction:column;align-items:center;">
+                <span style="font-size:15px;font-weight:700;color:var(--text);line-height:1;">${pPassRate}%</span>
+                <span style="font-size:8px;text-transform:uppercase;color:var(--text-muted);">Passed</span>
+              </div>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:8px;">
+              <div class="stacked-progress-bar" style="height:10px;">
+                <div class="progress-segment pass" style="width:${pTotal > 0 ? (pPassed/pTotal*100).toFixed(1) : 0}%" title="Passed: ${pPassed}"></div>
+                <div class="progress-segment fail" style="width:${pTotal > 0 ? (pFailed/pTotal*100).toFixed(1) : 0}%" title="Failed: ${pFailed}"></div>
+                <div class="progress-segment blocked" style="width:${pTotal > 0 ? (pBlocked/pTotal*100).toFixed(1) : 0}%" title="Blocked: ${pBlocked}"></div>
+                <div class="progress-segment not-executed" style="width:${pTotal > 0 ? (pUntested/pTotal*100).toFixed(1) : 0}%" title="Not executed: ${pUntested}"></div>
+              </div>
+              <div class="tc-project-card-stats">
+                <span class="tc-stat-chip passed">✓ ${pPassed}</span>
+                <span class="tc-stat-chip failed">✗ ${pFailed}</span>
+                <span class="tc-stat-chip blocked">⊘ ${pBlocked}</span>
+                <span class="tc-stat-chip not-run">○ ${pUntested}</span>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--text-muted);">
+                <span>Auto: <strong style="color:var(--text);">${pAutoRate}%</strong></span>
+                <span>${pAutomated} automated</span>
+              </div>
+            </div>
+          </div>
+          <button class="tc-project-card-viewbtn" data-action="goto-tc-project" data-project-id="${p.id}">
+            View Project →
+          </button>
+        </div>
+      `;
+    }).join('');
+
+    const overviewHero = buildPageHero({
+      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12l2 2 4-4"/></svg>`,
+      gradient: 'linear-gradient(135deg, #0f2027 0%, #203a43 40%, #2c5364 100%)',
+      title: 'Test Case Management',
+      subtitle: 'Manage, execute and track test cases across your project modules.',
+      stats: [
+        { label: 'Total Cases', value: overallTotal },
+        { label: 'Passed', value: overallPassed, color: '#4ade80' },
+        { label: 'Failed', value: overallFailed, color: '#f87171' },
+        { label: 'Blocked', value: overallBlocked, color: '#fb923c' },
+        { label: 'Not executed', value: overallUntested, color: '#94a3b8' },
+        { label: 'Pass Rate', value: `${overallPassRate}%`, color: overallPassRate >= 80 ? '#4ade80' : overallPassRate >= 50 ? '#fbbf24' : '#f87171' },
+      ],
+      progressBar: { pct: overallPassRate, label: `${overallPassed} / ${overallTotal} passed`, color: 'linear-gradient(90deg, #4ade80, #22c55e)' }
+    });
+
+    return `
+      ${overviewHero}
+      <div class="project-tabs-container">${tabsHtml}</div>
+      <div class="testcases-workspace">
+        <section class="testcases-main-panel" style="width:100%;">
+
+          <div class="testcases-charts-row">
+            <div class="chart-card">
+              <span class="chart-card-title">Overall Test Pass Rate</span>
+              <div class="chart-container">
+                <div style="position:relative;width:90px;height:90px;display:grid;place-items:center;">
+                  <svg class="donut-svg">
+                    <circle cx="45" cy="45" r="30" fill="none" stroke="var(--border)" stroke-width="12"></circle>
+                    <circle class="donut-segment" cx="45" cy="45" r="30" fill="none" stroke="#2d6a4f"
+                      stroke-dasharray="${overallStrokeDash}" stroke-dashoffset="0"></circle>
+                  </svg>
+                  <div class="donut-center">
+                    <span class="donut-val">${overallPassRate}%</span>
+                    <span class="donut-lbl">Passed</span>
+                  </div>
+                </div>
+                <div class="chart-legend">
+                  <div class="legend-item"><span class="legend-color" style="background:#2d6a4f;"></span><span>Passed</span><span class="legend-val">${overallPassed}</span></div>
+                  <div class="legend-item"><span class="legend-color" style="background:#c0392b;"></span><span>Failed</span><span class="legend-val">${overallFailed}</span></div>
+                  <div class="legend-item"><span class="legend-color" style="background:#ef6c00;"></span><span>Blocked</span><span class="legend-val">${overallBlocked}</span></div>
+                  <div class="legend-item"><span class="legend-color" style="background:#94a3b8;"></span><span>Not executed</span><span class="legend-val">${overallUntested}</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="chart-card">
+              <span class="chart-card-title">Overall Automation & Run Status</span>
+              <div style="display:flex;flex-direction:column;justify-content:center;gap:16px;height:100%;">
+                <div class="stacked-progress-wrap">
+                  <div style="display:flex;justify-content:space-between;font-size:11.5px;">
+                    <span style="font-weight:600;color:var(--text-secondary);">Execution Coverage</span>
+                    <span style="color:var(--text-muted);">${overallTotal - overallUntested} / ${overallTotal} Run</span>
+                  </div>
+                  <div class="stacked-progress-bar">
+                    <div class="progress-segment pass" style="width:${overallTotal > 0 ? (overallPassed/overallTotal*100).toFixed(1) : 0}%" title="Passed: ${overallPassed}"></div>
+                    <div class="progress-segment fail" style="width:${overallTotal > 0 ? (overallFailed/overallTotal*100).toFixed(1) : 0}%" title="Failed: ${overallFailed}"></div>
+                    <div class="progress-segment blocked" style="width:${overallTotal > 0 ? (overallBlocked/overallTotal*100).toFixed(1) : 0}%" title="Blocked: ${overallBlocked}"></div>
+                    <div class="progress-segment not-executed" style="width:${overallTotal > 0 ? (overallUntested/overallTotal*100).toFixed(1) : 0}%" title="Not executed: ${overallUntested}"></div>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--border);padding-top:12px;">
+                  <div style="display:flex;flex-direction:column;">
+                    <span style="font-size:11px;text-transform:uppercase;color:var(--text-muted);font-weight:500;">Automation</span>
+                    <strong style="font-size:18px;color:var(--text);">${overallAutoRate}%</strong>
+                  </div>
+                  <span class="status-pill automation" style="background:var(--accent-light);color:var(--accent);border:1px solid rgba(45,106,79,0.15);font-size:10.5px;">
+                    ${overallAutomated} Automated cases
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top:24px;">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border);">
+              <h3 style="font-size:14px;font-weight:700;color:var(--text);margin:0;text-transform:uppercase;letter-spacing:0.5px;">Project Breakdown</h3>
+              <span style="font-size:12px;color:var(--text-muted);background:var(--surface-2);padding:2px 8px;border-radius:var(--radius-pill);">${state.projects.length} projects</span>
+            </div>
+            <div class="tc-overview-grid">
+              ${projectOverviewCards}
+            </div>
+          </div>
+
+        </section>
+      </div>
+    `;
+  }
 
   // Modules List HTML
   const projModules = state.modules.filter(m => m.projectId === state.activeTestCaseProjectId);
@@ -4157,14 +4632,14 @@ const renderTestCaseManagement = () => {
     title: 'Test Case Management',
     subtitle: 'Manage, execute and track test cases across your project modules.',
     stats: [
-      { label: 'Total Cases', value: state.testCases.length },
-      { label: 'Passed', value: passed, color: '#4ade80' },
-      { label: 'Failed', value: failed, color: '#f87171' },
-      { label: 'Blocked', value: blocked, color: '#fb923c' },
-      { label: 'Untested', value: untested, color: '#94a3b8' },
-      { label: 'Pass Rate', value: `${passRate}%`, color: passRate >= 80 ? '#4ade80' : passRate >= 50 ? '#fbbf24' : '#f87171' },
+      { label: 'Total Cases', value: overallTotal },
+      { label: 'Passed', value: overallPassed, color: '#4ade80' },
+      { label: 'Failed', value: overallFailed, color: '#f87171' },
+      { label: 'Blocked', value: overallBlocked, color: '#fb923c' },
+      { label: 'Not executed', value: overallUntested, color: '#94a3b8' },
+      { label: 'Pass Rate', value: `${overallPassRate}%`, color: overallPassRate >= 80 ? '#4ade80' : overallPassRate >= 50 ? '#fbbf24' : '#f87171' },
     ],
-    progressBar: { pct: passRate, label: `${passed} / ${total} passed`, color: 'linear-gradient(90deg, #4ade80, #22c55e)' }
+    progressBar: { pct: overallPassRate, label: `${overallPassed} / ${overallTotal} passed`, color: 'linear-gradient(90deg, #4ade80, #22c55e)' }
   });
 
   // Return full workspace markup
@@ -4224,6 +4699,11 @@ const renderTestCaseManagement = () => {
                   <span>Blocked</span>
                   <span class="legend-val">${blocked}</span>
                 </div>
+                <div class="legend-item">
+                  <span class="legend-color" style="background:#94a3b8;"></span>
+                  <span>Not executed</span>
+                  <span class="legend-val">${untested}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -4241,7 +4721,7 @@ const renderTestCaseManagement = () => {
                   <div class="progress-segment pass" style="width: ${passWidth}%" title="Passed: ${passed}"></div>
                   <div class="progress-segment fail" style="width: ${failWidth}%" title="Failed: ${failed}"></div>
                   <div class="progress-segment blocked" style="width: ${blockWidth}%" title="Blocked: ${blocked}"></div>
-                  <div class="progress-segment untested" style="width: ${untestWidth}%" title="Untested: ${untested}"></div>
+                  <div class="progress-segment not-executed" style="width: ${untestWidth}%" title="Not executed: ${untested}"></div>
                 </div>
               </div>
               <div style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:12px;">
@@ -4272,7 +4752,7 @@ const renderTestCaseManagement = () => {
             <option value="Passed" ${state.testCaseFilters.status === 'Passed' ? 'selected' : ''}>Passed</option>
             <option value="Failed" ${state.testCaseFilters.status === 'Failed' ? 'selected' : ''}>Failed</option>
             <option value="Blocked" ${state.testCaseFilters.status === 'Blocked' ? 'selected' : ''}>Blocked</option>
-            <option value="Untested" ${state.testCaseFilters.status === 'Untested' ? 'selected' : ''}>Untested</option>
+            <option value="Not executed" ${state.testCaseFilters.status === 'Not executed' || state.testCaseFilters.status === 'Untested' ? 'selected' : ''}>Not executed</option>
           </select>
 
           <select class="filter-select" id="filterTCPriority" data-tcfilter="priority">
@@ -4409,7 +4889,7 @@ const openTestCaseModal = (id = null) => {
     document.getElementById('testCasePriority').value = tc.priority;
     document.getElementById('testCaseSeverity').value = tc.severity || 'S3 - Major';
     document.getElementById('testCaseType').value = tc.type || 'Manual';
-    document.getElementById('testCaseStatus').value = tc.status || 'Untested';
+    document.getElementById('testCaseStatus').value = (tc.status === 'Untested' ? 'Not executed' : (tc.status || 'Not executed'));
     document.getElementById('testCaseAssignee').value = tc.assignee || '';
     document.getElementById('testCaseExecutionDate').value = tc.executionDate || '';
     document.getElementById('testCaseDefectId').value = tc.defectId || '';
@@ -4432,7 +4912,7 @@ const openTestCaseModal = (id = null) => {
     document.getElementById('testCasePriority').value = 'High';
     document.getElementById('testCaseSeverity').value = 'S3 - Major';
     document.getElementById('testCaseType').value = 'Manual';
-    document.getElementById('testCaseStatus').value = 'Untested';
+    document.getElementById('testCaseStatus').value = 'Not executed';
     document.getElementById('testCaseAssignee').value = '';
     document.getElementById('testCaseExecutionDate').value = '';
     document.getElementById('testCaseDefectId').value = '';
@@ -4689,6 +5169,14 @@ const openExcelImportModal = () => {
     renderImportPreview();
   };
 
+  // Set module change listener in import modal
+  const modSel = document.getElementById('excelImportModule');
+  if (modSel) {
+    modSel.onchange = () => {
+      renderImportPreview();
+    };
+  }
+
   // Reset file input and preview styles
   document.getElementById('excelFileInput').value = '';
   document.getElementById('excelPreviewSection').style.display = 'none';
@@ -4696,6 +5184,9 @@ const openExcelImportModal = () => {
   document.getElementById('saveExcelImport').style.display = 'none';
   const replaceDupesCheckbox = document.getElementById('excelImportReplaceDupes');
   if (replaceDupesCheckbox) replaceDupesCheckbox.checked = false;
+
+  const dupesSec = document.getElementById('excelImportDuplicatesSection');
+  if (dupesSec) dupesSec.style.display = 'none';
 
   const dropzone = document.getElementById('excelDropzone');
   dropzone.style.display = 'flex';
@@ -4864,8 +5355,7 @@ const normalizeStatus = (val) => {
   if (clean.startsWith('pass')) return 'Passed';
   if (clean.startsWith('fail')) return 'Failed';
   if (clean.startsWith('block')) return 'Blocked';
-  if (clean.startsWith('untest')) return 'Untested';
-  return 'Untested'; // default
+  return 'Not executed'; // default
 };
 
 const normalizeType = (val) => {
@@ -5258,6 +5748,9 @@ const renderImportPreview = () => {
 
   let newCount = 0;
   let dupCount = 0;
+  let fileDupCount = 0;
+  const duplicateCases = [];
+  const duplicateIds = new Set();
 
   const scenarioIdx = data.mapping.scenario;
   const idIdx = data.mapping.id;
@@ -5289,48 +5782,18 @@ const renderImportPreview = () => {
     const customIdRaw = getVal('id');
     const customId = String(customIdRaw || '').trim();
 
-    // Determine module FIRST
-    let targetModuleId = '';
-    if (modalModuleId === 'root_only') {
-      targetModuleId = '';
-    } else if (modalModuleId !== '') {
-      targetModuleId = modalModuleId;
-    } else {
-      const csvModuleNameRaw = getVal('module');
-      const csvModuleName = String(csvModuleNameRaw || '').trim();
-      if (csvModuleName) {
-        const cleanName = csvModuleName.toLowerCase();
-        if (tempModuleCache[cleanName]) {
-          targetModuleId = tempModuleCache[cleanName];
-        } else {
-          const existingMod = state.modules.find(m => m.projectId === projectId && m.name.toLowerCase() === cleanName);
-          if (existingMod) {
-            targetModuleId = existingMod.id;
-            tempModuleCache[cleanName] = targetModuleId;
-          } else {
-            const tempId = 'temp-mod-' + cleanName;
-            tempModuleCache[cleanName] = tempId;
-            targetModuleId = tempId;
-          }
-        }
-      } else {
-        const defaultMod = state.modules.find(m => m.projectId === projectId);
-        targetModuleId = defaultMod ? defaultMod.id : '';
-      }
-    }
-
-    // Check if it matches an existing system test case IN THE SAME TARGET MODULE
+    // Check if it matches an existing system test case IN THE SAME PROJECT (independent of module)
     let existing = null;
     if (customId) {
-      existing = state.testCases.find(tc => tc.projectId === projectId && tc.moduleId === targetModuleId && tc.id.toLowerCase() === customId.toLowerCase());
+      existing = state.testCases.find(tc => tc.projectId === projectId && tc.id.toLowerCase() === customId.toLowerCase());
     }
     if (!existing && scenario) {
-      existing = state.testCases.find(tc => tc.projectId === projectId && tc.moduleId === targetModuleId && (tc.scenario || tc.title || '').trim().toLowerCase() === scenario.toLowerCase());
+      existing = state.testCases.find(tc => tc.projectId === projectId && (tc.scenario || tc.title || '').trim().toLowerCase() === scenario.toLowerCase());
     }
 
-    // Check duplicate within the same file (scoped to target module)
-    const fileIdKey = targetModuleId + "|||" + customId.toLowerCase();
-    const fileScenarioKey = targetModuleId + "|||" + scenario.toLowerCase();
+    // Check duplicate within the same file (project-scoped)
+    const fileIdKey = customId.toLowerCase();
+    const fileScenarioKey = scenario.toLowerCase();
     let isFileDup = false;
     if (customId && seenIds.has(fileIdKey)) isFileDup = true;
     if (!isFileDup && seenScenarios.has(fileScenarioKey)) isFileDup = true;
@@ -5339,6 +5802,10 @@ const renderImportPreview = () => {
     let isUpdated = false;
 
     if (existing) {
+      if (!duplicateIds.has(existing.id)) {
+        duplicateIds.add(existing.id);
+        duplicateCases.push(existing);
+      }
       if (hasDiff(existing, row, data.mapping, projectId)) {
         isUpdated = true;
       } else {
@@ -5346,7 +5813,9 @@ const renderImportPreview = () => {
       }
     }
 
-    if (isFileDup || isSystemDup) {
+    if (isFileDup) {
+      fileDupCount++;
+    } else if (isSystemDup) {
       if (isUpdated) {
         newCount++;
       } else {
@@ -5409,6 +5878,15 @@ const renderImportPreview = () => {
     preview.insertBefore(summaryCard, preview.firstChild.nextSibling);
   }
 
+  let fileDupHtml = '';
+  if (fileDupCount > 0) {
+    fileDupHtml = `
+      <div style="display:flex; justify-content:space-between; color:var(--text-muted);">
+        <span>Duplicates within file (skipped):</span> <strong>${fileDupCount}</strong>
+      </div>
+    `;
+  }
+
   summaryCard.innerHTML = `
     <div style="font-weight:bold; margin-bottom:4px;">File parsed successfully!</div>
     <div style="display:flex; justify-content:space-between; margin-top:2px;">
@@ -5417,10 +5895,65 @@ const renderImportPreview = () => {
     <div style="display:flex; justify-content:space-between; color:#27ae60;">
       <span>New / Updated Test Cases:</span> <strong>${newCount}</strong>
     </div>
-    <div style="display:flex; justify-content:space-between; color:${dupCount > 0 ? (replaceDupes ? '#e67e22' : 'var(--danger)') : 'var(--text-muted)'};">
-      <span>${replaceDupes ? 'Duplicates to Overwrite:' : 'Ignored duplicates (Already exist):'}</span> <strong>${dupCount}</strong>
+    ${fileDupHtml}
+    <div style="display:flex; justify-content:space-between; align-items:center; color:${dupCount > 0 ? (replaceDupes ? '#e67e22' : 'var(--danger)') : 'var(--text-muted)'};">
+      <span>${replaceDupes ? 'Duplicates to Overwrite:' : 'Ignored duplicates (Already exist in system):'}</span> 
+      <div>
+        <strong>${dupCount}</strong>
+        ${dupCount > 0 ? `<a href="#" id="viewExcelDupesLink" style="font-size:11px; margin-left:8px; text-decoration:underline; font-weight:600; color:inherit; cursor:pointer;">View / Clean</a>` : ''}
+      </div>
     </div>
   `;
+
+  // Render the duplicates list
+  const dupesContainer = document.getElementById('excelDupesListContainer');
+  const dupesSection = document.getElementById('excelImportDuplicatesSection');
+  const dupesCountEl = document.getElementById('excelImportDupesCount');
+
+  if (dupesSection && dupesContainer) {
+    if (duplicateCases.length > 0) {
+      dupesCountEl.textContent = `${duplicateCases.length} duplicate${duplicateCases.length !== 1 ? 's' : ''} found`;
+      dupesContainer.innerHTML = duplicateCases.map(tc => {
+        const mod = state.modules.find(m => m.id === tc.moduleId);
+        const moduleName = mod ? mod.name : 'Root / Unassigned';
+        return `
+          <div class="dupe-item" style="display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: #fff; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; gap: 8px; margin-bottom: 4px;">
+            <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1;">
+              <div style="font-weight: 600; display: flex; align-items: center; gap: 6px;">
+                <span class="status-pill planned" style="font-size: 10px; padding: 1px 4px; font-family: var(--font-mono); margin: 0;">${tc.id}</span>
+                <span style="color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(tc.scenario || tc.title)}">${escapeHtml(tc.scenario || tc.title)}</span>
+              </div>
+              <span style="font-size: 10.5px; color: var(--text-muted);">Module: ${escapeHtml(moduleName)}</span>
+            </div>
+            <button class="icon-btn danger delete-dupe-btn" data-tc-id="${tc.id}" title="Delete from system" style="padding: 0; width: 24px; height: 24px; flex-shrink: 0; border: 1px solid var(--border); border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; background: none; cursor: pointer; transition: all 0.2s;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px; color: var(--danger);"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+            </button>
+          </div>
+        `;
+      }).join('');
+    } else {
+      dupesSection.style.display = 'none';
+      dupesContainer.innerHTML = '';
+      const toggleLink = document.getElementById('viewExcelDupesLink');
+      if (toggleLink) toggleLink.textContent = 'View / Clean';
+    }
+  }
+};
+
+const deleteTestCaseFromImport = async (id) => {
+  if (confirm(`Delete test case "${id}" from the system? This action cannot be undone.`)) {
+    state.testCases = state.testCases.filter(tc => tc.id !== id);
+    logActivity(`Deleted testcase "${id}" during Excel import`, 'delete');
+    await storage.save();
+    showToast(`Test case ${id} deleted.`);
+    
+    // Re-render import preview
+    renderImportPreview();
+    
+    // Re-render main UI in background
+    render();
+    updateStorageInfo();
+  }
 };
 
 const handleExcelImport = async () => {
@@ -5496,13 +6029,12 @@ const handleExcelImport = async () => {
     const existingScenarioMap = new Map();
     state.testCases.forEach(tc => {
       const pId = tc.projectId;
-      const mId = tc.moduleId || '';
       if (tc.id) {
-        existingIdMap.set(pId + "|||" + mId + "|||" + tc.id.toLowerCase(), tc);
+        existingIdMap.set(pId + "|||" + tc.id.toLowerCase(), tc);
       }
       const scenarioVal = (tc.scenario || tc.title || '').trim().toLowerCase();
       if (scenarioVal) {
-        existingScenarioMap.set(pId + "|||" + mId + "|||" + scenarioVal, tc);
+        existingScenarioMap.set(pId + "|||" + scenarioVal, tc);
       }
     });
 
@@ -5559,18 +6091,18 @@ const handleExcelImport = async () => {
         }
       }
 
-      // Check if it matches an existing system test case IN THE SAME TARGET MODULE
+      // Check if it matches an existing system test case IN THE SAME PROJECT (independent of module)
       let existing = null;
       if (customId) {
-        existing = existingIdMap.get(projectId + "|||" + targetModuleId + "|||" + customId.toLowerCase()) || null;
+        existing = existingIdMap.get(projectId + "|||" + customId.toLowerCase()) || null;
       }
       if (!existing && scenario) {
-        existing = existingScenarioMap.get(projectId + "|||" + targetModuleId + "|||" + scenario.toLowerCase()) || null;
+        existing = existingScenarioMap.get(projectId + "|||" + scenario.toLowerCase()) || null;
       }
 
-      // Check duplicate within the same file (scoped to target module)
-      const fileIdKey = targetModuleId + "|||" + customId.toLowerCase();
-      const fileScenarioKey = targetModuleId + "|||" + scenario.toLowerCase();
+      // Check duplicate within the same file (project-scoped)
+      const fileIdKey = customId.toLowerCase();
+      const fileScenarioKey = scenario.toLowerCase();
       let isFileDup = false;
       if (customId && seenIds.has(fileIdKey)) isFileDup = true;
       if (!isFileDup && seenScenarios.has(fileScenarioKey)) isFileDup = true;
@@ -5654,8 +6186,8 @@ const handleExcelImport = async () => {
 
       state.testCases.push(newTestCase);
       existingIdsSet.add(finalId.toLowerCase());
-      existingIdMap.set(projectId + "|||" + targetModuleId + "|||" + finalId.toLowerCase(), newTestCase);
-      existingScenarioMap.set(projectId + "|||" + targetModuleId + "|||" + scenario.toLowerCase(), newTestCase);
+      existingIdMap.set(projectId + "|||" + finalId.toLowerCase(), newTestCase);
+      existingScenarioMap.set(projectId + "|||" + scenario.toLowerCase(), newTestCase);
 
       imported++;
     });
@@ -5809,7 +6341,7 @@ const handleBulkUpdateFieldChange = () => {
   } else if (field === 'status') {
     html = `
       <select id="bulkUpdateValueSelect" style="background:var(--surface);">
-        <option value="Untested" selected>Untested</option>
+        <option value="Not executed" selected>Not executed</option>
         <option value="Passed">Passed</option>
         <option value="Failed">Failed</option>
         <option value="Blocked">Blocked</option>
@@ -6365,6 +6897,32 @@ const init = async () => {
   if (replaceDupesCheckbox) {
     replaceDupesCheckbox.addEventListener('change', () => {
       renderImportPreview();
+    });
+  }
+
+  // Handle click delegation inside Excel Import Modal for duplicates View / Clean / Delete
+  const excelImportModal = document.getElementById('excelImportModal');
+  if (excelImportModal) {
+    excelImportModal.addEventListener('click', async (e) => {
+      const toggleLink = e.target.closest('#viewExcelDupesLink');
+      if (toggleLink) {
+        e.preventDefault();
+        const dupesSec = document.getElementById('excelImportDuplicatesSection');
+        if (dupesSec) {
+          const isHidden = dupesSec.style.display === 'none';
+          dupesSec.style.display = isHidden ? 'block' : 'none';
+          toggleLink.textContent = isHidden ? 'Hide List' : 'View / Clean';
+        }
+        return;
+      }
+
+      const deleteBtn = e.target.closest('.delete-dupe-btn');
+      if (deleteBtn) {
+        e.stopPropagation();
+        const tcId = deleteBtn.dataset.tcId;
+        await deleteTestCaseFromImport(tcId);
+        return;
+      }
     });
   }
 
