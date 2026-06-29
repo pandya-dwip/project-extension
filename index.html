@@ -121,12 +121,7 @@
       </nav>
 
       <div class="sidebar-footer">
-        <div class="storage-info" id="storageInfo">
-          <div class="storage-bar">
-            <div class="storage-fill" id="storageFill"></div>
-          </div>
-          <span id="storageLabel">0 items stored</span>
-        </div>
+        <div class="app-version-tag" id="appVersion">Version 2.0.5</div>
       </div>
     </aside>
 
@@ -270,7 +265,7 @@
 
       <!-- Web Software version fields -->
       <div id="webVersionFields">
-        <div class="form-row" style="grid-template-columns: 1fr 1fr;">
+        <div class="form-row">
           <div class="form-group">
             <label>Previous Release Version</label>
             <input type="text" id="projectPreviousVersion" placeholder="e.g. v1.0.0" />
@@ -284,7 +279,7 @@
 
       <!-- Application version fields -->
       <div id="appVersionFields" style="display:none;">
-        <div class="form-row" style="grid-template-columns: 1fr 1fr;">
+        <div class="form-row">
           <div class="form-group">
             <label>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
@@ -301,7 +296,7 @@
             <input type="text" id="projectAndroidUpcoming" placeholder="e.g. v1.1.0" />
           </div>
         </div>
-        <div class="form-row" style="grid-template-columns: 1fr 1fr;">
+        <div class="form-row">
           <div class="form-group">
             <label>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
@@ -358,7 +353,7 @@
         <label>Tags <span class="hint">(comma separated, e.g. Bug, UI)</span></label>
         <input type="text" id="taskTags" placeholder="Feature, Backend..." />
       </div>
-      <div class="form-row" style="grid-template-columns: 1fr 1fr;">
+      <div class="form-row">
         <div class="form-group">
           <label>Status</label>
           <select id="taskStatus">
@@ -378,7 +373,7 @@
           </select>
         </div>
       </div>
-      <div class="form-row" style="grid-template-columns: 1fr 1fr;">
+      <div class="form-row">
         <div class="form-group">
           <label>Start Date</label>
           <input type="date" id="taskStartDate" />
@@ -387,6 +382,11 @@
           <label>End Date</label>
           <input type="date" id="taskEndDate" />
         </div>
+      </div>
+      <div class="form-group" id="completionDateGroup" style="display:none;">
+        <label>Completion Date <span class="req">*</span></label>
+        <input type="date" id="taskCompletedDate" />
+        <span style="font-size:11px;color:var(--text-muted);margin-top:4px;display:block;">The date this task was actually completed.</span>
       </div>
       <div class="form-group">
         <label>Project <span class="hint">(optional)</span></label>
@@ -404,6 +404,30 @@
     <div class="modal-footer">
       <button class="btn-ghost" id="cancelTaskModal">Cancel</button>
       <button class="btn-primary" id="saveTask">Save Task</button>
+    </div>
+  </div>
+
+  <!-- Completion Date Modal -->
+  <div class="modal modal-sm" id="completionDateModal">
+    <div class="modal-header">
+      <h2 class="modal-title">Task Completed</h2>
+      <button class="modal-close" id="closeCompletionDateModal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 6 6 18M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="completionTaskId" />
+      <div class="form-group">
+        <label>When was this task completed?</label>
+        <input type="date" id="completionDateInput" />
+        <span style="font-size:11.5px;color:var(--text-muted);margin-top:5px;display:block;">Defaults to today if left unchanged.</span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-ghost" id="skipCompletionDate">Skip (use today)</button>
+      <button class="btn-primary" id="confirmCompletionDate">Confirm Date</button>
     </div>
   </div>
 
@@ -504,7 +528,7 @@
     <div class="modal-body">
       <input type="hidden" id="releaseId" />
 
-      <div class="form-row" style="grid-template-columns: 1fr 1fr;">
+      <div class="form-row">
         <div class="form-group">
           <label>Project <span class="req">*</span></label>
           <select id="releaseProject">
@@ -519,7 +543,7 @@
         </div>
       </div>
 
-      <div class="form-row" style="grid-template-columns: 1fr 1fr;">
+      <div class="form-row">
         <div class="form-group">
           <label>Release Name <span class="req">*</span></label>
           <input type="text" id="releaseName" placeholder="e.g. Summer Pack" />
@@ -535,7 +559,7 @@
         <textarea id="releaseDesc" placeholder="Describe this release…" rows="2"></textarea>
       </div>
 
-      <div class="form-row" style="grid-template-columns: 1fr 1fr;">
+      <div class="form-row">
         <div class="form-group">
           <label>Release Manager / Owner</label>
           <select id="releaseManager">
@@ -665,7 +689,7 @@
 
       <!-- Tab 3: Metadata & Assignment -->
       <div class="modal-tab-content" id="tab-meta">
-        <div class="form-row" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div class="form-row" style="gap: 12px;">
           <div class="form-group">
             <label>Project <span class="req">*</span></label>
             <select id="testCaseProject">
@@ -679,7 +703,7 @@
             </select>
           </div>
         </div>
-        <div class="form-row" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div class="form-row" style="gap: 12px;">
           <div class="form-group">
             <label>Test Case ID Override <span class="hint">(optional)</span></label>
             <input type="text" id="testCaseCustomId" placeholder="e.g. TC-101 (Auto if blank)" />
@@ -696,7 +720,7 @@
             </select>
           </div>
         </div>
-        <div class="form-row" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div class="form-row" style="gap: 12px;">
           <div class="form-group">
             <label>Priority</label>
             <select id="testCasePriority">
@@ -716,7 +740,7 @@
             </select>
           </div>
         </div>
-        <div class="form-row" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div class="form-row" style="gap: 12px;">
           <div class="form-group">
             <label>Tested By</label>
             <select id="testCaseAssignee">
@@ -842,7 +866,7 @@
             </div>
           </div>
 
-          <div class="form-row" style="grid-template-columns: 1fr 1fr; margin-bottom: 8px; gap: 12px;">
+          <div class="form-row" style="margin-bottom: 8px; gap: 12px;">
             <div class="form-group" style="margin-bottom:0;">
               <label style="font-size:11.5px;">Import into Project</label>
               <select id="excelImportProject" style="background:var(--surface);">
@@ -1022,14 +1046,41 @@
       <div class="form-group">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
           <label style="margin-bottom:0;">Checklist Items <span class="req">*</span></label>
-          <button type="button" class="btn-ghost" id="addChecklistItemBtn"
-            style="padding:4px 10px;font-size:12px;height:auto;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            Add Item
-          </button>
+          <div style="display:flex;gap:6px;">
+            <button type="button" class="btn-ghost" id="bulkAddToggleBtn"
+              style="padding:4px 10px;font-size:12px;height:auto;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;">
+                <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>
+                <line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+              </svg>
+              Bulk Add
+            </button>
+            <button type="button" class="btn-ghost" id="addChecklistItemBtn"
+              style="padding:4px 10px;font-size:12px;height:auto;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              Add Item
+            </button>
+          </div>
         </div>
+
+        <!-- Bulk Add Panel -->
+        <div id="bulkAddPanel" style="display:none;margin-bottom:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;">
+          <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px 0;font-weight:500;">How many empty items do you want to add?</p>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <button type="button" id="bulkCountDecBtn"
+              style="width:32px;height:32px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);cursor:pointer;font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center;color:var(--text);">−</button>
+            <input type="number" id="bulkCountInput" value="3" min="1" max="50"
+              style="width:56px;height:32px;text-align:center;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-size:14px;font-family:inherit;padding:0 6px;" />
+            <button type="button" id="bulkCountIncBtn"
+              style="width:32px;height:32px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);cursor:pointer;font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center;color:var(--text);">+</button>
+            <button type="button" class="btn-accent" id="bulkAddConfirmBtn" style="font-size:12px;padding:6px 16px;height:32px;margin-left:4px;">
+              Add Items
+            </button>
+          </div>
+        </div>
+
         <div id="checklistItemsContainer" class="rp-checklist-editor">
           <!-- Dynamic items -->
         </div>
@@ -1043,6 +1094,7 @@
   </div>
 
   <script src="xlsx.full.min.js"></script>
+  <script src="chart.umd.min.js"></script>
   <script src="app.js?v=6"></script>
 </body>
 

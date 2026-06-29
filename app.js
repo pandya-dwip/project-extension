@@ -73,7 +73,8 @@ let state = {
   testFilters: { project: '', developer: '', status: '', assignedStatus: '' },
   releaseFilters: { status: '' },
   releasePtFilters: { project: '', releaseType: '', completion: '' },
-  inlineEditing: null
+  inlineEditing: null,
+  chartMonth: null        // { year, month } — set on first render to last month
 };
 
 let confirmCallback = null;
@@ -159,8 +160,7 @@ const timeAgo = (iso) => {
   if (m < 60) return `${m}m ago`;
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
-  const days = Math.floor(h / 24);
-  return `${days}d ago`;
+  return fmtDate(iso);
 };
 
 const statusPill = (s) =>
@@ -191,7 +191,7 @@ const escapeHtml = (str) => {
 
 const incrementVersion = (ver) => {
   if (!ver) return '1.0.0';
-  
+
   // Try to parse standard semantic version like v1.0.0 or 1.0.0
   const semverMatch = ver.trim().match(/^([vV]?)(\d+)\.(\d+)\.(\d+)$/);
   if (semverMatch) {
@@ -199,11 +199,11 @@ const incrementVersion = (ver) => {
     const major = parseInt(semverMatch[2], 10);
     const minor = parseInt(semverMatch[3], 10);
     const patch = parseInt(semverMatch[4], 10);
-    
+
     let nextMajor = major;
     let nextMinor = minor;
     let nextPatch = patch;
-    
+
     if (minor === 0 && patch === 9) {
       nextMinor = 2;
       nextPatch = 0;
@@ -219,10 +219,10 @@ const incrementVersion = (ver) => {
     } else {
       nextPatch = patch + 1;
     }
-    
+
     return `${prefix}${nextMajor}.${nextMinor}.${nextPatch}`;
   }
-  
+
   // Fallback to original increment logic for other formats
   const match = ver.match(/^(.*?)(\d+)$/);
   if (match) {
@@ -316,7 +316,7 @@ const updateDeveloperDropdown = (projectIdOrIds, selectId, currentValue) => {
   if (projectIdOrIds) {
     if (Array.isArray(projectIdOrIds)) {
       if (projectIdOrIds.length > 0) {
-        devs = state.developers.filter(d => 
+        devs = state.developers.filter(d =>
           (d.projectIds || []).some(pid => projectIdOrIds.includes(pid))
         );
       }
@@ -445,13 +445,7 @@ const showToast = (msg, type = 'success') => {
 };
 
 // ─── Storage indicator ───────────────────────────────────
-const updateStorageInfo = () => {
-  const total = state.projects.length + state.tasks.length + state.tests.length + (state.releases ? state.releases.length : 0) + state.testCases.length + (state.releasePoints ? state.releasePoints.length : 0);
-  const pct = Math.min(total / 300 * 100, 100);
-  document.getElementById('storageFill').style.width = pct + '%';
-  document.getElementById('storageLabel').textContent =
-    `${state.projects.length} projects · ${state.tasks.length} tasks · ${state.testCases.length} test cases · ${(state.releases || []).length} releases · ${(state.releasePoints || []).length} release pts`;
-};
+const updateStorageInfo = () => { };
 
 // ─── Navigation ──────────────────────────────────────────
 const setView = (view) => {
@@ -499,7 +493,7 @@ const render = () => {
   const scrollPos = ct ? ct.scrollTop : 0;
 
   switch (state.view) {
-    case 'dashboard': ct.innerHTML = renderDashboard(); break;
+    case 'dashboard': ct.innerHTML = renderDashboard(); initWeeklyChart(); break;
     case 'projects': ct.innerHTML = renderProjects(); break;
     case 'tasks': ct.innerHTML = renderTasks(); break;
     case 'tests': ct.innerHTML = renderTests(); break;
@@ -562,23 +556,154 @@ const buildPageHero = ({ icon, gradient, title, subtitle, stats, progressBar }) 
   `;
 };
 
+const isCurrentMonth = (dateStr) => {
+  if (!dateStr) return false;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return false;
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+};
+
+// ─── Weekly Chart (Chart.js) ─────────────────────────────
+let _weeklyChartInstance = null;
+
+const initWeeklyChart = () => {
+  const canvas = document.getElementById('weeklyTaskChart');
+  if (!canvas || typeof Chart === 'undefined') return;
+
+  if (_weeklyChartInstance) { _weeklyChartInstance.destroy(); _weeklyChartInstance = null; }
+
+  // Rebuild weekData from current state.chartMonth
+  if (!state.chartMonth) {
+    const _d = new Date();
+    state.chartMonth = { year: _d.getFullYear(), month: _d.getMonth() };
+  }
+  const { year: cy, month: cm } = state.chartMonth;
+  const lmStart = new Date(cy, cm, 1);
+  const lmEnd   = new Date(cy, cm + 1, 0);
+  const firstDay = new Date(lmStart);
+  const dow = firstDay.getDay();
+  const off = dow === 0 ? -6 : 1 - dow;
+  let wCursor = new Date(firstDay); wCursor.setDate(firstDay.getDate() + off);
+  const wData = [];
+  while (wCursor <= lmEnd) {
+    const wEnd = new Date(wCursor); wEnd.setDate(wCursor.getDate() + 6);
+    const dS = new Date(wCursor); dS.setHours(0,0,0,0);
+    const dE = new Date(wEnd);    dE.setHours(23,59,59,999);
+    const dispS = new Date(Math.max(dS, lmStart));
+    const dispE = new Date(Math.min(dE, lmEnd));
+    const mo = (d) => d.toLocaleDateString('en', { month: 'short' });
+    const lbl = mo(dispS) === mo(dispE)
+      ? `${mo(dispS)} ${dispS.getDate()}–${dispE.getDate()}`
+      : `${dispS.getDate()} ${mo(dispS)}–${dispE.getDate()} ${mo(dispE)}`;
+    const count = state.tasks.filter(t => {
+      if (t.status !== 'Done') return false;
+      const cd = new Date(t.completedDate || t.updatedAt || t.createdAt);
+      return cd >= dS && cd <= dE;
+    }).length;
+    wData.push({ label: lbl, count });
+    wCursor.setDate(wCursor.getDate() + 7);
+  }
+
+  const labels = wData.map((_, i) => `Wk ${i + 1}`);
+  const counts  = wData.map(w => w.count);
+  const subLabels = wData.map(w => `(${w.label})`);
+
+  _weeklyChartInstance = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        data: counts,
+        backgroundColor: counts.map(c => {
+          const max = Math.max(...counts);
+          return c === max && c > 0 ? '#1a4a36' : '#2d6a4f';
+        }),
+        hoverBackgroundColor: '#3d8b68',
+        borderRadius: { topLeft: 6, topRight: 6 },
+        borderSkipped: 'bottom',
+        maxBarThickness: 72,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      layout: { padding: { top: 24 } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => `${labels[items[0].dataIndex]} ${subLabels[items[0].dataIndex]}`,
+            label: (item) => ` ${item.raw} tasks completed`,
+          },
+          backgroundColor: '#1a1916',
+          titleFont: { size: 11, weight: '600' },
+          bodyFont: { size: 12, weight: '700' },
+          padding: 10,
+          cornerRadius: 8,
+        },
+        datalabels: { display: false },
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          border: { display: false },
+          ticks: {
+            color: '#6b6760',
+            font: { size: 11, weight: '700', family: 'inherit' },
+            callback: (_val, i) => [labels[i], subLabels[i]],
+          },
+        },
+        y: {
+          beginAtZero: true,
+          border: { display: false, dash: [5, 4] },
+          grid: { color: '#e8e5df', drawTicks: false },
+          ticks: {
+            color: '#a09d96',
+            font: { size: 10, family: 'inherit' },
+            precision: 0,
+            padding: 8,
+          },
+        },
+      },
+      animation: { duration: 400, easing: 'easeOutQuart' },
+    },
+    plugins: [{
+      id: 'barCountLabel',
+      afterDatasetsDraw(chart) {
+        const { ctx } = chart;
+        chart.data.datasets[0].data.forEach((val, i) => {
+          if (!val) return;
+          const meta = chart.getDatasetMeta(0);
+          const bar  = meta.data[i];
+          ctx.save();
+          ctx.fillStyle = '#1a1916';
+          ctx.font = 'bold 12px inherit';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          ctx.fillText(val, bar.x, bar.y - 4);
+          ctx.restore();
+        });
+      },
+    }],
+  });
+};
+
 // ─── Dashboard ───────────────────────────────────────────
 const renderDashboard = () => {
   const totalProjects = state.projects.length;
   const totalTasks = state.tasks.length;
-  const totalTests = state.tests.length;
+  const totalTests = (state.tests || []).length;
   const totalReleases = (state.releases || []).length;
   const totalReleasePts = (state.releasePoints || []).length;
   const completedTasks = state.tasks.filter(t => t.status === 'Done').length;
   const taskPct = totalTasks === 0 ? 0 : Math.round(completedTasks / totalTasks * 100);
 
-  const recentTasks = state.tasks.slice(0, 5);
-  const recentProjects = state.projects.slice(0, 4);
-  const recentTests = state.tests.slice(0, 5);
-
-  const statusCount = {};
-  state.projects.forEach(p => p.statuses.forEach(s => { statusCount[s] = (statusCount[s] || 0) + 1; }));
-  const topStatus = Object.entries(statusCount).sort((a, b) => b[1] - a[1])[0];
+  // Active = manual releases In Progress/Testing/Approved + upcoming release points
+  const activeManualReleases = (state.releases || [])
+    .filter(r => ['In Progress', 'Testing', 'Approved'].includes(r.status));
+  const activeReleasePoints = (state.releasePoints || [])
+    .filter(rp => rp.releaseType === 'upcoming' || !rp.isCompleted);
 
   const hero = buildPageHero({
     icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>`,
@@ -596,42 +721,496 @@ const renderDashboard = () => {
     progressBar: { pct: taskPct, label: `${completedTasks} / ${totalTasks} tasks completed`, color: 'linear-gradient(90deg, #4ade80, #22c55e)' }
   });
 
+  // 1. Released This Month
+  const manualReleasesThisMonth = (state.releases || [])
+    .filter(r => r.status === 'Released' && isCurrentMonth(r.releaseDate || r.updatedAt || r.createdAt));
+
+  const projectReleasesThisMonth = [];
+  state.projects.forEach(p => {
+    if (p.releaseHistory) {
+      p.releaseHistory.forEach(entry => {
+        if (isCurrentMonth(entry.releasedAt)) {
+          projectReleasesThisMonth.push({
+            projectName: p.name,
+            version: entry.version,
+            platform: entry.platform,
+            releasedAt: entry.releasedAt,
+            log: entry.log
+          });
+        }
+      });
+    }
+  });
+
+  const allReleasesThisMonth = [];
+  manualReleasesThisMonth.forEach(r => {
+    allReleasesThisMonth.push({
+      title: r.name,
+      subtitle: `Version ${r.version}`,
+      date: r.releaseDate || r.updatedAt || r.createdAt,
+      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px; color:var(--accent);"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>`
+    });
+  });
+
+  projectReleasesThisMonth.forEach(pr => {
+    let icon = '';
+    if (pr.platform === 'ANDROID') {
+      icon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px; color:#22c55e;"><path d="M4 9h16M4 15h16M10 3v2M14 3v2M9 21h6"/></svg>`;
+    } else if (pr.platform === 'IOS') {
+      icon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px; color:#0ea5e9;"><path d="M12 2a10 10 0 018 4.5l-1.5 1.5A8 8 0 1012 22a10 10 0 01-8-4.5l1.5-1.5A8 8 0 0012 2z"/></svg>`;
+    } else {
+      icon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px; color:#eab308;"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`;
+    }
+    allReleasesThisMonth.push({
+      title: `${pr.projectName} (${pr.platform})`,
+      subtitle: pr.log || `Version ${pr.version} released`,
+      date: pr.releasedAt,
+      icon: icon
+    });
+  });
+
+  allReleasesThisMonth.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  const releasesHtml = allReleasesThisMonth.length ? `
+    <div class="timeline-wrap">
+      ${allReleasesThisMonth.map(r => `
+        <div class="timeline-node">
+          <div class="timeline-node-title" style="display:flex; align-items:center; gap:8px;">
+            ${r.icon}
+            <span style="font-weight:600;">${r.title}</span>
+          </div>
+          <div style="font-size:12px; color:var(--text-secondary); margin-left:22px; padding: 2px 0;">${r.subtitle}</div>
+          <div class="timeline-node-time" style="margin-left:22px;">${fmtDate(r.date)} · ${timeAgo(r.date)}</div>
+        </div>
+      `).join('')}
+    </div>
+  ` : '<div style="color:var(--text-muted);font-size:13px;font-style:italic;text-align:center;padding:36px 0;">No releases recorded this month</div>';
+
+  // 2. Recent Tasks (Overdue & Due Soon vs Completed Recently)
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const threeDaysLater = new Date(today);
+  threeDaysLater.setDate(today.getDate() + 3);
+
+  const overdueOrDueSoon = [];
+  const recentlyCompleted = [];
+
+  state.tasks.forEach(t => {
+    if (t.status === 'Done') {
+      recentlyCompleted.push(t);
+    } else {
+      if (t.endDate) {
+        const end = new Date(t.endDate);
+        if (end < today) {
+          overdueOrDueSoon.push({ task: t, type: 'Overdue', badgeClass: 'db-badge-danger' });
+        } else if (end <= threeDaysLater) {
+          overdueOrDueSoon.push({ task: t, type: 'Due Soon', badgeClass: 'db-badge-warning' });
+        }
+      }
+    }
+  });
+
+  overdueOrDueSoon.sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'Overdue' ? -1 : 1;
+    return new Date(a.task.endDate) - new Date(b.task.endDate);
+  });
+
+  // Sort recently completed tasks by completedDate desc, falling back to updatedAt/createdAt
+  recentlyCompleted.sort((a, b) => new Date(b.completedDate || b.updatedAt || b.createdAt) - new Date(a.completedDate || a.updatedAt || a.createdAt));
+
+  const pendingTasksLimit = overdueOrDueSoon.slice(0, 10);
+  const completedTasksLimit = recentlyCompleted.slice(0, 10);
+
+  const pendingTasksHtml = pendingTasksLimit.length ? pendingTasksLimit.map(item => {
+    const t = item.task;
+    const proj = t.projectId ? state.projects.find(p => p.id === t.projectId) : null;
+    return `
+      <div class="db-item">
+        <div class="db-item-details">
+          <span class="db-item-title">${t.title}</span>
+          <span class="db-item-subtitle">${proj ? proj.name : 'No Project'} · ${getDevName(t.developer)}</span>
+        </div>
+        <div class="db-item-right">
+          <span class="db-badge ${item.badgeClass}">${item.type}</span>
+          <span style="font-size:11px;color:var(--text-secondary);white-space:nowrap;">${t.endDate ? fmtDate(t.endDate) : ''}</span>
+        </div>
+      </div>
+    `;
+  }).join('') : '<div style="color:var(--text-muted);font-size:13px;font-style:italic;padding:24px 0;text-align:center;">No overdue or due soon tasks</div>';
+
+  const completedTasksHtml = completedTasksLimit.length ? completedTasksLimit.map(t => {
+    const proj = t.projectId ? state.projects.find(p => p.id === t.projectId) : null;
+    const compDate = t.completedDate || t.updatedAt || t.endDate || t.createdAt;
+    return `
+      <div class="db-item">
+        <div class="db-item-details">
+          <span class="db-item-title" style="text-decoration: line-through; color: var(--text-muted);">${t.title}</span>
+          <span class="db-item-subtitle">${proj ? proj.name : 'No Project'} · ${getDevName(t.developer)}</span>
+        </div>
+        <div class="db-item-right">
+          <span class="db-badge db-badge-success">Done</span>
+          <span style="font-size:10.5px;color:var(--text-muted);white-space:nowrap;">${compDate ? timeAgo(compDate) : ''}</span>
+        </div>
+      </div>
+    `;
+  }).join('') : '<div style="color:var(--text-muted);font-size:13px;font-style:italic;padding:24px 0;text-align:center;">No tasks completed recently</div>';
+
+  // 3. Active Releases & Plans
+  const activePlansListHtml = [];
+
+  activeManualReleases.forEach(r => {
+    activePlansListHtml.push(`
+      <div class="db-item">
+        <div class="db-item-details">
+          <span class="db-item-title">${r.name} (v${r.version})</span>
+          <span class="db-item-subtitle">Release Plan · Manager: ${r.managerName || 'None'}</span>
+        </div>
+        <div class="db-item-right">
+          <span class="db-badge db-badge-info">${r.status}</span>
+        </div>
+      </div>
+    `);
+  });
+
+  activeReleasePoints.forEach(rp => {
+    const totalItems = rp.checklistItems ? rp.checklistItems.length : 0;
+    const completedItems = rp.checklistItems ? rp.checklistItems.filter(item => item.done).length : 0;
+    const pct = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
+
+    const projNames = [];
+    if (rp.projectId) {
+      const p = state.projects.find(x => x.id === rp.projectId);
+      if (p) projNames.push(p.name);
+    }
+    if (rp.projectIds && Array.isArray(rp.projectIds)) {
+      rp.projectIds.forEach(id => {
+        const p = state.projects.find(x => x.id === id);
+        if (p && !projNames.includes(p.name)) projNames.push(p.name);
+      });
+    }
+
+    activePlansListHtml.push(`
+      <div class="db-item" style="flex-direction: column; align-items: stretch; gap: 8px;">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <div class="db-item-details">
+            <span class="db-item-title">${rp.title}</span>
+            <span class="db-item-subtitle">Release Point · ${projNames.join(', ')}</span>
+          </div>
+          <div class="db-item-right">
+            <span class="db-badge db-badge-warning">Upcoming</span>
+          </div>
+         </div>
+         <div style="display: flex; align-items: center; gap: 8px;">
+           <div style="flex: 1; height: 5px; background: var(--border); border-radius: 99px; overflow: hidden;">
+             <div style="width: ${pct}%; height: 100%; background: var(--accent); border-radius: 99px;"></div>
+           </div>
+           <span style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">${completedItems}/${totalItems} Done</span>
+         </div>
+      </div>
+    `);
+  });
+
+  const activePlansHtml = activePlansListHtml.length ? activePlansListHtml.join('') : '<div style="color:var(--text-muted);font-size:13px;font-style:italic;text-align:center;padding:24px 0;">No active release plans</div>';
+
+  // ── Test Cases by Project (full-width 100% stacked bars) ──
+  const testCases = state.testCases || [];
+  const tcByProj = {};
+  testCases.forEach(tc => {
+    const key = tc.projectId || '__none__';
+    if (!tcByProj[key]) tcByProj[key] = { total: 0, pass: 0, fail: 0 };
+    tcByProj[key].total++;
+    if (['Pass', 'Passed'].includes(tc.status)) tcByProj[key].pass++;
+    if (['Fail', 'Failed'].includes(tc.status)) tcByProj[key].fail++;
+  });
+  const tcRows = Object.entries(tcByProj).sort((a, b) => b[1].total - a[1].total);
+  const tcTotalAll = tcRows.reduce((s, [, d]) => s + d.total, 0);
+  const tcTotalPass = tcRows.reduce((s, [, d]) => s + d.pass, 0);
+  const tcTotalFail = tcRows.reduce((s, [, d]) => s + d.fail, 0);
+  const tcTotalPend = tcTotalAll - tcTotalPass - tcTotalFail;
+
+  const TC_PASS_COLOR = '#2d6a4f';
+  const TC_FAIL_COLOR = '#b91c1c';
+  const TC_PEND_COLOR = '#e8e5df';
+
+  const tcByProjHtml = tcRows.length ? `
+    <div class="db-tc-summary">
+      <div class="db-tc-sum-chip tc-chip-pass">
+        <span class="db-tc-sum-n">${tcTotalPass}</span><span>Passed</span>
+      </div>
+      <div class="db-tc-sum-chip tc-chip-fail">
+        <span class="db-tc-sum-n">${tcTotalFail}</span><span>Failed</span>
+      </div>
+      <div class="db-tc-sum-chip tc-chip-pend">
+        <span class="db-tc-sum-n">${tcTotalPend}</span><span>Pending</span>
+      </div>
+      <div class="db-tc-sum-chip tc-chip-total">
+        <span class="db-tc-sum-n">${tcTotalAll}</span><span>Total</span>
+      </div>
+    </div>
+    <div class="db-tc-rows">
+      ${tcRows.map(([pid, d]) => {
+    const proj = state.projects.find(p => p.id === pid);
+    const name = proj ? proj.name : 'Unassigned';
+    const pp = d.total ? Math.round(d.pass / d.total * 100) : 0;
+    const fp = d.total ? Math.round(d.fail / d.total * 100) : 0;
+    const np = Math.max(0, 100 - pp - fp);
+    const r = (left, right) => `border-radius:${left ? '6px' : '0'} ${right ? '6px' : '0'} ${right ? '6px' : '0'} ${left ? '6px' : '0'}`;
+    return `
+        <div class="db-tc-row2">
+          <div class="db-tc-row2-top">
+            <span class="db-tc-name2" title="${name}">${name}</span>
+            <span class="db-tc-row2-stats">
+              <span class="tc-stat-pass">${d.pass} P</span>
+              <span class="tc-stat-sep">·</span>
+              <span class="tc-stat-fail">${d.fail} F</span>
+              <span class="tc-stat-sep">·</span>
+              <span class="tc-stat-pend">${d.total - d.pass - d.fail} N</span>
+              <span class="tc-stat-total">${d.total}</span>
+            </span>
+          </div>
+          <div class="db-tc-fullbar">
+            ${pp > 0 ? `<div style="width:${pp}%;background:${TC_PASS_COLOR};height:100%;${r(true, fp === 0 && np === 0)};display:flex;align-items:center;justify-content:center;transition:width .3s;">
+              ${pp > 12 ? `<span style="font-size:9px;font-weight:700;color:#fff;letter-spacing:.3px;">${pp}%</span>` : ''}</div>` : ''}
+            ${fp > 0 ? `<div style="width:${fp}%;background:${TC_FAIL_COLOR};height:100%;${r(pp === 0, np === 0)};transition:width .3s;"></div>` : ''}
+            ${np > 0 ? `<div style="width:${np}%;background:${TC_PEND_COLOR};height:100%;${r(pp === 0 && fp === 0, true)};transition:width .3s;"></div>` : ''}
+          </div>
+        </div>`;
+  }).join('')}
+    </div>
+  ` : '<div style="color:var(--text-muted);font-size:12.5px;font-style:italic;padding:20px 0;text-align:center;">No test cases yet</div>';
+
+  // ── Chart 1: Tasks completed — selected month by calendar week ──
+  if (!state.chartMonth) {
+    const _d = new Date();
+    state.chartMonth = { year: _d.getFullYear(), month: _d.getMonth() };
+  }
+  const { year: cmYear, month: cmMonth } = state.chartMonth;
+  const lmStart = new Date(cmYear, cmMonth, 1);
+  const lmEnd = new Date(cmYear, cmMonth + 1, 0);
+  const lmName = lmStart.toLocaleDateString('en', { month: 'long', year: 'numeric' });
+  const moAbbr = lmStart.toLocaleDateString('en', { month: 'short' });
+
+  // Calendar weeks: Mon–Sun boundaries that intersect this month
+  const weekData = [];
+  // Find the Monday on or before the 1st
+  const firstDay = new Date(lmStart);
+  const dowFirst = firstDay.getDay(); // 0=Sun,1=Mon,...
+  const offsetToMon = dowFirst === 0 ? -6 : 1 - dowFirst;
+  let wCursor = new Date(firstDay); wCursor.setDate(firstDay.getDate() + offsetToMon);
+
+  while (wCursor <= lmEnd) {
+    const wEnd = new Date(wCursor); wEnd.setDate(wCursor.getDate() + 6);
+    // Clamp to month boundaries for the label, but count all tasks in actual week
+    const displayStart = new Date(Math.max(wCursor.getTime(), lmStart.getTime()));
+    const displayEnd = new Date(Math.min(wEnd.getTime(), lmEnd.getTime()));
+    const wS = new Date(wCursor); wS.setHours(0, 0, 0, 0);
+    const wE = new Date(wEnd); wE.setHours(23, 59, 59, 999);
+    const count = state.tasks.filter(t => {
+      if (t.status !== 'Done') return false;
+      const cd = new Date(t.completedDate || t.updatedAt || t.createdAt);
+      return cd >= wS && cd <= wE;
+    }).length;
+    const startMo = displayStart.toLocaleDateString('en', { month: 'short' });
+    const endMo = displayEnd.toLocaleDateString('en', { month: 'short' });
+    const dateLabel = startMo === endMo
+      ? `${startMo} ${displayStart.getDate()}–${displayEnd.getDate()}`
+      : `${displayStart.getDate()} ${startMo} – ${displayEnd.getDate()} ${endMo}`;
+    weekData.push({ label: dateLabel, count });
+    wCursor.setDate(wCursor.getDate() + 7);
+  }
+
+  const totalMonthTasks = weekData.reduce((s, w) => s + w.count, 0);
+  const avgTasksPerWeek = weekData.length ? Math.round(totalMonthTasks / weekData.length) : 0;
+
+  // ── Chart 2: Task status donut ──
+  const taskDone = state.tasks.filter(t => t.status === 'Done').length;
+  const taskInProg = state.tasks.filter(t => t.status === 'In Progress').length;
+  const taskTodo = state.tasks.filter(t => t.status === 'To-Do').length;
+  const taskHold = state.tasks.filter(t => t.status === 'On Hold').length;
+  const donutData = [
+    { label: 'Done', count: taskDone, color: '#22c55e' },
+    { label: 'In Progress', count: taskInProg, color: '#f59e0b' },
+    { label: 'To-Do', count: taskTodo, color: '#60a5fa' },
+    { label: 'On Hold', count: taskHold, color: '#94a3b8' },
+  ];
+  const donutR = 46, donutCx = 56, donutCy = 56, donutSW = 18, donutGap = 1.5;
+  const donutCirc = 2 * Math.PI * donutR;
+  const donutTotal = totalTasks || 1;
+  let cumOff = 0;
+  const donutSegs = donutData.filter(d => d.count > 0).map(({ count, color }) => {
+    const dash = Math.max((count / donutTotal) * donutCirc - donutGap, 0);
+    const seg = `<circle cx="${donutCx}" cy="${donutCy}" r="${donutR}" fill="none" stroke="${color}" stroke-width="${donutSW}"
+      stroke-dasharray="${dash.toFixed(2)} ${(donutCirc - dash).toFixed(2)}"
+      stroke-dashoffset="${(-cumOff).toFixed(2)}"
+      stroke-linecap="round"
+      transform="rotate(-90 ${donutCx} ${donutCy})"/>`;
+    cumOff += (count / donutTotal) * donutCirc;
+    return seg;
+  }).join('');
+  const donutLegend = donutData.map(d => `
+    <div class="db-donut-legend-row">
+      <span class="db-donut-dot" style="background:${d.color};"></span>
+      <span class="db-donut-label">${d.label}</span>
+      <span class="db-donut-val" style="color:${d.color};">${d.count}</span>
+    </div>`).join('');
+
+  // (release chips removed per user request)
+
+  // ── Compact Task Status for Recent Tasks card ──
+  const tsDonutR = 38, tsCx = 46, tsCy = 46, tsSW = 15, tsGap = 2;
+  const tsCirc = 2 * Math.PI * tsDonutR;
+  const tsColors = { 'Done': '#2d6a4f', 'In Progress': '#b45309', 'To-Do': '#1d4ed8', 'On Hold': '#78716c' };
+  const tsData = [
+    { label: 'Done', count: taskDone, color: tsColors['Done'] },
+    { label: 'In Progress', count: taskInProg, color: tsColors['In Progress'] },
+    { label: 'To-Do', count: taskTodo, color: tsColors['To-Do'] },
+    { label: 'On Hold', count: taskHold, color: tsColors['On Hold'] },
+  ];
+  let tsOff = 0;
+  const tsSegs = tsData.filter(d => d.count > 0).map(({ count, color }) => {
+    const dash = Math.max((count / (donutTotal || 1)) * tsCirc - tsGap, 0);
+    const seg = `<circle cx="${tsCx}" cy="${tsCy}" r="${tsDonutR}" fill="none" stroke="${color}" stroke-width="${tsSW}"
+      stroke-dasharray="${dash.toFixed(2)} ${(tsCirc - dash).toFixed(2)}"
+      stroke-dashoffset="${(-tsOff).toFixed(2)}" stroke-linecap="round"
+      transform="rotate(-90 ${tsCx} ${tsCy})"/>`;
+    tsOff += (count / (donutTotal || 1)) * tsCirc;
+    return seg;
+  }).join('');
+  const taskStatusPanel = `
+    <div class="db-ts-panel">
+      <svg viewBox="0 0 92 92" style="width:92px;height:92px;flex-shrink:0;">
+        <circle cx="${tsCx}" cy="${tsCy}" r="${tsDonutR}" fill="none" stroke="var(--border)" stroke-width="${tsSW}"/>
+        ${tsSegs}
+        <text x="${tsCx}" y="${tsCy + 5}" text-anchor="middle" font-size="14" font-weight="800" fill="var(--text)" font-family="inherit">${taskPct}%</text>
+      </svg>
+      <div class="db-ts-legend">
+        ${tsData.map(d => `
+          <div class="db-ts-row">
+            <span class="db-ts-dot" style="background:${d.color};"></span>
+            <span class="db-ts-label">${d.label}</span>
+            <span class="db-ts-count" style="color:${d.color};">${d.count}</span>
+          </div>`).join('')}
+        <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted);">${completedTasks} of ${totalTasks} done</div>
+      </div>
+    </div>`;
+
+  // ── Large donut for charts card ──
+  const dCx = 65, dCy = 65, dR = 50, dSW = 20, dGap = 2;
+  const dCirc = 2 * Math.PI * dR;
+  let dOff = 0;
+  const largeDonutSegs = donutData.filter(d => d.count > 0).map(({ count, color }) => {
+    const dash = Math.max((count / donutTotal) * dCirc - dGap, 0);
+    const seg = `<circle cx="${dCx}" cy="${dCy}" r="${dR}" fill="none" stroke="${color}" stroke-width="${dSW}"
+      stroke-dasharray="${dash.toFixed(2)} ${(dCirc - dash).toFixed(2)}"
+      stroke-dashoffset="${(-dOff).toFixed(2)}" stroke-linecap="round"
+      transform="rotate(-90 ${dCx} ${dCy})"/>`;
+    dOff += (count / donutTotal) * dCirc;
+    return seg;
+  }).join('');
+
   return `
     ${hero}
 
-    <div class="two-col" style="gap:16px;margin-bottom:16px;">
-      <div class="mini-card">
-        <div class="mini-card-title">Recent Projects</div>
-        ${recentProjects.length ? recentProjects.map(p => `
-          <div class="mini-item">
-            <span class="mini-item-name">${p.name}</span>
-            <span class="mini-item-meta">Prev: ${p.previousVersion || '–'} · Up: ${p.upcomingVersion || '–'}</span>
+    <div class="db-container">
+
+      <!-- Row 1: Released This Month | Charts & Metrics -->
+      <div class="db-grid">
+        <div class="db-card">
+          <div class="db-card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;flex-shrink:0;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            Released This Month
           </div>
-        `).join('') : '<div class="mini-item" style="color:var(--text-muted);font-size:13px">No projects yet</div>'}
+          <div class="db-list">${releasesHtml}</div>
+        </div>
+
+        <div class="db-card db-chart-card">
+          <div class="db-chart-header">
+            <div class="db-card-title" style="margin-bottom:0;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;flex-shrink:0;"><path d="M3 3v18h18M7 16l4-4 4 4 4-6"/></svg>
+              Charts &amp; Metrics
+            </div>
+            <div class="db-chart-nav">
+              <button class="db-chart-nav-btn" data-action="chart-month-prev" title="Previous month">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:13px;height:13px;"><path d="M15 18l-6-6 6-6"/></svg>
+              </button>
+              <div class="db-chart-nav-center">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;color:var(--accent);flex-shrink:0;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <span class="db-chart-nav-label">${lmName}</span>
+              </div>
+              <button class="db-chart-nav-btn" data-action="chart-month-next" title="Next month"
+                ${(() => { const n = new Date(); return (cmYear === n.getFullYear() && cmMonth === n.getMonth()) ? 'disabled' : ''; })()}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:13px;height:13px;"><path d="M9 18l6-6-6-6"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="db-chart-info-row">
+            <div class="db-chart-week-label">Tasks Completed by Week</div>
+            <div class="db-chart-stats">
+              <div class="db-chart-stat-item">
+                <div class="db-chart-stat-label">AVG TASKS/WK</div>
+                <div class="db-chart-stat-val">
+                  ${avgTasksPerWeek}
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:12px;height:12px;color:var(--text-muted);"><path d="M12 5v14M8 9l4-4 4 4M8 15l4 4 4-4"/></svg>
+                </div>
+              </div>
+              <div class="db-chart-stat-item">
+                <div class="db-chart-stat-label">TOTAL TASKS</div>
+                <div class="db-chart-stat-val">
+                  ${totalMonthTasks}
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:12px;height:12px;color:var(--text-muted);"><path d="M12 5v14M8 9l4-4 4 4M8 15l4 4 4-4"/></svg>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="db-chart-wrap">
+            <canvas id="weeklyTaskChart" height="220"></canvas>
+          </div>
+        </div>
       </div>
 
-      <div class="mini-card">
-        <div class="mini-card-title">Recent Tasks</div>
-        ${recentTasks.length ? recentTasks.map(t => `
-          <div class="mini-item">
-            <span class="mini-item-name">${t.title}</span>
-            <span class="mini-item-meta">${getDevName(t.developer)}</span>
+      <!-- Row 2: Recent Tasks (full-width) with Task Status panel -->
+      <div class="db-card">
+        <div class="db-card-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;flex-shrink:0;"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          Recent Tasks
+        </div>
+        <div class="db-tasks-layout">
+          <div class="db-tasks-status">
+            <div class="db-sub-heading">Task Overview</div>
+            ${taskStatusPanel}
           </div>
-        `).join('') : '<div class="mini-item" style="color:var(--text-muted);font-size:13px">No tasks yet</div>'}
+          <div class="db-tasks-col">
+            <div class="db-sub-heading">Overdue &amp; Due Soon</div>
+            <div class="db-list" style="max-height:220px;">${pendingTasksHtml}</div>
+          </div>
+          <div class="db-tasks-col">
+            <div class="db-sub-heading">Recently Completed</div>
+            <div class="db-list" style="max-height:220px;">${completedTasksHtml}</div>
+          </div>
+        </div>
       </div>
-    </div>
 
-    <div class="mini-card">
-      <div class="mini-card-title">Recent Insights</div>
-      ${recentTests.length ? recentTests.map(t => {
-    const proj = t.projectId ? state.projects.find(p => p.id === t.projectId) : null;
-    return `
-          <div class="mini-item">
-            <span class="mini-item-name">${t.title}</span>
-            <span class="mini-item-meta">${proj ? proj.name : t.type || '–'}</span>
+      <!-- Row 3: Test Cases by Project | Active Releases & Plans -->
+      <div class="db-grid">
+
+        <div class="db-card">
+          <div class="db-card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;flex-shrink:0;"><path d="M9 3v7.2a4 4 0 01-1.3 2.9l-3.4 3.1A2 2 0 005.7 20h12.6a2 2 0 001.4-3.8l-3.4-3.1A4 4 0 0115 10.2V3"/><path d="M6 3h12"/></svg>
+            Test Cases by Project
           </div>
-        `;
-  }).join('') : '<div class="mini-item" style="color:var(--text-muted);font-size:13px">No insights yet</div>'}
+          <div class="db-tc-list">${tcByProjHtml}</div>
+        </div>
+
+        <div class="db-card">
+          <div class="db-card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;flex-shrink:0;"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+            Active Releases &amp; Plans
+          </div>
+          <div class="db-list">${activePlansHtml}</div>
+        </div>
+
+      </div>
     </div>
   `;
 };
@@ -1272,14 +1851,24 @@ window.handleDragLeave = (e) => {
 
 window.dropTask = async (taskId, newStatus) => {
   const task = state.tasks.find(t => t.id === taskId);
-  if (task && task.status !== newStatus) {
-    const oldStatus = task.status || 'To-Do';
-    task.status = newStatus;
+  if (!task || task.status === newStatus) return;
+  const oldStatus = task.status || 'To-Do';
+  task.status = newStatus;
+  if (newStatus !== 'Done') {
+    task.completedDate = null;
     task.updatedAt = new Date().toISOString();
     logActivity(`Moved task "${task.title}" from ${oldStatus} to ${newStatus}`, 'task');
     await storage.save();
     render();
     showToast(`Task moved to ${newStatus}`);
+  } else {
+    // Show completion date picker before saving
+    const todayIso = new Date().toISOString().split('T')[0];
+    document.getElementById('completionTaskId').value = taskId;
+    document.getElementById('completionDateInput').value = todayIso;
+    // Temporarily store the old/new status for the modal callback
+    document.getElementById('completionDateModal').dataset.oldStatus = oldStatus;
+    showModal('completionDateModal');
   }
 };
 
@@ -1370,6 +1959,7 @@ window.completeTask = async (id) => {
     const oldStatus = task.status || 'To-Do';
     if (oldStatus === 'Done') return; // Already done
     task.status = 'Done';
+    task.completedDate = new Date().toISOString();
     task.updatedAt = new Date().toISOString();
     logActivity(`Completed task "${task.title}"`, 'task');
     await storage.save();
@@ -1716,6 +2306,20 @@ const attachCardListeners = () => {
       else if (action === 'delete-module') confirmDeleteModule(cardId);
       else if (action === 'edit-testcase') openTestCaseModal(cardId);
       else if (action === 'delete-testcase') confirmDeleteTestCase(cardId);
+      else if (action === 'chart-month-prev') {
+        let { year, month } = state.chartMonth || { year: new Date().getFullYear(), month: new Date().getMonth() - 1 };
+        month--; if (month < 0) { month = 11; year--; }
+        state.chartMonth = { year, month };
+        render();
+      }
+      else if (action === 'chart-month-next') {
+        let { year, month } = state.chartMonth || { year: new Date().getFullYear(), month: new Date().getMonth() };
+        const n = new Date();
+        if (year === n.getFullYear() && month >= n.getMonth()) return;
+        month++; if (month > 11) { month = 0; year++; }
+        state.chartMonth = { year, month };
+        render();
+      }
       else if (action === 'edit-release-pt') openReleasePtModal(cardId);
       else if (action === 'delete-release-pt') confirmDeleteReleasePt(cardId);
       else if (action === 'toggle-checklist-item') {
@@ -1744,7 +2348,7 @@ const attachCardListeners = () => {
           const textVal = parent.querySelector('.rp-inline-edit-text').value;
           const ticketVal = parent.querySelector('.rp-inline-edit-ticket').value;
           const devVal = parent.querySelector('.rp-inline-edit-dev').value;
-          
+
           const rp = (state.releasePoints || []).find(r => r.id === rpId);
           if (rp) {
             const item = (rp.checklistItems || []).find(i => i.id === itemId);
@@ -1827,19 +2431,6 @@ const attachCardListeners = () => {
     }
 
     if (e.target.closest('.task-check') || e.target.closest('a')) {
-      return;
-    }
-
-    // Overview "View Project" card button
-    const gotoProjectBtn = e.target.closest('[data-action="goto-tc-project"]');
-    if (gotoProjectBtn) {
-      state.activeTestCaseProjectId = gotoProjectBtn.dataset.projectId;
-      state.activeTestCaseModuleId = null;
-      if (state.selectedTestCaseIds) state.selectedTestCaseIds.clear();
-      state.testCaseSelectionMode = false;
-      state.visibleTestCaseCount = 100;
-      if (content) content.scrollTop = 0;
-      render();
       return;
     }
 
@@ -2510,6 +3101,8 @@ const openTaskModal = (id = null) => {
   sel.innerHTML = `<option value="">— None —</option>` +
     state.projects.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
 
+  const todayIso = new Date().toISOString().split('T')[0];
+
   if (id) {
     const t = state.tasks.find(x => x.id === id);
     if (!t) return;
@@ -2524,19 +3117,43 @@ const openTaskModal = (id = null) => {
     document.getElementById('taskPriority').value = t.priority || 'Medium';
     document.getElementById('taskProject').value = t.projectId || '';
     updateDeveloperDropdown(t.projectId || '', 'taskDeveloper', t.developer || '');
+    const cdg = document.getElementById('completionDateGroup');
+    const cdi = document.getElementById('taskCompletedDate');
+    if (t.status === 'Done') {
+      cdg.style.display = '';
+      cdi.value = t.completedDate ? t.completedDate.split('T')[0] : todayIso;
+    } else {
+      cdg.style.display = 'none';
+      cdi.value = '';
+    }
   } else {
     title.textContent = 'New Task';
     document.getElementById('taskId').value = '';
     document.getElementById('taskTitle').value = '';
     document.getElementById('taskDesc').value = '';
     document.getElementById('taskTags').value = '';
-    document.getElementById('taskStartDate').value = new Date().toISOString().split('T')[0];
+    document.getElementById('taskStartDate').value = todayIso;
     document.getElementById('taskEndDate').value = '';
     document.getElementById('taskStatus').value = 'To-Do';
     document.getElementById('taskPriority').value = 'Medium';
     document.getElementById('taskProject').value = '';
+    document.getElementById('completionDateGroup').style.display = 'none';
+    document.getElementById('taskCompletedDate').value = '';
     updateDeveloperDropdown('', 'taskDeveloper', '');
   }
+
+  // Toggle completion date field when status changes
+  document.getElementById('taskStatus').onchange = function () {
+    const cdg = document.getElementById('completionDateGroup');
+    const cdi = document.getElementById('taskCompletedDate');
+    if (this.value === 'Done') {
+      cdg.style.display = '';
+      if (!cdi.value) cdi.value = todayIso;
+    } else {
+      cdg.style.display = 'none';
+      cdi.value = '';
+    }
+  };
 
   showModal('taskModal');
 };
@@ -2557,19 +3174,32 @@ const saveTask = async () => {
 
   const now = new Date().toISOString();
 
+  const completedDateInput = document.getElementById('taskCompletedDate').value;
+
   if (id) {
     const idx = state.tasks.findIndex(t => t.id === id);
     if (idx === -1) return;
     const old = state.tasks[idx];
-    state.tasks[idx] = { ...old, title, description: desc, tags, startDate, endDate, status, priority, projectId, developer, updatedAt: now };
-    // Remove old date field if it exists
+    let completedDate = null;
+    if (status === 'Done') {
+      completedDate = completedDateInput
+        ? new Date(completedDateInput + 'T12:00:00').toISOString()
+        : (old.completedDate || now);
+    }
+    state.tasks[idx] = { ...old, title, description: desc, tags, startDate, endDate, status, priority, projectId, developer, completedDate, updatedAt: now };
     delete state.tasks[idx].date;
     logActivity(`Updated task "${title}"`, 'task');
     showToast('Task updated');
   } else {
+    let completedDate = null;
+    if (status === 'Done') {
+      completedDate = completedDateInput
+        ? new Date(completedDateInput + 'T12:00:00').toISOString()
+        : now;
+    }
     state.tasks.unshift({
       id: uid(), title, description: desc, tags, startDate, endDate, status, priority, projectId, developer,
-      createdAt: now, updatedAt: now
+      completedDate, createdAt: now, updatedAt: now
     });
     logActivity(`Added task "${title}"`, 'task');
     showToast('Task added');
@@ -3161,14 +3791,14 @@ const renderReleasePoints = () => {
   if (q) {
     filtered = filtered.filter(r =>
       r.title.toLowerCase().includes(q) ||
-      (r.projectIds || (r.projectId ? [r.projectId] : [])).some(pid => 
+      (r.projectIds || (r.projectId ? [r.projectId] : [])).some(pid =>
         (state.projects.find(p => p.id === pid) || { name: '' }).name.toLowerCase().includes(q)
       ) ||
       (r.versions || []).some(v => v.toLowerCase().includes(q))
     );
   }
   if (state.releasePtFilters.project) {
-    filtered = filtered.filter(r => 
+    filtered = filtered.filter(r =>
       (r.projectIds || (r.projectId ? [r.projectId] : [])).includes(state.releasePtFilters.project)
     );
   }
@@ -3185,7 +3815,7 @@ const renderReleasePoints = () => {
 
   // Per-project breakdown for sidebar
   const projBreakdown = state.projects.map(p => {
-    const pts = rps.filter(r => 
+    const pts = rps.filter(r =>
       (r.projectIds || (r.projectId ? [r.projectId] : [])).includes(p.id)
     );
     const done = pts.filter(r => r.isCompleted).length;
@@ -3267,15 +3897,15 @@ const renderReleasePoints = () => {
         <div class="rp-sidebar-label">Recently Updated</div>
         <div class="rp-dashboard-recent-list">
           ${recentRps.length ? recentRps.map(rp => {
-            const items = rp.checklistItems || [];
-            const done = items.filter(i => i.done).length;
-            const pct = items.length === 0 ? 0 : Math.round(done / items.length * 100);
-            return `
+    const items = rp.checklistItems || [];
+    const done = items.filter(i => i.done).length;
+    const pct = items.length === 0 ? 0 : Math.round(done / items.length * 100);
+    return `
               <div class="rp-sidebar-recent-row">
                 <div class="rp-sidebar-recent-title">${rp.title}</div>
                 <div class="rp-sidebar-recent-meta">${pct}% completed · ${timeAgo(rp.updatedAt || rp.createdAt)}</div>
               </div>`;
-          }).join('') : '<div style="color:var(--text-muted);font-size:12.5px;font-style:italic;text-align:center;padding:12px 0;">No updates yet</div>'}
+  }).join('') : '<div style="color:var(--text-muted);font-size:12.5px;font-style:italic;text-align:center;padding:12px 0;">No updates yet</div>'}
         </div>
       </div>
 
@@ -3396,7 +4026,7 @@ const renderReleasePtCard = (rp, q = '') => {
           display = url.hostname.replace('www.', '') + url.pathname;
           if (display.length > 20) display = display.substring(0, 17) + '...';
         }
-      } catch(e) {}
+      } catch (e) { }
       return `
         <a href="${href}" target="_blank" class="rp-item-ticket link" title="View Ticket: ${ticket}" onclick="event.stopPropagation();">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
@@ -3536,7 +4166,7 @@ const releaseProjectVersion = async (projectId, platform) => {
   if (!p) return;
   const now = new Date().toISOString();
   let oldUp = '';
-  
+
   const formatVersionLabel = (v) => {
     if (!v) return '';
     return v.toLowerCase().startsWith('v') ? v : 'v' + v;
@@ -3559,10 +4189,10 @@ const releaseProjectVersion = async (projectId, platform) => {
     p.upcomingVersion = incrementVersion(oldUp);
     p.lastReleaseLog = `${formatVersionLabel(oldUp)} released`;
   }
-  
+
   p.lastReleaseAt = now;
   p.updatedAt = now;
-  
+
   p.releaseHistory = p.releaseHistory || [];
   p.releaseHistory.unshift({
     version: oldUp,
@@ -3573,11 +4203,11 @@ const releaseProjectVersion = async (projectId, platform) => {
   if (p.releaseHistory.length > 10) {
     p.releaseHistory = p.releaseHistory.slice(0, 10);
   }
-  
+
   // Log activity
   logActivity(`Project "${p.name}" version ${oldUp} (${platform.toUpperCase()}) was marked as released! 🚀`, 'project');
   showToast(`🚀 Version ${oldUp} released!`);
-  
+
   await storage.save();
   render();
 };
@@ -3661,7 +4291,7 @@ const populateReleasePtDevs = (projectIdOrIds, selectedDevIds = []) => {
     container.innerHTML = '<span style="color:var(--text-muted);font-size:12.5px;">Select project(s) first.</span>';
     return;
   }
-  const devs = state.developers.filter(d => 
+  const devs = state.developers.filter(d =>
     (d.projectIds || []).some(pid => pids.includes(pid))
   );
   if (devs.length === 0) {
@@ -3703,7 +4333,7 @@ const renderChecklistEditor = () => {
   const projectIds = Array.from(projectChecks).map(cb => cb.value);
   let filteredDevs = state.developers;
   if (projectIds.length > 0) {
-    filteredDevs = state.developers.filter(d => 
+    filteredDevs = state.developers.filter(d =>
       (d.projectIds || []).some(pid => projectIds.includes(pid))
     );
   }
@@ -4050,7 +4680,7 @@ const prepopulateMockData = () => {
         actual: '',
         priority: 'Critical',
         severity: 'S1 - Blocker',
-        status: 'Not executed',
+        status: 'Untested',
         type: 'Automated',
         assignee: 'Dwip Pandya',
         executionDate: '',
@@ -4108,7 +4738,7 @@ const prepopulateMockData = () => {
 };
 
 const renderSingleTestCaseRow = (tc, index, projModules, developers, selectedTestCaseIds) => {
-  const statusCls = tc.status ? tc.status.toLowerCase().replace(/ /g, '-') : 'not-executed';
+  const statusCls = tc.status ? tc.status.toLowerCase() : 'untested';
   const priorityCls = tc.priority ? tc.priority.toLowerCase() : 'medium';
   const severityCls = tc.severity ? tc.severity.toLowerCase().split(' ')[0] : 'medium';
 
@@ -4149,7 +4779,7 @@ const renderSingleTestCaseRow = (tc, index, projModules, developers, selectedTes
       <!-- Status Dropdown -->
       <td style="text-align: center; vertical-align: middle;">
         <select class="table-inline-select select-status-${statusCls}" style="font-weight:600;" data-field="status" data-id="${tc.id}">
-          <option value="Not executed" ${tc.status === 'Not executed' || tc.status === 'Untested' ? 'selected' : ''}>Not executed</option>
+          <option value="Untested" ${tc.status === 'Untested' ? 'selected' : ''}>Untested</option>
           <option value="Passed" ${tc.status === 'Passed' ? 'selected' : ''}>Passed</option>
           <option value="Failed" ${tc.status === 'Failed' ? 'selected' : ''}>Failed</option>
           <option value="Blocked" ${tc.status === 'Blocked' ? 'selected' : ''}>Blocked</option>
@@ -4262,11 +4892,8 @@ const renderTestCaseManagement = () => {
     `;
   }
 
-  const isOverviewMode = state.activeTestCaseProjectId === '__all__';
-  if (!isOverviewMode) {
-    const activeProj = state.projects.find(p => p.id === state.activeTestCaseProjectId) || state.projects[0];
-    state.activeTestCaseProjectId = activeProj.id;
-  }
+  const activeProj = state.projects.find(p => p.id === state.activeTestCaseProjectId) || state.projects[0];
+  state.activeTestCaseProjectId = activeProj.id;
   const activeProjId = state.activeTestCaseProjectId;
 
   // 1. Pre-group test cases by moduleId and projectId for O(1) lookups
@@ -4276,7 +4903,7 @@ const renderTestCaseManagement = () => {
 
   state.testCases.forEach(tc => {
     projectCounts[tc.projectId] = (projectCounts[tc.projectId] || 0) + 1;
-    if (!isOverviewMode && tc.projectId === activeProjId) {
+    if (tc.projectId === activeProjId) {
       projectCases.push(tc);
       const mid = tc.moduleId || '';
       if (!moduleCasesMap[mid]) {
@@ -4345,7 +4972,7 @@ const renderTestCaseManagement = () => {
     if (tc.status === 'Passed') passed++;
     else if (tc.status === 'Failed') failed++;
     else if (tc.status === 'Blocked') blocked++;
-    else if (tc.status === 'Not executed' || tc.status === 'Untested' || !tc.status) untested++;
+    else if (tc.status === 'Untested') untested++;
 
     if (tc.type === 'Automated') automated++;
   });
@@ -4353,33 +4980,14 @@ const renderTestCaseManagement = () => {
   const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
   const autoRate = total > 0 ? Math.round((automated / total) * 100) : 0;
 
-  // ─── Overall stats across ALL projects (for header banner + overview mode) ───
-  let overallPassed = 0, overallFailed = 0, overallBlocked = 0, overallUntested = 0, overallAutomated = 0;
-  state.testCases.forEach(tc => {
-    if (tc.status === 'Passed') overallPassed++;
-    else if (tc.status === 'Failed') overallFailed++;
-    else if (tc.status === 'Blocked') overallBlocked++;
-    else if (tc.status === 'Not executed' || tc.status === 'Untested' || !tc.status) overallUntested++;
-    if (tc.type === 'Automated') overallAutomated++;
-  });
-  const overallTotal = state.testCases.length;
-  const overallPassRate = overallTotal > 0 ? Math.round((overallPassed / overallTotal) * 100) : 0;
-  const overallAutoRate = overallTotal > 0 ? Math.round((overallAutomated / overallTotal) * 100) : 0;
-
   // Donut SVG Math
   const circumference = 2 * Math.PI * 30; // 188.49
   const strokeDash = `${(passRate / 100) * circumference} ${circumference}`;
 
   // Tabs HTML
-  const allTabActive = isOverviewMode ? 'active' : '';
-  const tabsHtml = `
-    <button class="project-tab ${allTabActive}" data-project-id="__all__">
-      <span>All Projects</span>
-      <span class="project-tab-count">${overallTotal}</span>
-    </button>
-  ` + state.projects.map(p => {
+  const tabsHtml = state.projects.map(p => {
     const count = projectCounts[p.id] || 0;
-    const isActive = (!isOverviewMode && p.id === state.activeTestCaseProjectId) ? 'active' : '';
+    const isActive = p.id === state.activeTestCaseProjectId ? 'active' : '';
     return `
       <button class="project-tab ${isActive}" data-project-id="${p.id}">
         <span>${p.name}</span>
@@ -4387,161 +4995,6 @@ const renderTestCaseManagement = () => {
       </button>
     `;
   }).join('');
-
-  // ─── Overview Mode: render cross-project dashboard and return early ───
-  if (isOverviewMode) {
-    const overallCircumference = 2 * Math.PI * 30;
-    const overallStrokeDash = `${(overallPassRate / 100) * overallCircumference} ${overallCircumference}`;
-
-    const projectOverviewCards = state.projects.map(p => {
-      let pPassed = 0, pFailed = 0, pBlocked = 0, pUntested = 0, pAutomated = 0;
-      const pCases = state.testCases.filter(tc => tc.projectId === p.id);
-      pCases.forEach(tc => {
-        if (tc.status === 'Passed') pPassed++;
-        else if (tc.status === 'Failed') pFailed++;
-        else if (tc.status === 'Blocked') pBlocked++;
-        else pUntested++;
-        if (tc.type === 'Automated') pAutomated++;
-      });
-      const pTotal = pCases.length;
-      const pPassRate = pTotal > 0 ? Math.round((pPassed / pTotal) * 100) : 0;
-      const pAutoRate = pTotal > 0 ? Math.round((pAutomated / pTotal) * 100) : 0;
-      const pCirc = 2 * Math.PI * 24;
-      const pStroke = `${(pPassRate / 100) * pCirc} ${pCirc}`;
-      const pPassColor = pPassRate >= 80 ? '#2d6a4f' : pPassRate >= 50 ? '#d4a017' : '#c0392b';
-      return `
-        <div class="tc-project-card">
-          <div class="tc-project-card-header">
-            <span class="tc-project-card-name" title="${p.name}">${p.name}</span>
-            <span class="tc-project-card-count">${pTotal} cases</span>
-          </div>
-          <div class="tc-project-card-body">
-            <div style="position:relative;width:72px;height:72px;display:grid;place-items:center;flex-shrink:0;">
-              <svg style="transform:rotate(-90deg);width:72px;height:72px;">
-                <circle cx="36" cy="36" r="24" fill="none" stroke="var(--border)" stroke-width="10"></circle>
-                <circle cx="36" cy="36" r="24" fill="none" stroke="${pPassColor}" stroke-width="10"
-                  stroke-dasharray="${pStroke}" stroke-dashoffset="0"
-                  style="transition:stroke-dasharray 0.3s ease;"></circle>
-              </svg>
-              <div style="position:absolute;display:flex;flex-direction:column;align-items:center;">
-                <span style="font-size:15px;font-weight:700;color:var(--text);line-height:1;">${pPassRate}%</span>
-                <span style="font-size:8px;text-transform:uppercase;color:var(--text-muted);">Passed</span>
-              </div>
-            </div>
-            <div style="flex:1;display:flex;flex-direction:column;gap:8px;">
-              <div class="stacked-progress-bar" style="height:10px;">
-                <div class="progress-segment pass" style="width:${pTotal > 0 ? (pPassed/pTotal*100).toFixed(1) : 0}%" title="Passed: ${pPassed}"></div>
-                <div class="progress-segment fail" style="width:${pTotal > 0 ? (pFailed/pTotal*100).toFixed(1) : 0}%" title="Failed: ${pFailed}"></div>
-                <div class="progress-segment blocked" style="width:${pTotal > 0 ? (pBlocked/pTotal*100).toFixed(1) : 0}%" title="Blocked: ${pBlocked}"></div>
-                <div class="progress-segment not-executed" style="width:${pTotal > 0 ? (pUntested/pTotal*100).toFixed(1) : 0}%" title="Not executed: ${pUntested}"></div>
-              </div>
-              <div class="tc-project-card-stats">
-                <span class="tc-stat-chip passed">✓ ${pPassed}</span>
-                <span class="tc-stat-chip failed">✗ ${pFailed}</span>
-                <span class="tc-stat-chip blocked">⊘ ${pBlocked}</span>
-                <span class="tc-stat-chip not-run">○ ${pUntested}</span>
-              </div>
-              <div style="display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--text-muted);">
-                <span>Auto: <strong style="color:var(--text);">${pAutoRate}%</strong></span>
-                <span>${pAutomated} automated</span>
-              </div>
-            </div>
-          </div>
-          <button class="tc-project-card-viewbtn" data-action="goto-tc-project" data-project-id="${p.id}">
-            View Project →
-          </button>
-        </div>
-      `;
-    }).join('');
-
-    const overviewHero = buildPageHero({
-      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12l2 2 4-4"/></svg>`,
-      gradient: 'linear-gradient(135deg, #0f2027 0%, #203a43 40%, #2c5364 100%)',
-      title: 'Test Case Management',
-      subtitle: 'Manage, execute and track test cases across your project modules.',
-      stats: [
-        { label: 'Total Cases', value: overallTotal },
-        { label: 'Passed', value: overallPassed, color: '#4ade80' },
-        { label: 'Failed', value: overallFailed, color: '#f87171' },
-        { label: 'Blocked', value: overallBlocked, color: '#fb923c' },
-        { label: 'Not executed', value: overallUntested, color: '#94a3b8' },
-        { label: 'Pass Rate', value: `${overallPassRate}%`, color: overallPassRate >= 80 ? '#4ade80' : overallPassRate >= 50 ? '#fbbf24' : '#f87171' },
-      ],
-      progressBar: { pct: overallPassRate, label: `${overallPassed} / ${overallTotal} passed`, color: 'linear-gradient(90deg, #4ade80, #22c55e)' }
-    });
-
-    return `
-      ${overviewHero}
-      <div class="project-tabs-container">${tabsHtml}</div>
-      <div class="testcases-workspace">
-        <section class="testcases-main-panel" style="width:100%;">
-
-          <div class="testcases-charts-row">
-            <div class="chart-card">
-              <span class="chart-card-title">Overall Test Pass Rate</span>
-              <div class="chart-container">
-                <div style="position:relative;width:90px;height:90px;display:grid;place-items:center;">
-                  <svg class="donut-svg">
-                    <circle cx="45" cy="45" r="30" fill="none" stroke="var(--border)" stroke-width="12"></circle>
-                    <circle class="donut-segment" cx="45" cy="45" r="30" fill="none" stroke="#2d6a4f"
-                      stroke-dasharray="${overallStrokeDash}" stroke-dashoffset="0"></circle>
-                  </svg>
-                  <div class="donut-center">
-                    <span class="donut-val">${overallPassRate}%</span>
-                    <span class="donut-lbl">Passed</span>
-                  </div>
-                </div>
-                <div class="chart-legend">
-                  <div class="legend-item"><span class="legend-color" style="background:#2d6a4f;"></span><span>Passed</span><span class="legend-val">${overallPassed}</span></div>
-                  <div class="legend-item"><span class="legend-color" style="background:#c0392b;"></span><span>Failed</span><span class="legend-val">${overallFailed}</span></div>
-                  <div class="legend-item"><span class="legend-color" style="background:#ef6c00;"></span><span>Blocked</span><span class="legend-val">${overallBlocked}</span></div>
-                  <div class="legend-item"><span class="legend-color" style="background:#94a3b8;"></span><span>Not executed</span><span class="legend-val">${overallUntested}</span></div>
-                </div>
-              </div>
-            </div>
-
-            <div class="chart-card">
-              <span class="chart-card-title">Overall Automation & Run Status</span>
-              <div style="display:flex;flex-direction:column;justify-content:center;gap:16px;height:100%;">
-                <div class="stacked-progress-wrap">
-                  <div style="display:flex;justify-content:space-between;font-size:11.5px;">
-                    <span style="font-weight:600;color:var(--text-secondary);">Execution Coverage</span>
-                    <span style="color:var(--text-muted);">${overallTotal - overallUntested} / ${overallTotal} Run</span>
-                  </div>
-                  <div class="stacked-progress-bar">
-                    <div class="progress-segment pass" style="width:${overallTotal > 0 ? (overallPassed/overallTotal*100).toFixed(1) : 0}%" title="Passed: ${overallPassed}"></div>
-                    <div class="progress-segment fail" style="width:${overallTotal > 0 ? (overallFailed/overallTotal*100).toFixed(1) : 0}%" title="Failed: ${overallFailed}"></div>
-                    <div class="progress-segment blocked" style="width:${overallTotal > 0 ? (overallBlocked/overallTotal*100).toFixed(1) : 0}%" title="Blocked: ${overallBlocked}"></div>
-                    <div class="progress-segment not-executed" style="width:${overallTotal > 0 ? (overallUntested/overallTotal*100).toFixed(1) : 0}%" title="Not executed: ${overallUntested}"></div>
-                  </div>
-                </div>
-                <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--border);padding-top:12px;">
-                  <div style="display:flex;flex-direction:column;">
-                    <span style="font-size:11px;text-transform:uppercase;color:var(--text-muted);font-weight:500;">Automation</span>
-                    <strong style="font-size:18px;color:var(--text);">${overallAutoRate}%</strong>
-                  </div>
-                  <span class="status-pill automation" style="background:var(--accent-light);color:var(--accent);border:1px solid rgba(45,106,79,0.15);font-size:10.5px;">
-                    ${overallAutomated} Automated cases
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div style="margin-top:24px;">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border);">
-              <h3 style="font-size:14px;font-weight:700;color:var(--text);margin:0;text-transform:uppercase;letter-spacing:0.5px;">Project Breakdown</h3>
-              <span style="font-size:12px;color:var(--text-muted);background:var(--surface-2);padding:2px 8px;border-radius:var(--radius-pill);">${state.projects.length} projects</span>
-            </div>
-            <div class="tc-overview-grid">
-              ${projectOverviewCards}
-            </div>
-          </div>
-
-        </section>
-      </div>
-    `;
-  }
 
   // Modules List HTML
   const projModules = state.modules.filter(m => m.projectId === state.activeTestCaseProjectId);
@@ -4632,14 +5085,14 @@ const renderTestCaseManagement = () => {
     title: 'Test Case Management',
     subtitle: 'Manage, execute and track test cases across your project modules.',
     stats: [
-      { label: 'Total Cases', value: overallTotal },
-      { label: 'Passed', value: overallPassed, color: '#4ade80' },
-      { label: 'Failed', value: overallFailed, color: '#f87171' },
-      { label: 'Blocked', value: overallBlocked, color: '#fb923c' },
-      { label: 'Not executed', value: overallUntested, color: '#94a3b8' },
-      { label: 'Pass Rate', value: `${overallPassRate}%`, color: overallPassRate >= 80 ? '#4ade80' : overallPassRate >= 50 ? '#fbbf24' : '#f87171' },
+      { label: 'Total Cases', value: state.testCases.length },
+      { label: 'Passed', value: passed, color: '#4ade80' },
+      { label: 'Failed', value: failed, color: '#f87171' },
+      { label: 'Blocked', value: blocked, color: '#fb923c' },
+      { label: 'Untested', value: untested, color: '#94a3b8' },
+      { label: 'Pass Rate', value: `${passRate}%`, color: passRate >= 80 ? '#4ade80' : passRate >= 50 ? '#fbbf24' : '#f87171' },
     ],
-    progressBar: { pct: overallPassRate, label: `${overallPassed} / ${overallTotal} passed`, color: 'linear-gradient(90deg, #4ade80, #22c55e)' }
+    progressBar: { pct: passRate, label: `${passed} / ${total} passed`, color: 'linear-gradient(90deg, #4ade80, #22c55e)' }
   });
 
   // Return full workspace markup
@@ -4699,11 +5152,6 @@ const renderTestCaseManagement = () => {
                   <span>Blocked</span>
                   <span class="legend-val">${blocked}</span>
                 </div>
-                <div class="legend-item">
-                  <span class="legend-color" style="background:#94a3b8;"></span>
-                  <span>Not executed</span>
-                  <span class="legend-val">${untested}</span>
-                </div>
               </div>
             </div>
           </div>
@@ -4721,7 +5169,7 @@ const renderTestCaseManagement = () => {
                   <div class="progress-segment pass" style="width: ${passWidth}%" title="Passed: ${passed}"></div>
                   <div class="progress-segment fail" style="width: ${failWidth}%" title="Failed: ${failed}"></div>
                   <div class="progress-segment blocked" style="width: ${blockWidth}%" title="Blocked: ${blocked}"></div>
-                  <div class="progress-segment not-executed" style="width: ${untestWidth}%" title="Not executed: ${untested}"></div>
+                  <div class="progress-segment untested" style="width: ${untestWidth}%" title="Untested: ${untested}"></div>
                 </div>
               </div>
               <div style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:12px;">
@@ -4752,7 +5200,7 @@ const renderTestCaseManagement = () => {
             <option value="Passed" ${state.testCaseFilters.status === 'Passed' ? 'selected' : ''}>Passed</option>
             <option value="Failed" ${state.testCaseFilters.status === 'Failed' ? 'selected' : ''}>Failed</option>
             <option value="Blocked" ${state.testCaseFilters.status === 'Blocked' ? 'selected' : ''}>Blocked</option>
-            <option value="Not executed" ${state.testCaseFilters.status === 'Not executed' || state.testCaseFilters.status === 'Untested' ? 'selected' : ''}>Not executed</option>
+            <option value="Untested" ${state.testCaseFilters.status === 'Untested' ? 'selected' : ''}>Untested</option>
           </select>
 
           <select class="filter-select" id="filterTCPriority" data-tcfilter="priority">
@@ -4889,7 +5337,7 @@ const openTestCaseModal = (id = null) => {
     document.getElementById('testCasePriority').value = tc.priority;
     document.getElementById('testCaseSeverity').value = tc.severity || 'S3 - Major';
     document.getElementById('testCaseType').value = tc.type || 'Manual';
-    document.getElementById('testCaseStatus').value = (tc.status === 'Untested' ? 'Not executed' : (tc.status || 'Not executed'));
+    document.getElementById('testCaseStatus').value = tc.status || 'Untested';
     document.getElementById('testCaseAssignee').value = tc.assignee || '';
     document.getElementById('testCaseExecutionDate').value = tc.executionDate || '';
     document.getElementById('testCaseDefectId').value = tc.defectId || '';
@@ -4912,7 +5360,7 @@ const openTestCaseModal = (id = null) => {
     document.getElementById('testCasePriority').value = 'High';
     document.getElementById('testCaseSeverity').value = 'S3 - Major';
     document.getElementById('testCaseType').value = 'Manual';
-    document.getElementById('testCaseStatus').value = 'Not executed';
+    document.getElementById('testCaseStatus').value = 'Untested';
     document.getElementById('testCaseAssignee').value = '';
     document.getElementById('testCaseExecutionDate').value = '';
     document.getElementById('testCaseDefectId').value = '';
@@ -5355,7 +5803,8 @@ const normalizeStatus = (val) => {
   if (clean.startsWith('pass')) return 'Passed';
   if (clean.startsWith('fail')) return 'Failed';
   if (clean.startsWith('block')) return 'Blocked';
-  return 'Not executed'; // default
+  if (clean.startsWith('untest')) return 'Untested';
+  return 'Untested'; // default
 };
 
 const normalizeType = (val) => {
@@ -5748,7 +6197,6 @@ const renderImportPreview = () => {
 
   let newCount = 0;
   let dupCount = 0;
-  let fileDupCount = 0;
   const duplicateCases = [];
   const duplicateIds = new Set();
 
@@ -5782,18 +6230,48 @@ const renderImportPreview = () => {
     const customIdRaw = getVal('id');
     const customId = String(customIdRaw || '').trim();
 
-    // Check if it matches an existing system test case IN THE SAME PROJECT (independent of module)
-    let existing = null;
-    if (customId) {
-      existing = state.testCases.find(tc => tc.projectId === projectId && tc.id.toLowerCase() === customId.toLowerCase());
-    }
-    if (!existing && scenario) {
-      existing = state.testCases.find(tc => tc.projectId === projectId && (tc.scenario || tc.title || '').trim().toLowerCase() === scenario.toLowerCase());
+    // Determine module FIRST
+    let targetModuleId = '';
+    if (modalModuleId === 'root_only') {
+      targetModuleId = '';
+    } else if (modalModuleId !== '') {
+      targetModuleId = modalModuleId;
+    } else {
+      const csvModuleNameRaw = getVal('module');
+      const csvModuleName = String(csvModuleNameRaw || '').trim();
+      if (csvModuleName) {
+        const cleanName = csvModuleName.toLowerCase();
+        if (tempModuleCache[cleanName]) {
+          targetModuleId = tempModuleCache[cleanName];
+        } else {
+          const existingMod = state.modules.find(m => m.projectId === projectId && m.name.toLowerCase() === cleanName);
+          if (existingMod) {
+            targetModuleId = existingMod.id;
+            tempModuleCache[cleanName] = targetModuleId;
+          } else {
+            const tempId = 'temp-mod-' + cleanName;
+            tempModuleCache[cleanName] = tempId;
+            targetModuleId = tempId;
+          }
+        }
+      } else {
+        const defaultMod = state.modules.find(m => m.projectId === projectId);
+        targetModuleId = defaultMod ? defaultMod.id : '';
+      }
     }
 
-    // Check duplicate within the same file (project-scoped)
-    const fileIdKey = customId.toLowerCase();
-    const fileScenarioKey = scenario.toLowerCase();
+    // Check if it matches an existing system test case IN THE SAME TARGET MODULE
+    let existing = null;
+    if (customId) {
+      existing = state.testCases.find(tc => tc.projectId === projectId && tc.moduleId === targetModuleId && tc.id.toLowerCase() === customId.toLowerCase());
+    }
+    if (!existing && scenario) {
+      existing = state.testCases.find(tc => tc.projectId === projectId && tc.moduleId === targetModuleId && (tc.scenario || tc.title || '').trim().toLowerCase() === scenario.toLowerCase());
+    }
+
+    // Check duplicate within the same file (scoped to target module)
+    const fileIdKey = targetModuleId + "|||" + customId.toLowerCase();
+    const fileScenarioKey = targetModuleId + "|||" + scenario.toLowerCase();
     let isFileDup = false;
     if (customId && seenIds.has(fileIdKey)) isFileDup = true;
     if (!isFileDup && seenScenarios.has(fileScenarioKey)) isFileDup = true;
@@ -5813,9 +6291,7 @@ const renderImportPreview = () => {
       }
     }
 
-    if (isFileDup) {
-      fileDupCount++;
-    } else if (isSystemDup) {
+    if (isFileDup || isSystemDup) {
       if (isUpdated) {
         newCount++;
       } else {
@@ -5878,15 +6354,6 @@ const renderImportPreview = () => {
     preview.insertBefore(summaryCard, preview.firstChild.nextSibling);
   }
 
-  let fileDupHtml = '';
-  if (fileDupCount > 0) {
-    fileDupHtml = `
-      <div style="display:flex; justify-content:space-between; color:var(--text-muted);">
-        <span>Duplicates within file (skipped):</span> <strong>${fileDupCount}</strong>
-      </div>
-    `;
-  }
-
   summaryCard.innerHTML = `
     <div style="font-weight:bold; margin-bottom:4px;">File parsed successfully!</div>
     <div style="display:flex; justify-content:space-between; margin-top:2px;">
@@ -5895,9 +6362,8 @@ const renderImportPreview = () => {
     <div style="display:flex; justify-content:space-between; color:#27ae60;">
       <span>New / Updated Test Cases:</span> <strong>${newCount}</strong>
     </div>
-    ${fileDupHtml}
     <div style="display:flex; justify-content:space-between; align-items:center; color:${dupCount > 0 ? (replaceDupes ? '#e67e22' : 'var(--danger)') : 'var(--text-muted)'};">
-      <span>${replaceDupes ? 'Duplicates to Overwrite:' : 'Ignored duplicates (Already exist in system):'}</span> 
+      <span>${replaceDupes ? 'Duplicates to Overwrite:' : 'Ignored duplicates (Already exist):'}</span> 
       <div>
         <strong>${dupCount}</strong>
         ${dupCount > 0 ? `<a href="#" id="viewExcelDupesLink" style="font-size:11px; margin-left:8px; text-decoration:underline; font-weight:600; color:inherit; cursor:pointer;">View / Clean</a>` : ''}
@@ -5946,10 +6412,10 @@ const deleteTestCaseFromImport = async (id) => {
     logActivity(`Deleted testcase "${id}" during Excel import`, 'delete');
     await storage.save();
     showToast(`Test case ${id} deleted.`);
-    
+
     // Re-render import preview
     renderImportPreview();
-    
+
     // Re-render main UI in background
     render();
     updateStorageInfo();
@@ -6029,12 +6495,13 @@ const handleExcelImport = async () => {
     const existingScenarioMap = new Map();
     state.testCases.forEach(tc => {
       const pId = tc.projectId;
+      const mId = tc.moduleId || '';
       if (tc.id) {
-        existingIdMap.set(pId + "|||" + tc.id.toLowerCase(), tc);
+        existingIdMap.set(pId + "|||" + mId + "|||" + tc.id.toLowerCase(), tc);
       }
       const scenarioVal = (tc.scenario || tc.title || '').trim().toLowerCase();
       if (scenarioVal) {
-        existingScenarioMap.set(pId + "|||" + scenarioVal, tc);
+        existingScenarioMap.set(pId + "|||" + mId + "|||" + scenarioVal, tc);
       }
     });
 
@@ -6091,18 +6558,18 @@ const handleExcelImport = async () => {
         }
       }
 
-      // Check if it matches an existing system test case IN THE SAME PROJECT (independent of module)
+      // Check if it matches an existing system test case IN THE SAME TARGET MODULE
       let existing = null;
       if (customId) {
-        existing = existingIdMap.get(projectId + "|||" + customId.toLowerCase()) || null;
+        existing = existingIdMap.get(projectId + "|||" + targetModuleId + "|||" + customId.toLowerCase()) || null;
       }
       if (!existing && scenario) {
-        existing = existingScenarioMap.get(projectId + "|||" + scenario.toLowerCase()) || null;
+        existing = existingScenarioMap.get(projectId + "|||" + targetModuleId + "|||" + scenario.toLowerCase()) || null;
       }
 
-      // Check duplicate within the same file (project-scoped)
-      const fileIdKey = customId.toLowerCase();
-      const fileScenarioKey = scenario.toLowerCase();
+      // Check duplicate within the same file (scoped to target module)
+      const fileIdKey = targetModuleId + "|||" + customId.toLowerCase();
+      const fileScenarioKey = targetModuleId + "|||" + scenario.toLowerCase();
       let isFileDup = false;
       if (customId && seenIds.has(fileIdKey)) isFileDup = true;
       if (!isFileDup && seenScenarios.has(fileScenarioKey)) isFileDup = true;
@@ -6186,8 +6653,8 @@ const handleExcelImport = async () => {
 
       state.testCases.push(newTestCase);
       existingIdsSet.add(finalId.toLowerCase());
-      existingIdMap.set(projectId + "|||" + finalId.toLowerCase(), newTestCase);
-      existingScenarioMap.set(projectId + "|||" + scenario.toLowerCase(), newTestCase);
+      existingIdMap.set(projectId + "|||" + targetModuleId + "|||" + finalId.toLowerCase(), newTestCase);
+      existingScenarioMap.set(projectId + "|||" + targetModuleId + "|||" + scenario.toLowerCase(), newTestCase);
 
       imported++;
     });
@@ -6341,7 +6808,7 @@ const handleBulkUpdateFieldChange = () => {
   } else if (field === 'status') {
     html = `
       <select id="bulkUpdateValueSelect" style="background:var(--surface);">
-        <option value="Not executed" selected>Not executed</option>
+        <option value="Untested" selected>Untested</option>
         <option value="Passed">Passed</option>
         <option value="Failed">Failed</option>
         <option value="Blocked">Blocked</option>
@@ -6869,6 +7336,33 @@ const init = async () => {
   document.getElementById('cancelBulkUpdateModal').addEventListener('click', closeModals);
   document.getElementById('closeReleasePtModal').addEventListener('click', closeModals);
   document.getElementById('cancelReleasePtModal').addEventListener('click', closeModals);
+  // Completion date modal
+  const applyCompletionDate = async (dateIso) => {
+    const taskId = document.getElementById('completionTaskId').value;
+    const modal = document.getElementById('completionDateModal');
+    const oldStatus = modal.dataset.oldStatus || 'To-Do';
+    const task = state.tasks.find(t => t.id === taskId);
+    if (task) {
+      task.completedDate = new Date(dateIso + 'T12:00:00').toISOString();
+      task.updatedAt = new Date().toISOString();
+      logActivity(`Moved task "${task.title}" from ${oldStatus} to Done`, 'task');
+      await storage.save();
+    }
+    closeModals();
+    render();
+    showToast('Task marked as Done');
+  };
+  document.getElementById('closeCompletionDateModal').addEventListener('click', async () => {
+    await applyCompletionDate(new Date().toISOString().split('T')[0]);
+  });
+  document.getElementById('skipCompletionDate').addEventListener('click', async () => {
+    await applyCompletionDate(new Date().toISOString().split('T')[0]);
+  });
+  document.getElementById('confirmCompletionDate').addEventListener('click', async () => {
+    const val = document.getElementById('completionDateInput').value || new Date().toISOString().split('T')[0];
+    await applyCompletionDate(val);
+  });
+
   document.getElementById('closeConfirmModal').addEventListener('click', closeModals);
   document.getElementById('cancelConfirm').addEventListener('click', closeModals);
   document.getElementById('modalBackdrop').addEventListener('click', closeModals);

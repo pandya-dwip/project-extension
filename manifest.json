@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Clair – Task & Project Tracker",
-  "version": "1.0.0",
+  "version": "2.0.5",
   "description": "A minimal personal workspace for managing projects and daily tasks.",
   "permissions": ["storage", "tabs", "downloads"],
   "action": {
