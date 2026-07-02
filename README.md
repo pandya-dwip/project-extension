@@ -4,7 +4,7 @@
 
 **A local-first project & release tracker — built as a Chrome Extension**
 
-![Version](https://img.shields.io/badge/version-2.0.5-informational?style=flat-square)
+![Version](https://img.shields.io/badge/version-2.1.3-informational?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Chrome%20Extension-4285F4?style=flat-square&logo=googlechrome&logoColor=white)
 ![Manifest](https://img.shields.io/badge/manifest-V3-success?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-Vanilla%20JS%20%2F%20HTML%20%2F%20CSS-F7DF1E?style=flat-square)
@@ -50,15 +50,33 @@ The current app version is displayed in the sidebar footer and is always read di
 
 ## What's New
 
-### v2.0.5
+### v2.1.3 (current)
 
-- **Release cards sorted by release date** — cards on the Release Management screen now sort by release date descending (most upcoming first); releases with no date set appear at the end.
-- **Release Point card redesign** — compact two-column horizontal layout (info left, checklist right) in a responsive two-column grid. Replaced the SVG progress ring with a slim inline progress bar. Cards now sit 2-per-row on desktop, reducing vertical scrolling.
-- **Release Point card actions on hover** — edit and delete buttons float to the top-right of the card and only appear on hover, giving the title full width and eliminating wrapping.
-- **Inline checklist item delete** — clicking the pencil icon on a checklist item now shows Save, Cancel, and a **Delete** button in the inline edit form, so items can be removed directly from the card without opening the edit modal.
-- **Bulk Add for checklist items** — a **Bulk Add** button in the Release Point modal opens a count picker (`−` / number / `+`). Clicking **Add Items** inserts that many empty rows into the checklist editor at once.
-- **No-scroll checklist toggle** — toggling a checklist item done/undone no longer triggers a full page re-render. The card is patched in place (progress bar, item state, completed banner, card class), so scroll position is fully preserved.
-- **App version badge** — the current version is now shown at the bottom of the sidebar, read from `manifest.json` automatically in extension mode.
+#### Dashboard
+
+- **Weekly task completion chart** — a Chart.js bar chart shows task completions grouped by day of week for the selected month. Month navigation (prev / next) is shared with the Released section.
+- **Released section with month switcher** — the "Released This Month" section is now labelled "Released" and includes the same month navigation pill used by the chart, so you can browse released projects for any past month without leaving the dashboard.
+
+#### Project Cards — full redesign
+
+- **3-column horizontal card layout** — each project card is now a horizontal row divided into three sections: project info (left), version (center), release history + actions (right). Cards stack vertically in a single column so no information is ever off-screen.
+- **Colored left border as status indicator** — the left edge of each card is colored by primary status (green = Stable, amber = Testing, blue = In Progress, gray = Planned). All three sections share a clean white background; there are no tinted gradients.
+- **Version section with card-like boxes** — the center column renders version data inside individually bordered, rounded boxes:
+  - *Web projects:* a single box showing **Previous** (left) and **Current** (right) with the current version highlighted in the accent color.
+  - *App projects:* two separate boxes stacked vertically — one for **Android**, one for **iOS** — each showing **Prev** and **Up** columns side by side.
+  - Empty or N/A values display as `—` for clarity.
+- **Compact release history column** — the right column is fixed at 240 px so it never dominates wide viewports. It shows up to three recent release log entries with checkmarks and dates, a "Clear" button when history exists, and the last-updated date.
+- **Side-by-side release buttons** — Web projects show a single "Release Version" button; App projects show "Android Release" and "iOS Release" side by side, both filling the column equally.
+
+#### Earlier v2.1.3 changes
+
+- **Release cards sorted by release date** — cards on the Release Management screen sort by release date descending; undated releases appear at the end.
+- **Release Point card redesign** — compact two-column horizontal layout with a slim inline progress bar. Cards sit 2-per-row on desktop.
+- **Release Point card actions on hover** — edit and delete buttons float to the top-right and only appear on hover.
+- **Inline checklist item delete** — the pencil icon on a checklist item opens an inline form with Save, Cancel, and Delete.
+- **Bulk Add for checklist items** — a count picker (`−` / number / `+`) inserts multiple empty rows at once.
+- **No-scroll checklist toggle** — toggling a checklist item patches the DOM in place; scroll position is fully preserved.
+- **App version badge** — current version shown in the sidebar footer, read from `manifest.json` automatically.
 
 ---
 
@@ -66,18 +84,18 @@ The current app version is displayed in the sidebar footer and is always read di
 
 | Area | What you can do |
 |---|---|
-| **Dashboard** | See live counts for projects, tasks, and insights; review the most common project status; scan recent projects, tasks, and insights at a glance. |
-| **Projects** | Create web and mobile app projects with platform-specific version fields; set up to 3 concurrent statuses per project; search, filter, edit, and delete. |
-| **Tasks** | Manage a 4-column Kanban board (To-Do, In Progress, Done, On Hold); drag cards between columns; get visual date alerts for overdue, due-today, and due-tomorrow tasks; assign tasks to developers. |
-| **Project Insights** | Capture issues, enhancements, and notes against projects; track each item through a Dev → QA → Done workflow; filter by developer, status, and assignment state. |
+| **Dashboard** | Live counts for projects, tasks, and insights; weekly task completion bar chart; released projects by month; recent projects, tasks, and insights. |
+| **Projects** | Create web and mobile app projects with platform-specific version fields; 3-column horizontal card showing status, version boxes, and release history; set up to 3 concurrent statuses; search, filter, edit, delete. |
+| **Tasks** | 4-column Kanban board (To-Do, In Progress, Done, On Hold); drag cards between columns; visual date alerts for overdue, due-today, and due-tomorrow tasks; assign tasks to developers. |
+| **Project Insights** | Capture issues, enhancements, and notes per project; track each item through a Dev → QA → Done workflow; filter by developer, status, and assignment state. |
 | **Release Management** | Log releases sorted by release date; advance through a seven-stage status workflow (Draft → Released); generate email-style release announcements; copy notes to clipboard. |
 | **Release Points** | Compact horizontal cards in a two-column grid; slim progress bar per card; inline delete for checklist items; bulk add with a count picker; scroll-preserving checklist toggle. |
 | **Test Case Management** | Enter structured test cases with priority, severity, module, and status; import cases from CSV; group by module. |
 | **Developers** | Maintain a developer registry; link developers to projects so they appear in context-sensitive dropdowns on tasks and insights. |
-| **Activity Feed** | Browse a timestamped audit trail of every create, update, delete, move, and copy action (capped at 200 entries). |
+| **Activity Feed** | Timestamped audit trail of every create, update, delete, move, and copy action (capped at 200 entries). |
 | **Data Portability** | Export all collections to a single JSON file; restore from any previous export; clear all data after a mandatory backup prompt. |
-| **Responsive UI** | Sidebar collapses to a hamburger menu on small screens; card grids and Kanban boards reflow for mobile and tablet widths. |
-| **Global Search** | `Ctrl+K` / `Cmd+K` opens an instant search across projects, tasks, and developers from any screen. |
+| **Responsive UI** | Sidebar collapses to a hamburger menu on small screens; topbar buttons collapse to icon-only at narrow widths; card grids and Kanban boards reflow for mobile and tablet. |
+| **Global Search** | `Ctrl+K` / `Cmd+K` opens instant search across projects, tasks, and developers from any screen. |
 | **Version Badge** | App version shown in the sidebar footer; auto-read from `manifest.json` — always stays in sync. |
 
 ---
@@ -110,8 +128,8 @@ Clair is a single-page application. Navigation switches the rendered view in pla
 
 | Screen | Internal view key | Purpose |
 |---|---|---|
-| Dashboard | `dashboard` | Live metrics and recent records overview |
-| Projects | `projects` | Project catalog with version and status management |
+| Dashboard | `dashboard` | Live metrics, weekly chart, released projects, and recent records |
+| Projects | `projects` | Project catalog with 3-column cards, version boxes, and release actions |
 | Tasks | `tasks` | Kanban board for task execution |
 | Project Insights | `tests` | Issue, enhancement, and note board per project |
 | Release Management | `releases` | Release lifecycle and note generation (sorted by release date) |
@@ -122,14 +140,19 @@ Clair is a single-page application. Navigation switches the rendered view in pla
 
 ### Dashboard
 
-Displays four metric cards (projects, tasks, insights, top status) and three lists showing the four most recent projects, five most recent tasks, and five most recent insights. Auto-updates whenever data changes.
+Displays four metric cards (projects, tasks, insights, top status), a weekly task completion bar chart with month navigation, a "Released" section showing projects released in the selected month, and three lists showing the four most recent projects, five most recent tasks, and five most recent insights. Auto-updates whenever data changes.
 
 ### Projects
 
 Supports two project types with different version fields:
 
-- **Web** — single version track: previous release version + upcoming release version.
-- **App** — dual platform tracks: Android (previous/upcoming) + iOS (previous/upcoming).
+- **Web** — single version track: previous release version + upcoming release version, displayed in a single rounded box inside the card's center column.
+- **App** — dual platform tracks: Android (previous/upcoming) + iOS (previous/upcoming), each displayed in its own rounded box stacked inside the center column.
+
+Each project card is a horizontal 3-column row:
+1. **Left — Info**: project name, type badge (WEB/APP), status pills, description, edit/delete actions.
+2. **Center — Version**: version boxes with Previous/Current for Web, or Android/iOS rows for App. Empty values display as `—`.
+3. **Right — History + Actions**: up to three release log entries, last-updated date, and Release button(s).
 
 Each project holds up to three concurrent statuses drawn from a fixed list:
 `N/A`, `Started`, `Stable`, `Testing`, `Automation`, `On Hold`, `Yet to Start`, `Completed`, `In Progress`, `Blocker`, `Issue Assigned`, `Developer`, `New Development`.
@@ -226,6 +249,7 @@ app.js  (single-page controller)
   ├─ drag & drop        Kanban column movement
   ├─ search/filter      debounced, per-view
   ├─ import/export      JSON file read/write
+  ├─ initWeeklyChart()  Chart.js bar chart for weekly task completions
   ├─ patchReleasePtCardAfterToggle()  targeted DOM patch (no full re-render)
   ├─ setAppVersion()    reads manifest version, injects into sidebar
   └─ activity           append-only audit log (max 200 entries)
@@ -264,6 +288,7 @@ chrome.storage.local    localStorage
   "iosPreviousVersion": "string",
   "iosUpcomingVersion": "string",
   "statuses": ["string"],
+  "releaseHistory": [{ "version": "string", "platform": "string", "releasedAt": "ISO 8601", "log": "string" }],
   "createdAt": "ISO 8601",
   "updatedAt": "ISO 8601"
 }
@@ -366,14 +391,16 @@ DEVELOPER ─┬── PROJECT       (developer.projectIds[])
 
 ```
 project-extension/
-├── manifest.json            Chrome MV3 metadata, permissions, version (currently 2.0.5)
+├── manifest.json            Chrome MV3 metadata, permissions, version (currently 2.1.3)
 ├── background.js            Service worker — tab lifecycle management
 ├── index.html               Static shell: sidebar, top bar, modals, form controls
-├── app.js                   Single-page controller (~7 200 lines)
-├── style.css                Complete stylesheet with CSS custom properties (~5 400 lines)
+├── app.js                   Single-page controller (~7 400 lines)
+├── style.css                Complete stylesheet with CSS custom properties (~6 100 lines)
+├── chart.umd.min.js         Bundled Chart.js v4.4.4 (local, no CDN)
 ├── xlsx.full.min.js         Bundled Excel library for spreadsheet operations
 ├── generate_import_file.js  Dev utility — generates sample test data
 ├── testcases_to_import.csv  Sample test case CSV for import testing
+├── code.html                Reference UI prototype (Tailwind-based design reference)
 ├── assets/
 │   ├── icon16.png
 │   ├── icon48.png
@@ -446,6 +473,7 @@ In **Settings**, click **Import Data** and select a previously exported JSON fil
 | Clipboard copy fails | Clipboard API requires a secure context | Use the extension tab (`chrome-extension://`) instead of a plain `file://` page |
 | Fonts display as system fallback | Google Fonts request blocked by network | The app is fully functional; only the typeface changes |
 | Version shows wrong value | `manifest.json` version not updated | Update the `"version"` field in `manifest.json` and reload the extension |
+| Chart does not appear on dashboard | No tasks with a `completedAt` date in selected month | Complete at least one task; or navigate to a month that has completions |
 
 ---
 
@@ -465,8 +493,11 @@ Clair follows a no-build, no-framework approach. Keep contributions consistent w
 - [ ] Extension icon opens Clair and focuses the same tab on a second click.
 - [ ] Sidebar footer shows the correct version from `manifest.json`.
 - [ ] Projects can be created for both `web` and `app` types.
+- [ ] Project cards display the correct version boxes (single box for Web, two stacked boxes for App).
 - [ ] Tasks move between Kanban columns via drag-and-drop.
 - [ ] Developer dropdowns filter to the selected project.
+- [ ] Dashboard weekly chart renders for the selected month.
+- [ ] Dashboard "Released" section filters correctly when navigating months.
 - [ ] Release cards are sorted by release date (most recent first).
 - [ ] Release Point checklist toggle preserves scroll position.
 - [ ] Inline checklist item delete removes the item without opening the modal.

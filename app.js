@@ -721,15 +721,28 @@ const renderDashboard = () => {
     progressBar: { pct: taskPct, label: `${completedTasks} / ${totalTasks} tasks completed`, color: 'linear-gradient(90deg, #4ade80, #22c55e)' }
   });
 
-  // 1. Released This Month
+  // 1. Released — month navigator
+  if (!state.releasedMonth) {
+    const _d = new Date();
+    state.releasedMonth = { year: _d.getFullYear(), month: _d.getMonth() };
+  }
+  const { year: rmYear, month: rmMonth } = state.releasedMonth;
+  const rmStart = new Date(rmYear, rmMonth, 1);
+  const rmName = rmStart.toLocaleDateString('en', { month: 'long', year: 'numeric' });
+  const isReleasedMonth = (dateStr) => {
+    if (!dateStr) return false;
+    const d = new Date(dateStr);
+    return !isNaN(d) && d.getFullYear() === rmYear && d.getMonth() === rmMonth;
+  };
+
   const manualReleasesThisMonth = (state.releases || [])
-    .filter(r => r.status === 'Released' && isCurrentMonth(r.releaseDate || r.updatedAt || r.createdAt));
+    .filter(r => r.status === 'Released' && isReleasedMonth(r.releaseDate || r.updatedAt || r.createdAt));
 
   const projectReleasesThisMonth = [];
   state.projects.forEach(p => {
     if (p.releaseHistory) {
       p.releaseHistory.forEach(entry => {
-        if (isCurrentMonth(entry.releasedAt)) {
+        if (isReleasedMonth(entry.releasedAt)) {
           projectReleasesThisMonth.push({
             projectName: p.name,
             version: entry.version,
@@ -784,7 +797,7 @@ const renderDashboard = () => {
         </div>
       `).join('')}
     </div>
-  ` : '<div style="color:var(--text-muted);font-size:13px;font-style:italic;text-align:center;padding:36px 0;">No releases recorded this month</div>';
+  ` : `<div style="color:var(--text-muted);font-size:13px;font-style:italic;text-align:center;padding:36px 0;">No releases recorded for ${rmName}</div>`;
 
   // 2. Recent Tasks (Overdue & Due Soon vs Completed Recently)
   const today = new Date();
@@ -1113,12 +1126,27 @@ const renderDashboard = () => {
 
     <div class="db-container">
 
-      <!-- Row 1: Released This Month | Charts & Metrics -->
+      <!-- Row 1: Released | Charts & Metrics -->
       <div class="db-grid">
         <div class="db-card">
-          <div class="db-card-title">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;flex-shrink:0;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            Released This Month
+          <div class="db-chart-header">
+            <div class="db-card-title" style="margin-bottom:0;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;flex-shrink:0;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              Released
+            </div>
+            <div class="db-chart-nav">
+              <button class="db-chart-nav-btn" data-action="released-month-prev" title="Previous month">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:13px;height:13px;"><path d="M15 18l-6-6 6-6"/></svg>
+              </button>
+              <div class="db-chart-nav-center">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;color:var(--accent);flex-shrink:0;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <span class="db-chart-nav-label">${rmName}</span>
+              </div>
+              <button class="db-chart-nav-btn" data-action="released-month-next" title="Next month"
+                ${(() => { const n = new Date(); return (rmYear === n.getFullYear() && rmMonth === n.getMonth()) ? 'disabled' : ''; })()}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:13px;height:13px;"><path d="M9 18l6-6-6-6"/></svg>
+              </button>
+            </div>
           </div>
           <div class="db-list">${releasesHtml}</div>
         </div>
@@ -1300,7 +1328,7 @@ const renderProjects = () => {
         <p>${q || state.filters.status ? 'Try a different search or filter.' : 'Click "Add Project" in the header to create your first project.'}</p>
       </div>
     ` : `
-      <div class="card-grid">
+      <div class="project-list">
         ${projects.map(p => renderProjectCard(p, q)).join('')}
       </div>
     `}
@@ -1311,66 +1339,62 @@ const renderProjects = () => {
 const renderProjectCard = (p, q = '') => {
   const isApp = p.projectType === 'app';
 
-  const versionBlock = isApp ? `
-    <div class="project-release-timeline" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;font-size:11px;background:var(--surface-2);padding:8px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);">
-      <div style="display:flex;align-items:center;gap:6px;width:100%;">
-        <span class="platform-badge android">Android</span>
-        <span style="color:var(--text-muted);font-size:9.5px;text-transform:uppercase;font-weight:500;">Prev:</span>
-        <strong style="color:var(--text-secondary);">${highlight(p.androidPreviousVersion || '–', q)}</strong>
-        <span style="color:var(--text-muted);font-weight:300;">→</span>
-        <span style="color:var(--text-muted);font-size:9.5px;text-transform:uppercase;font-weight:500;">Up:</span>
-        <strong style="color:var(--accent);">${highlight(p.androidUpcomingVersion || '–', q)}</strong>
+  // ── Version center panel ──
+  const verVal = (v) => (!v || v === 'N/A' || v === 'n/a') ? '—' : v;
+  const versionPanel = isApp ? `
+    <div class="pc-ver-app">
+      <div class="pc-ver-box pc-ver-box--app">
+        <span class="pc-ver-platform-lbl">Android</span>
+        <div class="pc-ver-plat-cols">
+          <div class="pc-ver-col">
+            <span class="pc-ver-label">Prev</span>
+            <span class="pc-ver-value prev">${highlight(verVal(p.androidPreviousVersion), q)}</span>
+          </div>
+          <div class="pc-ver-col">
+            <span class="pc-ver-label">Up</span>
+            <span class="pc-ver-value curr">${highlight(verVal(p.androidUpcomingVersion), q)}</span>
+          </div>
+        </div>
       </div>
-      <div style="display:flex;align-items:center;gap:6px;width:100%;">
-        <span class="platform-badge ios">iOS</span>
-        <span style="color:var(--text-muted);font-size:9.5px;text-transform:uppercase;font-weight:500;">Prev:</span>
-        <strong style="color:var(--text-secondary);">${highlight(p.iosPreviousVersion || '–', q)}</strong>
-        <span style="color:var(--text-muted);font-weight:300;">→</span>
-        <span style="color:var(--text-muted);font-size:9.5px;text-transform:uppercase;font-weight:500;">Up:</span>
-        <strong style="color:var(--accent);">${highlight(p.iosUpcomingVersion || '–', q)}</strong>
+      <div class="pc-ver-box pc-ver-box--app">
+        <span class="pc-ver-platform-lbl">iOS</span>
+        <div class="pc-ver-plat-cols">
+          <div class="pc-ver-col">
+            <span class="pc-ver-label">Prev</span>
+            <span class="pc-ver-value prev">${highlight(verVal(p.iosPreviousVersion), q)}</span>
+          </div>
+          <div class="pc-ver-col">
+            <span class="pc-ver-label">Up</span>
+            <span class="pc-ver-value curr">${highlight(verVal(p.iosUpcomingVersion), q)}</span>
+          </div>
+        </div>
       </div>
     </div>
   ` : `
-    <div class="project-release-timeline" style="display:flex;align-items:center;gap:6px;margin-bottom:12px;font-size:11px;color:var(--text-secondary);background:var(--surface-2);padding:8px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);width:100%;justify-content:space-between;">
-      <div style="display:flex;align-items:center;gap:4px;">
-        <span style="color:var(--text-muted);font-size:9.5px;text-transform:uppercase;font-weight:500;">Prev:</span>
-        <strong style="color:var(--text-secondary);">${highlight(p.previousVersion || '–', q)}</strong>
-      </div>
-      <div style="color:var(--text-muted);font-weight:300;">→</div>
-      <div style="display:flex;align-items:center;gap:4px;">
-        <span style="color:var(--text-muted);font-size:9.5px;text-transform:uppercase;font-weight:500;">Up:</span>
-        <strong style="color:var(--accent);">${highlight(p.upcomingVersion || p.version || '–', q)}</strong>
+    <div class="pc-ver-web">
+      <div class="pc-ver-box">
+        <div class="pc-ver-col left">
+          <span class="pc-ver-label">Previous</span>
+          <span class="pc-ver-value prev">${highlight(verVal(p.previousVersion), q)}</span>
+        </div>
+        <div class="pc-ver-col">
+          <span class="pc-ver-label">Current</span>
+          <span class="pc-ver-value curr">${highlight(verVal(p.upcomingVersion || p.version), q)}</span>
+        </div>
       </div>
     </div>
   `;
 
-  const actionBlock = isApp ? `
-    <div class="project-release-actions" style="margin-bottom: 12px;">
-      ${p.androidUpcomingVersion ? `
-        <button class="btn-release-action" data-action="release-platform" data-project-id="${p.id}" data-platform="android" title="Release Android Version">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4.5 16.5c-1.5 1.25-2.5 3.5-2.5 3.5s2.25-1 3.5-2.5m5.5-11.5L4 13m16-9l-9 9m9-9a3 3 0 1 1-6-6 3 3 0 0 1 6 6z"/></svg>
-          <span>Release Android</span>
-        </button>
-      ` : ''}
-      ${p.iosUpcomingVersion ? `
-        <button class="btn-release-action" data-action="release-platform" data-project-id="${p.id}" data-platform="ios" title="Release iOS Version">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4.5 16.5c-1.5 1.25-2.5 3.5-2.5 3.5s2.25-1 3.5-2.5m5.5-11.5L4 13m16-9l-9 9m9-9a3 3 0 1 1-6-6 3 3 0 0 1 6 6z"/></svg>
-          <span>Release iOS</span>
-        </button>
-      ` : ''}
-    </div>
+  // ── Release action buttons ──
+  const releaseSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="width:13px;height:13px;flex-shrink:0;"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>`;
+  const actionButtons = isApp ? `
+    <button class="pc-release-btn" data-action="release-platform" data-project-id="${p.id}" data-platform="android">Android Release</button>
+    <button class="pc-release-btn" data-action="release-platform" data-project-id="${p.id}" data-platform="ios">iOS Release</button>
   ` : `
-    <div class="project-release-actions" style="margin-bottom: 12px;">
-      ${(p.upcomingVersion || p.version) ? `
-        <button class="btn-release-action" data-action="release-platform" data-project-id="${p.id}" data-platform="web" title="Release Web Version">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4.5 16.5c-1.5 1.25-2.5 3.5-2.5 3.5s2.25-1 3.5-2.5m5.5-11.5L4 13m16-9l-9 9m9-9a3 3 0 1 1-6-6 3 3 0 0 1 6 6z"/></svg>
-          <span>Release Version</span>
-        </button>
-      ` : ''}
-    </div>
+    <button class="pc-release-btn" data-action="release-platform" data-project-id="${p.id}" data-platform="web">${releaseSvg} Release Version</button>
   `;
 
-  // History build
+  // ── Release history ──
   const history = p.releaseHistory || [];
   const displayHistory = [...history];
   if (displayHistory.length === 0 && p.lastReleaseAt) {
@@ -1382,19 +1406,18 @@ const renderProjectCard = (p, q = '') => {
     });
   }
 
-  const historyHtml = displayHistory.length ? displayHistory.slice(0, 3).map(h => {
-    const relativeTime = timeAgo(h.releasedAt);
-    const displayLog = h.log || `${h.platform ? h.platform + ' ' : ''}${h.version} released`;
-    return `
-      <div class="history-item">
-        <div class="history-dot"></div>
-        <div class="history-content">
-          <span class="history-version">${displayLog}</span>
-          <span class="history-time">${relativeTime}</span>
-        </div>
-      </div>
-    `;
-  }).join('') : `<div class="history-empty">No releases logged yet</div>`;
+  const checkSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:13px;height:13px;color:var(--accent);flex-shrink:0;margin-top:1px;"><path d="M20 6L9 17l-5-5"/></svg>`;
+  const historyHtml = displayHistory.length
+    ? displayHistory.slice(0, 3).map(h => {
+        const displayLog = h.log || `${h.platform ? h.platform + ' ' : ''}${h.version} released`;
+        return `
+          <div class="pc-history-item">
+            ${checkSvg}
+            <span class="pc-history-text">${displayLog}</span>
+            <span class="pc-history-date">${fmtDate(h.releasedAt)}</span>
+          </div>`;
+      }).join('')
+    : `<div class="pc-history-empty">No releases logged yet</div>`;
 
   const primaryStatus = (p.statuses || []).includes('Stable') ? 'stable' :
     (p.statuses || []).includes('Testing') ? 'testing' :
@@ -1402,19 +1425,18 @@ const renderProjectCard = (p, q = '') => {
 
   return `
   <div class="project-card status-${primaryStatus}" data-id="${p.id}">
-    
-    <!-- Left Column: Info & Actions -->
-    <div class="project-card-left-col">
-      <div class="project-card-top">
+
+    <!-- Col 1: Project info -->
+    <div class="pc-info">
+      <div class="pc-name-row">
         <div class="project-name">${highlight(p.name, q)}</div>
         ${isApp ? `<span class="project-type-badge app">App</span>` : `<span class="project-type-badge web">Web</span>`}
       </div>
-      ${p.description ? `<div class="project-desc">${highlight(formatCardDescription(p.description), q)}</div>` : ''}
       <div class="project-statuses">
         ${(p.statuses || []).map(s => statusPill(s)).join('')}
       </div>
-      <div class="project-card-left-footer">
-        <span class="card-time">Updated ${timeAgo(p.updatedAt)}</span>
+      ${p.description ? `<div class="project-desc">${highlight(formatCardDescription(p.description), q)}</div>` : ''}
+      <div class="pc-footer">
         <div class="card-actions">
           <button class="icon-btn" data-action="edit-project" data-id="${p.id}" title="Edit">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -1425,26 +1447,26 @@ const renderProjectCard = (p, q = '') => {
         </div>
       </div>
     </div>
-    
-    <!-- Right Column: Versions, Actions & History -->
-    <div class="project-card-right-col">
-      ${versionBlock}
-      ${actionBlock}
-      
-      <!-- Release History -->
-      <div class="project-release-history">
-        <div class="history-title">
-          <span>Release History</span>
-          ${displayHistory.length ? `
-            <button class="clear-history-btn" data-action="clear-release-history" data-id="${p.id}" title="Clear Release History">Clear</button>
-          ` : ''}
-        </div>
-        <div class="history-list">
-          ${historyHtml}
+
+    <!-- Col 2: Version -->
+    <div class="pc-version">
+      ${versionPanel}
+    </div>
+
+    <!-- Col 3: Release history + action -->
+    <div class="pc-history">
+      <div class="pc-history-header">
+        <span class="pc-history-label">Release History</span>
+        ${displayHistory.length ? `<button class="clear-history-btn" data-action="clear-release-history" data-id="${p.id}">Clear</button>` : ''}
+        <div class="pc-history-meta">
+          <span class="pc-history-meta-label">Updated</span>
+          <span class="pc-history-meta-date">${p.updatedAt ? fmtDate(p.updatedAt) : '—'}</span>
         </div>
       </div>
+      <div class="pc-history-list">${historyHtml}</div>
+      <div class="pc-action-btns">${actionButtons}</div>
     </div>
-    
+
   </div>
 `;
 };
@@ -2306,6 +2328,20 @@ const attachCardListeners = () => {
       else if (action === 'delete-module') confirmDeleteModule(cardId);
       else if (action === 'edit-testcase') openTestCaseModal(cardId);
       else if (action === 'delete-testcase') confirmDeleteTestCase(cardId);
+      else if (action === 'released-month-prev') {
+        let { year, month } = state.releasedMonth || { year: new Date().getFullYear(), month: new Date().getMonth() };
+        month--; if (month < 0) { month = 11; year--; }
+        state.releasedMonth = { year, month };
+        render();
+      }
+      else if (action === 'released-month-next') {
+        let { year, month } = state.releasedMonth || { year: new Date().getFullYear(), month: new Date().getMonth() };
+        const n = new Date();
+        if (year === n.getFullYear() && month >= n.getMonth()) return;
+        month++; if (month > 11) { month = 0; year++; }
+        state.releasedMonth = { year, month };
+        render();
+      }
       else if (action === 'chart-month-prev') {
         let { year, month } = state.chartMonth || { year: new Date().getFullYear(), month: new Date().getMonth() - 1 };
         month--; if (month < 0) { month = 11; year--; }
