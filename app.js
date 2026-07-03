@@ -3296,15 +3296,28 @@ const openDetailModal = (type, id) => {
     const devName = getDevName(task.developer);
 
     const taskStatusClass = (task.status || 'To-Do').toLowerCase().replace(' ', '').replace('-', '');
+    const priorityClass = (task.priority || 'Medium').toLowerCase();
+
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const endDateObj = task.endDate ? new Date(task.endDate + 'T00:00:00') : null;
+    const isOverdue = endDateObj && task.status !== 'Done' && endDateObj < today;
+    const overdueDays = isOverdue ? Math.ceil((today - endDateObj) / 86400000) : 0;
+
+    const deadlineHtml = task.endDate
+      ? (isOverdue
+        ? `<span style="color:#c0392b;font-weight:600;">${fmtDate(task.endDate)}</span>&nbsp;<span style="font-size:10.5px;color:#c0392b;font-weight:700;background:#fdecea;padding:2px 7px;border-radius:4px;letter-spacing:.3px;">+${overdueDays}d overdue</span>`
+        : fmtDate(task.endDate))
+      : '–';
 
     bodyEl.innerHTML = `
       <div class="detail-container">
         <div class="detail-header-section">
           <span class="detail-badge ${taskStatusClass}">${task.status || 'To-Do'}</span>
+          <span class="priority-pill ${priorityClass}">${task.priority || 'Medium'}</span>
           ${projectName ? `<span class="detail-project-tag">${projectName}</span>` : ''}
         </div>
         <h3 class="detail-title">${task.title}</h3>
-        
+
         <div class="detail-meta-grid">
           <div class="detail-meta-item">
             <span class="detail-meta-label">Assigned Developer</span>
@@ -3314,12 +3327,28 @@ const openDetailModal = (type, id) => {
             </div>
           </div>
           <div class="detail-meta-item">
-            <span class="detail-meta-label">Timeline</span>
+            <span class="detail-meta-label">Start Date</span>
             <div class="detail-meta-value">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="meta-icon"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-              <span>${task.startDate ? fmtDate(task.startDate) : '–'} ${task.endDate ? `→ ${fmtDate(task.endDate)}` : ''}</span>
+              <span>${task.startDate ? fmtDate(task.startDate) : '–'}</span>
             </div>
           </div>
+          <div class="detail-meta-item">
+            <span class="detail-meta-label">Deadline</span>
+            <div class="detail-meta-value">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="meta-icon" style="${isOverdue ? 'color:#c0392b;' : ''}"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+              <span>${deadlineHtml}</span>
+            </div>
+          </div>
+          ${task.completedDate ? `
+          <div class="detail-meta-item">
+            <span class="detail-meta-label">Completed On</span>
+            <div class="detail-meta-value">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="meta-icon" style="color:var(--accent);"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>
+              <span style="color:var(--accent);font-weight:500;">${fmtDate(task.completedDate)}</span>
+            </div>
+          </div>
+          ` : ''}
           <div class="detail-meta-item">
             <span class="detail-meta-label">Created</span>
             <div class="detail-meta-value">${fmtDate(task.createdAt)} at ${fmtTime(task.createdAt)}</div>
@@ -3453,9 +3482,14 @@ const openDetailModal = (type, id) => {
     if (!release) return;
 
     titleEl.textContent = 'Release Details';
-    const proj = release.projectId ? state.projects.find(p => p.id === release.projectId) : null;
-    const projectName = proj ? proj.name : '—';
     const statusClass = (release.status || 'Draft').toLowerCase().replace(' ', '');
+
+    // Multi-project (new) or legacy single projectId
+    const relProjectIds = release.projectIds || (release.projectId ? [release.projectId] : []);
+    const relProjNames = relProjectIds.map(pid => { const p = state.projects.find(x => x.id === pid); return p ? p.name : null; }).filter(Boolean);
+
+    // Multi-version (new) or legacy single version
+    const relVersions = release.versions || (release.version ? [release.version] : []);
 
     const devsList = (release.developerIds || []).map(devId => {
       const dev = state.developers.find(d => d.id === devId);
@@ -3464,10 +3498,10 @@ const openDetailModal = (type, id) => {
 
     bodyEl.innerHTML = `
       <div class="detail-container">
-        <div class="detail-header-section" style="gap:6px;">
+        <div class="detail-header-section" style="gap:6px;flex-wrap:wrap;">
           <span class="detail-badge release-status ${statusClass}">${release.status}</span>
-          <span class="detail-project-tag">${projectName}</span>
-          <span class="detail-version-tag">${release.version}</span>
+          ${relProjNames.map(n => `<span class="detail-project-tag">${n}</span>`).join('')}
+          ${relVersions.map(v => `<span class="detail-version-tag">${v}</span>`).join('')}
         </div>
         <h3 class="detail-title">${release.name}</h3>
 
@@ -3652,13 +3686,17 @@ const renderReleases = () => {
   const rolledBackCount = releases.filter(r => r.status === 'Rolled Back').length;
 
   if (q) {
-    releases = releases.filter(r =>
-      r.name.toLowerCase().includes(q) ||
-      r.version.toLowerCase().includes(q) ||
-      (r.description || '').toLowerCase().includes(q) ||
-      (r.workItems || '').toLowerCase().includes(q) ||
-      (r.managerName || '').toLowerCase().includes(q)
-    );
+    releases = releases.filter(r => {
+      const projIds = r.projectIds || (r.projectId ? [r.projectId] : []);
+      const projNames = projIds.map(pid => { const p = state.projects.find(x => x.id === pid); return p ? p.name.toLowerCase() : ''; });
+      const vers = r.versions || (r.version ? [r.version] : []);
+      return r.name.toLowerCase().includes(q) ||
+        vers.some(v => v.toLowerCase().includes(q)) ||
+        projNames.some(n => n.includes(q)) ||
+        (r.description || '').toLowerCase().includes(q) ||
+        (r.workItems || '').toLowerCase().includes(q) ||
+        (r.managerName || '').toLowerCase().includes(q);
+    });
   }
 
   if (state.releaseFilters.status) {
@@ -3726,17 +3764,27 @@ const renderReleaseCard = (r, q = '') => {
     return dev ? `<span class="release-dev-pill">${dev.name}</span>` : null;
   }).filter(Boolean).join('');
 
-  const proj = r.projectId ? state.projects.find(p => p.id === r.projectId) : null;
-  const projName = proj ? proj.name : '—';
+  // Support multi-project (new) and single-project (legacy)
+  const projectIds = r.projectIds || (r.projectId ? [r.projectId] : []);
+  const projNames = projectIds.map(pid => { const p = state.projects.find(x => x.id === pid); return p ? p.name : null; }).filter(Boolean);
+  const projPills = projNames.length
+    ? projNames.map(n => `<span class="test-pill test-proj" style="font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600;">${highlight(n, q)}</span>`).join('')
+    : '<span class="test-pill test-proj" style="font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600;background:var(--border);color:var(--text-muted);">No Project</span>';
+
+  // Support multi-version (new) and single-version (legacy)
+  const versions = r.versions || (r.version ? [r.version] : []);
+  const versionPills = versions.length
+    ? versions.map(v => `<div class="release-version" style="margin:0;padding:2px 6px;font-size:10px;">${highlight(v, q)}</div>`).join('')
+    : '';
 
   return `
     <div class="release-card release-status-${statusClass}" data-id="${r.id}">
       <div class="release-card-top">
         <div class="release-name-wrap">
           <div class="release-name">${highlight(r.name, q)}</div>
-          <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
-            <span class="test-pill test-proj" style="font-size:10px; padding:2px 6px; border-radius:4px; font-weight:600;">${highlight(projName, q)}</span>
-            <div class="release-version" style="margin:0; padding:2px 6px; font-size:10px;">${highlight(r.version, q)}</div>
+          <div style="display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap;">
+            ${projPills}
+            ${versionPills}
           </div>
         </div>
         <span class="status-pill ${statusClass}">${r.status || 'Draft'}</span>
@@ -4249,6 +4297,50 @@ const releaseProjectVersion = async (projectId, platform) => {
 };
 
 // ─── Toggle Checklist Item ────────────────────────────────
+const patchReleasePtCard = (rp) => {
+  const cardEl = document.querySelector(`.rp-card[data-id="${rp.id}"]`);
+  if (!cardEl) { render(); return; }
+
+  const items = rp.checklistItems || [];
+  const doneCount = items.filter(i => i.done).length;
+  const totalCount = items.length;
+  const isCompleted = rp.isCompleted;
+
+  // Update card class
+  cardEl.className = isCompleted ? 'rp-card rp-completed' : (rp.releaseType === 'released' ? 'rp-card rp-released' : 'rp-card');
+
+  // Toggle done class on the specific checklist item
+  items.forEach(item => {
+    const itemEl = cardEl.querySelector(`[data-item-id="${item.id}"]`);
+    if (itemEl) itemEl.classList.toggle('done', !!item.done);
+  });
+
+  // Update progress ring + text
+  const progressWrap = cardEl.querySelector('.rp-progress-wrap');
+  if (progressWrap) {
+    progressWrap.innerHTML = `
+      ${buildProgressRing(doneCount, totalCount)}
+      <div class="rp-progress-info">
+        <div class="rp-progress-text">${doneCount} of ${totalCount} complete</div>
+        <div class="rp-progress-sub">${isCompleted ? '🎉 All checks passed!' : totalCount === 0 ? 'No checklist items yet' : `${totalCount - doneCount} item${(totalCount - doneCount) !== 1 ? 's' : ''} remaining`}</div>
+      </div>
+    `;
+  }
+
+  // Add or remove completion banner
+  const existingBanner = cardEl.querySelector('.rp-completed-banner');
+  if (isCompleted && !existingBanner) {
+    progressWrap && progressWrap.insertAdjacentHTML('afterend', `
+      <div class="rp-completed-banner" style="margin-top:12px;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        Release point completed!
+      </div>
+    `);
+  } else if (!isCompleted && existingBanner) {
+    existingBanner.remove();
+  }
+};
+
 const toggleReleasePtChecklistItem = async (rpId, itemId) => {
   const rp = (state.releasePoints || []).find(r => r.id === rpId);
   if (!rp) return;
@@ -4262,7 +4354,7 @@ const toggleReleasePtChecklistItem = async (rpId, itemId) => {
     showToast('🎉 All items complete – Release Point completed!');
   }
   await storage.save();
-  render();
+  patchReleasePtCard(rp);
 };
 
 // ─── Release Points Modal ─────────────────────────────────
@@ -4380,17 +4472,33 @@ const renderChecklistEditor = () => {
 
     return `
       <div class="rp-checklist-row" data-cl-idx="${idx}">
-        <input type="text" class="rp-cl-text" data-idx="${idx}" value="${item.text.replace(/"/g, '&quot;')}" placeholder="e.g. QA sign-off received" />
-        <input type="text" class="rp-cl-ticket" data-idx="${idx}" value="${(item.ticket || '').replace(/"/g, '&quot;')}" placeholder="Ticket (e.g. #101 or Link)" />
-        <select class="rp-cl-developer" data-idx="${idx}">
-          ${devOptions}
-        </select>
-        <button type="button" class="rp-checklist-remove-btn" data-action="remove-checklist-row" data-idx="${idx}" title="Remove">
+        <div class="rp-cl-fields">
+          <input type="text" class="rp-cl-text" data-idx="${idx}" value="${item.text.replace(/"/g, '&quot;')}" placeholder="e.g. QA sign-off received" />
+          <div class="rp-cl-row-bottom">
+            <input type="text" class="rp-cl-ticket" data-idx="${idx}" value="${(item.ticket || '').replace(/"/g, '&quot;')}" placeholder="Ticket # or full URL (e.g. https://…)" />
+            <select class="rp-cl-developer" data-idx="${idx}">
+              ${devOptions}
+            </select>
+          </div>
+        </div>
+        <button type="button" class="rp-checklist-remove-btn" data-idx="${idx}" title="Remove item">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
         </button>
       </div>
     `;
   }).join('');
+
+  // Wire delete buttons directly (they are inside the modal, not mainContent)
+  container.querySelectorAll('.rp-checklist-remove-btn').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      syncChecklistItemsFromDOM();
+      const idx = parseInt(btn.dataset.idx);
+      rpChecklistItems.splice(idx, 1);
+      renderChecklistEditor();
+      showToast('Checklist item removed');
+    };
+  });
 };
 
 const loadReleasePtProjectsList = (selectedProjectIds = []) => {
@@ -4452,6 +4560,10 @@ const openReleasePtModal = (id = null) => {
     rpChecklistItems = [];
   }
 
+  // Reset panels to hidden state
+  document.getElementById('bulkAddPanel').style.display = 'none';
+  document.getElementById('bulkAssignPanel').style.display = 'none';
+
   renderChecklistEditor();
 
   // Wire type toggle
@@ -4470,6 +4582,62 @@ const openReleasePtModal = (id = null) => {
     renderChecklistEditor();
     const inputs = document.querySelectorAll('.rp-cl-text');
     if (inputs.length) inputs[inputs.length - 1].focus();
+  };
+
+  // Wire bulk add panel
+  const bulkAddPanel = document.getElementById('bulkAddPanel');
+  document.getElementById('bulkAddToggleBtn').onclick = () => {
+    const visible = bulkAddPanel.style.display !== 'none';
+    bulkAddPanel.style.display = visible ? 'none' : 'block';
+    document.getElementById('bulkAssignPanel').style.display = 'none';
+    if (!visible) document.getElementById('bulkCountInput').focus();
+  };
+  document.getElementById('bulkCountDecBtn').onclick = () => {
+    const inp = document.getElementById('bulkCountInput');
+    inp.value = Math.max(1, parseInt(inp.value || '3') - 1);
+  };
+  document.getElementById('bulkCountIncBtn').onclick = () => {
+    const inp = document.getElementById('bulkCountInput');
+    inp.value = Math.min(50, parseInt(inp.value || '3') + 1);
+  };
+  document.getElementById('bulkAddConfirmBtn').onclick = () => {
+    const count = Math.max(1, Math.min(50, parseInt(document.getElementById('bulkCountInput').value) || 3));
+    syncChecklistItemsFromDOM();
+    for (let i = 0; i < count; i++) {
+      rpChecklistItems.push({ id: uid(), text: '', ticket: '', developerId: '', done: false });
+    }
+    bulkAddPanel.style.display = 'none';
+    renderChecklistEditor();
+    const inputs = document.querySelectorAll('.rp-cl-text');
+    if (inputs.length) inputs[inputs.length - 1].focus();
+  };
+
+  // Wire bulk assign panel
+  const bulkAssignPanel = document.getElementById('bulkAssignPanel');
+  document.getElementById('bulkAssignToggleBtn').onclick = () => {
+    const visible = bulkAssignPanel.style.display !== 'none';
+    bulkAssignPanel.style.display = visible ? 'none' : 'block';
+    bulkAddPanel.style.display = 'none';
+    if (!visible) {
+      const projectChecks = document.querySelectorAll('input[name="rpProjectCheck"]:checked');
+      const projectIds = Array.from(projectChecks).map(cb => cb.value);
+      let devs = state.developers;
+      if (projectIds.length > 0) {
+        devs = state.developers.filter(d => (d.projectIds || []).some(pid => projectIds.includes(pid)));
+      }
+      const sel = document.getElementById('bulkAssignDevSelect');
+      sel.innerHTML = '<option value="">— Select Developer —</option>' +
+        devs.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
+    }
+  };
+  document.getElementById('bulkAssignConfirmBtn').onclick = () => {
+    const devId = document.getElementById('bulkAssignDevSelect').value;
+    if (!devId) { showToast('Please select a developer first', 'error'); return; }
+    syncChecklistItemsFromDOM();
+    rpChecklistItems.forEach(item => { item.developerId = devId; });
+    bulkAssignPanel.style.display = 'none';
+    renderChecklistEditor();
+    showToast('Developer assigned to all items');
   };
 
   showModal('releasePtModal');
@@ -6999,6 +7167,65 @@ const updateReleaseVersionDropdown = (projectId, selectedVersionValue = '') => {
     versions.map(v => `<option value="${v.val}" ${selectedVersionValue === v.val ? 'selected' : ''}>${v.label}</option>`).join('');
 };
 
+const getReleaseVersionOptions = (project) => {
+  if (!project) return [];
+  if (project.projectType === 'app') {
+    const opts = [];
+    if (project.androidPreviousVersion) opts.push({ value: project.androidPreviousVersion, label: `Android ${project.androidPreviousVersion} (Prev)` });
+    if (project.androidUpcomingVersion) opts.push({ value: project.androidUpcomingVersion, label: `Android ${project.androidUpcomingVersion} (Up)` });
+    if (project.iosPreviousVersion) opts.push({ value: project.iosPreviousVersion, label: `iOS ${project.iosPreviousVersion} (Prev)` });
+    if (project.iosUpcomingVersion) opts.push({ value: project.iosUpcomingVersion, label: `iOS ${project.iosUpcomingVersion} (Up)` });
+    return opts;
+  }
+  const opts = [];
+  if (project.previousVersion) opts.push({ value: project.previousVersion, label: `${project.previousVersion} (Prev)` });
+  if (project.upcomingVersion) opts.push({ value: project.upcomingVersion, label: `${project.upcomingVersion} (Up)` });
+  return opts;
+};
+
+const loadReleaseProjectsList = (selectedProjectIds = []) => {
+  const container = document.getElementById('releaseProjectChecklist');
+  if (!container) return;
+  container.innerHTML = state.projects.map(p => `
+    <label class="dev-project-label">
+      <input type="checkbox" name="releaseProjectCheck" value="${p.id}" ${selectedProjectIds.includes(p.id) ? 'checked' : ''} />
+      <span>${p.name}</span>
+    </label>
+  `).join('') || '<span style="color:var(--text-muted);font-size:12.5px;">No projects added yet.</span>';
+
+  container.querySelectorAll('input[name="releaseProjectCheck"]').forEach(cb => {
+    cb.onchange = () => {
+      const checkedIds = Array.from(container.querySelectorAll('input[name="releaseProjectCheck"]:checked')).map(c => c.value);
+      loadReleaseVersionsList(checkedIds);
+    };
+  });
+};
+
+const loadReleaseVersionsList = (projectIds, selectedVersions = []) => {
+  const container = document.getElementById('releaseVersionChecklist');
+  if (!container) return;
+  if (!projectIds || projectIds.length === 0) {
+    container.innerHTML = '<span style="color:var(--text-muted);font-size:12.5px;">Select project(s) first.</span>';
+    return;
+  }
+  let html = '';
+  projectIds.forEach(pid => {
+    const proj = state.projects.find(p => p.id === pid);
+    if (!proj) return;
+    const opts = getReleaseVersionOptions(proj);
+    if (opts.length > 0) {
+      html += `<div style="font-weight:600;font-size:11.5px;color:var(--text-secondary);width:100%;margin-top:8px;margin-bottom:4px;border-bottom:1px dashed var(--border);padding-bottom:2px;">${proj.name}</div>`;
+      html += opts.map(o => `
+        <label class="rp-version-checkbox-label">
+          <input type="checkbox" name="releaseVersionCheck" value="${o.value}" ${selectedVersions.includes(o.value) ? 'checked' : ''} />
+          ${o.label}
+        </label>
+      `).join('');
+    }
+  });
+  container.innerHTML = html || '<span style="color:var(--text-muted);font-size:12.5px;">No versions configured for the selected project(s).</span>';
+};
+
 const openReleaseModal = (id = null) => {
   const modal = document.getElementById('releaseModal');
   const title = document.getElementById('releaseModalTitle');
@@ -7011,11 +7238,6 @@ const openReleaseModal = (id = null) => {
   }
   mgrSel.innerHTML = `<option value="">— Select Manager —</option>` +
     mgrOptions.map(name => `<option value="${name}">${name}</option>`).join('');
-
-  // Populate Projects dropdown
-  const projSel = document.getElementById('releaseProject');
-  projSel.innerHTML = `<option value="">— Select Project —</option>` +
-    state.projects.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
 
   // Populate Product Developers checklist with devs
   const checklist = document.getElementById('releaseDevChecklist');
@@ -7039,9 +7261,12 @@ const openReleaseModal = (id = null) => {
     document.getElementById('releaseWorkItems').value = r.workItems || '';
     document.getElementById('releaseNotes').value = r.notes || '';
 
-    // Project selection and version dropdown setting
-    projSel.value = r.projectId || '';
-    updateReleaseVersionDropdown(r.projectId || '', r.version || '');
+    // Multi-project checklist — support legacy single projectId
+    const projectIds = r.projectIds || (r.projectId ? [r.projectId] : []);
+    loadReleaseProjectsList(projectIds);
+    // Multi-version checklist — support legacy single version
+    const versions = r.versions || (r.version ? [r.version] : []);
+    loadReleaseVersionsList(projectIds, versions);
 
     // Check dev checkboxes
     document.querySelectorAll('input[name="releaseDevCheck"]').forEach(cb => {
@@ -7058,8 +7283,8 @@ const openReleaseModal = (id = null) => {
     document.getElementById('releaseWorkItems').value = '';
     document.getElementById('releaseNotes').value = '';
 
-    projSel.value = '';
-    updateReleaseVersionDropdown('');
+    loadReleaseProjectsList([]);
+    loadReleaseVersionsList([]);
   }
 
   showModal('releaseModal');
@@ -7069,41 +7294,45 @@ const saveRelease = async () => {
   const id = document.getElementById('releaseId').value;
   const name = document.getElementById('releaseName').value.trim();
   const releaseDate = document.getElementById('releaseDate').value;
-  const projectId = document.getElementById('releaseProject').value;
-  const version = document.getElementById('releaseVersion').value;
   const description = document.getElementById('releaseDesc').value.trim();
   const managerName = document.getElementById('releaseManager').value;
   const status = document.getElementById('releaseStatus').value;
   const workItems = document.getElementById('releaseWorkItems').value.trim();
   const notes = document.getElementById('releaseNotes').value.trim();
 
-  if (!projectId) { showToast('Project selection is required', 'error'); return; }
-  if (!version) { showToast('Release version is required', 'error'); return; }
+  // Multi-project + multi-version
+  const projectIds = Array.from(document.querySelectorAll('input[name="releaseProjectCheck"]:checked')).map(cb => cb.value);
+  const versions = Array.from(document.querySelectorAll('input[name="releaseVersionCheck"]:checked')).map(cb => cb.value);
+  // Backward-compat single fields (for display code that still reads projectId / version)
+  const projectId = projectIds[0] || '';
+  const version = versions[0] || '';
+
+  if (projectIds.length === 0) { showToast('Select at least one project', 'error'); return; }
   if (!name) { showToast('Release name is required', 'error'); return; }
 
   // Get selected developers
-  const checkboxes = document.querySelectorAll('input[name="releaseDevCheck"]:checked');
-  const developerIds = Array.from(checkboxes).map(cb => cb.value);
+  const developerIds = Array.from(document.querySelectorAll('input[name="releaseDevCheck"]:checked')).map(cb => cb.value);
 
   const now = new Date().toISOString();
+  const versionSummary = versions.length > 0 ? versions.join(', ') : '—';
 
   if (id) {
     const idx = state.releases.findIndex(r => r.id === id);
     if (idx === -1) return;
     state.releases[idx] = {
       ...state.releases[idx],
-      name, version, description, managerName, status, workItems, notes, developerIds, projectId, releaseDate,
+      name, projectId, projectIds, version, versions, description, managerName, status, workItems, notes, developerIds, releaseDate,
       updatedAt: now
     };
-    logActivity(`Updated release "${name}" to version ${version} (${status})`, 'project');
+    logActivity(`Updated release "${name}" (${versionSummary}) [${status}]`, 'project');
     showToast('Release updated');
   } else {
     state.releases.unshift({
       id: 'rel-' + uid(),
-      name, version, description, managerName, status, workItems, notes, developerIds, projectId, releaseDate,
+      name, projectId, projectIds, version, versions, description, managerName, status, workItems, notes, developerIds, releaseDate,
       createdAt: now, updatedAt: now
     });
-    logActivity(`Created release "${name}" version ${version} (${status})`, 'project');
+    logActivity(`Created release "${name}" (${versionSummary}) [${status}]`, 'project');
     showToast('Release created');
   }
 
@@ -7116,8 +7345,9 @@ const saveRelease = async () => {
 const confirmDeleteRelease = (id) => {
   const r = state.releases.find(x => x.id === id);
   if (!r) return;
+  const vStr = (r.versions && r.versions.length ? r.versions : (r.version ? [r.version] : [])).join(', ') || '—';
   document.getElementById('confirmMessage').textContent =
-    `Delete release "${r.name}" (${r.version})? This action cannot be undone.`;
+    `Delete release "${r.name}" (${vStr})? This action cannot be undone.`;
   confirmCallback = () => deleteRelease(id);
   showModal('confirmModal');
 };
@@ -7136,7 +7366,6 @@ const deleteRelease = async (id) => {
 
 const triggerNotesMailGeneration = () => {
   const name = document.getElementById('releaseName').value.trim() || '[Release Name]';
-  const version = document.getElementById('releaseVersion').value || '[Version]';
   const releaseDate = document.getElementById('releaseDate').value;
   const dateStr = releaseDate ? fmtDate(releaseDate) : '[Release Date]';
   const description = document.getElementById('releaseDesc').value.trim() || '[No description provided]';
@@ -7144,9 +7373,11 @@ const triggerNotesMailGeneration = () => {
   const status = document.getElementById('releaseStatus').value || 'Draft';
   const workItems = document.getElementById('releaseWorkItems').value.trim() || '[No work items linked]';
 
-  const projectId = document.getElementById('releaseProject').value;
-  const proj = state.projects.find(p => p.id === projectId);
-  const projName = proj ? proj.name : '[Project Name]';
+  const selectedProjectIds = Array.from(document.querySelectorAll('input[name="releaseProjectCheck"]:checked')).map(cb => cb.value);
+  const selectedVersions = Array.from(document.querySelectorAll('input[name="releaseVersionCheck"]:checked')).map(cb => cb.value);
+  const projNames = selectedProjectIds.map(pid => { const p = state.projects.find(x => x.id === pid); return p ? p.name : null; }).filter(Boolean);
+  const projName = projNames.length ? projNames.join(', ') : '[Project Name]';
+  const version = selectedVersions.length ? selectedVersions.join(', ') : '[Version]';
 
   // Get selected devs
   const checkboxes = document.querySelectorAll('input[name="releaseDevCheck"]:checked');
@@ -7335,9 +7566,7 @@ const init = async () => {
   document.getElementById('testProject').addEventListener('change', (e) => {
     updateDeveloperDropdown(e.target.value, 'testDeveloper', document.getElementById('testDeveloper').value);
   });
-  document.getElementById('releaseProject').addEventListener('change', (e) => {
-    updateReleaseVersionDropdown(e.target.value, '');
-  });
+  // Release project/version now uses checkboxes (multi-select) wired inside openReleaseModal.
   document.getElementById('testCaseProject').addEventListener('change', (e) => {
     updateTestCaseModuleDropdown(e.target.value, '');
   });

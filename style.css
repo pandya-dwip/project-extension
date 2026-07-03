@@ -4369,10 +4369,31 @@ body {
 }
 
 .rp-checklist-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  animation: fadeUp 0.15s ease;
+}
+
+.rp-checklist-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.rp-cl-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rp-cl-row-bottom {
   display: flex;
   align-items: center;
   gap: 8px;
-  animation: fadeUp 0.15s ease;
 }
 
 .rp-checklist-row input[type="text"] {
@@ -4394,16 +4415,17 @@ body {
 }
 
 .rp-checklist-remove-btn {
-  width: 26px;
-  height: 26px;
-  border: none;
-  background: none;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  background: var(--surface);
   cursor: pointer;
   border-radius: var(--radius-sm);
   display: grid;
   place-items: center;
   color: var(--text-muted);
   flex-shrink: 0;
+  align-self: center;
   transition: all var(--transition);
 }
 
@@ -5346,18 +5368,17 @@ body {
   resize: vertical;
 }
 
-.rp-checklist-row input.rp-cl-text {
-  flex: 2;
+.rp-cl-fields input.rp-cl-text {
+  flex: 1;
+  width: 100%;
 }
 
-.rp-checklist-row input.rp-cl-ticket {
+.rp-cl-row-bottom input.rp-cl-ticket {
   flex: 1;
-  max-width: 200px;
 }
 
-.rp-checklist-row select.rp-cl-developer {
-  flex: 1;
-  max-width: 180px;
+.rp-cl-row-bottom select.rp-cl-developer {
+  flex: 0 0 160px;
   padding: 7px 10px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -5369,7 +5390,7 @@ body {
   transition: all var(--transition);
 }
 
-.rp-checklist-row select.rp-cl-developer:focus {
+.rp-cl-row-bottom select.rp-cl-developer:focus {
   border-color: var(--accent);
 }
 
