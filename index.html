@@ -391,16 +391,16 @@
           actually completed.</span>
       </div>
       <div class="form-group">
-        <label>Project <span class="hint">(optional)</span></label>
-        <select id="taskProject">
-          <option value="">— None —</option>
-        </select>
+        <label>Project(s) <span class="hint">(optional, select multiple)</span></label>
+        <div class="dev-project-checklist" id="taskProjectChecklist" style="max-height:130px;">
+          <!-- Loaded by JS -->
+        </div>
       </div>
       <div class="form-group">
-        <label>Developer <span class="hint">(optional)</span></label>
-        <select id="taskDeveloper">
-          <option value="">— None —</option>
-        </select>
+        <label>Developer(s) <span class="hint">(optional, select multiple)</span></label>
+        <div class="dev-project-checklist" id="taskDevChecklist" style="max-height:120px;">
+          <!-- Loaded by JS -->
+        </div>
       </div>
     </div>
     <div class="modal-footer">
@@ -1086,7 +1086,8 @@
         <div id="bulkAssignPanel"
           style="display:none;margin-bottom:10px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;">
           <p style="font-size:12px;color:var(--text-secondary);margin:0 0 10px 0;font-weight:500;">Assign a developer to
-            <strong>all</strong> checklist items at once:</p>
+            <strong>all</strong> checklist items at once:
+          </p>
           <div style="display:flex;align-items:center;gap:8px;">
             <select id="bulkAssignDevSelect"
               style="flex:1;height:32px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font-size:13px;font-family:inherit;padding:0 8px;">
@@ -1130,7 +1131,105 @@
     </div>
   </div>
 
+  <!-- Export Report Modal -->
+  <div class="modal modal-rp" id="exportReportModal">
+    <div class="modal-header">
+      <h2 class="modal-title">Export Report</h2>
+      <button class="modal-close" id="closeExportReportModal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 6 6 18M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:12.5px; color:var(--text-muted); margin:0;">
+        Generates an Excel workbook (Overview, Projects, Tasks, Releases, Test Cases) scoped to the filters below.
+      </p>
+
+      <div class="form-group">
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <label style="margin-bottom:0;">Projects <span class="hint">(none checked = all)</span></label>
+          <div style="display:flex; gap:6px;">
+            <button type="button" class="btn-ghost" id="reportProjectSelectAllBtn"
+              style="padding:2px 8px; font-size:11px; height:auto;">All</button>
+            <button type="button" class="btn-ghost" id="reportProjectClearBtn"
+              style="padding:2px 8px; font-size:11px; height:auto;">None</button>
+          </div>
+        </div>
+        <div class="dev-project-checklist" id="reportProjectChecklist" style="max-height:130px;">
+          <!-- Loaded by JS -->
+        </div>
+      </div>
+
+      <div class="form-group">
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <label style="margin-bottom:0;">Developers <span class="hint">(none checked = all)</span></label>
+          <div style="display:flex; gap:6px;">
+            <button type="button" class="btn-ghost" id="reportDevSelectAllBtn"
+              style="padding:2px 8px; font-size:11px; height:auto;">All</button>
+            <button type="button" class="btn-ghost" id="reportDevClearBtn"
+              style="padding:2px 8px; font-size:11px; height:auto;">None</button>
+          </div>
+        </div>
+        <div class="dev-project-checklist" id="reportDeveloperChecklist" style="max-height:110px;">
+          <!-- Loaded by JS -->
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Date From <span class="hint">(tasks / releases)</span></label>
+          <input type="date" id="reportDateFrom" />
+        </div>
+        <div class="form-group">
+          <label>Date To</label>
+          <input type="date" id="reportDateTo" />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Task Status</label>
+          <select id="reportTaskStatus">
+            <option value="completed">Completed Only</option>
+            <option value="all">All Statuses</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Release Status</label>
+          <select id="reportReleaseStatus">
+            <option value="">All Statuses</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Test Case Status <span class="hint">(counts only, no details are exported)</span></label>
+        <select id="reportTestCaseStatus">
+          <option value="">All Statuses</option>
+          <option value="Not executed">Not executed</option>
+          <option value="Passed">Passed</option>
+          <option value="Failed">Failed</option>
+          <option value="Blocked">Blocked</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-ghost" id="cancelExportReportModal">Cancel</button>
+      <button class="btn-primary" id="generateReportBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          style="width: 14px; height: 14px; margin-right: 6px;">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+          <polyline points="7 10 12 15 17 10" />
+          <line x1="12" y1="15" x2="12" y2="3" />
+        </svg>
+        Generate Report
+      </button>
+    </div>
+  </div>
+
   <script src="xlsx.full.min.js"></script>
+  <script src="exceljs.min.js"></script>
   <script src="chart.umd.min.js"></script>
   <script src="app.js?v=6"></script>
 </body>

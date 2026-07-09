@@ -736,6 +736,15 @@ body {
   gap: 8px;
 }
 
+.task-project-tags-wrap {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+
 .task-project-tag {
   font-size: 10.5px;
   font-weight: 500;
@@ -745,10 +754,17 @@ body {
   border-radius: var(--radius-sm);
   display: inline-flex;
   align-items: center;
-  max-width: 150px;
+  max-width: 110px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+
+.task-project-tag-more {
+  max-width: none;
+  color: var(--text-muted);
+  font-weight: 600;
 }
 
 .task-title-row {

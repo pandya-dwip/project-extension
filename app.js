@@ -141,6 +141,27 @@ const storage = {
 // ─── Utility ─────────────────────────────────────────────
 const uid = () => Math.random().toString(36).slice(2, 10);
 
+// Migrates legacy single-value task.projectId/task.developer onto task.projectIds/task.developerIds arrays.
+const migrateTasks = (tasks) => {
+  return (tasks || []).map(t => {
+    if (!Array.isArray(t.projectIds)) {
+      t.projectIds = t.projectId ? [t.projectId] : [];
+    }
+    if (!Array.isArray(t.developerIds)) {
+      t.developerIds = t.developer ? [t.developer] : [];
+    }
+    delete t.projectId;
+    delete t.developer;
+    return t;
+  });
+};
+
+const getTaskProjectNames = (t) => (t.projectIds || [])
+  .map(id => { const p = state.projects.find(pr => pr.id === id); return p ? p.name : null; })
+  .filter(Boolean);
+
+const getTaskDevNames = (t) => (t.developerIds || []).map(getDevName);
+
 const fmtDate = (iso) => {
   if (!iso) return '–';
   const d = new Date(iso);
@@ -397,7 +418,7 @@ const importData = (file) => {
       const data = JSON.parse(e.target.result);
       if (data.projects && data.tasks) {
         state.projects = data.projects;
-        state.tasks = data.tasks;
+        state.tasks = migrateTasks(data.tasks);
         state.tests = data.tests || [];
         state.activity = data.activity || [];
         state.developers = data.developers || [];
@@ -417,6 +438,617 @@ const importData = (file) => {
     }
   };
   reader.readAsText(file);
+};
+
+// ─── Export Report (Excel) ───────────────────────────────
+const isWithinDateRange = (dateStr, from, to) => {
+  if (!from && !to) return true;
+  if (!dateStr) return false;
+  const d = new Date(dateStr);
+  d.setHours(0, 0, 0, 0);
+  if (from) {
+    const f = new Date(from);
+    f.setHours(0, 0, 0, 0);
+    if (d < f) return false;
+  }
+  if (to) {
+    const t = new Date(to);
+    t.setHours(0, 0, 0, 0);
+    if (d > t) return false;
+  }
+  return true;
+};
+
+const openExportReportModal = () => {
+  const projContainer = document.getElementById('reportProjectChecklist');
+  projContainer.innerHTML = state.projects.map(p => `
+    <label class="dev-project-label">
+      <input type="checkbox" name="reportProjectCheck" value="${p.id}" checked />
+      <span>${p.name}</span>
+    </label>
+  `).join('') || '<span style="color:var(--text-muted);font-size:12.5px;">No projects added yet.</span>';
+
+  const devContainer = document.getElementById('reportDeveloperChecklist');
+  devContainer.innerHTML = state.developers.map(d => `
+    <label class="dev-project-label">
+      <input type="checkbox" name="reportDevCheck" value="${d.id}" checked />
+      <span>${d.name}</span>
+    </label>
+  `).join('') || '<span style="color:var(--text-muted);font-size:12.5px;">No developers added yet.</span>';
+
+  const releaseStatusSel = document.getElementById('reportReleaseStatus');
+  releaseStatusSel.innerHTML = `<option value="">All Statuses</option>` +
+    RELEASE_STATUS_OPTIONS.map(s => `<option value="${s}">${s}</option>`).join('');
+
+  document.getElementById('reportDateFrom').value = '';
+  document.getElementById('reportDateTo').value = '';
+  document.getElementById('reportTaskStatus').value = 'completed';
+  document.getElementById('reportReleaseStatus').value = '';
+  document.getElementById('reportTestCaseStatus').value = '';
+
+  showModal('exportReportModal');
+};
+
+const triggerReportDownload = (url, filename) => {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('Report exported successfully');
+};
+
+// ─── Excel report theme & styling helpers (ExcelJS) ──────
+const XL = {
+  accent: 'FF059669',
+  accentDark: 'FF047857',
+  bannerFrom: 'FF0F2027',
+  white: 'FFFFFFFF',
+  zebra: 'FFF3F6F9',
+  border: 'FFDCE3EA',
+  textMuted: 'FF6B7280'
+};
+
+// Muted header/banner colors per category (toned down from saturated brand hues)
+const CAT_XL = {
+  projects: 'FF3D6A96',
+  tasks: 'FF7A5C93',
+  releases: 'FFB8763E',
+  releasePoints: 'FF3F8C7D',
+  testCases: 'FF047857'
+};
+
+const PROJECT_STATUS_XL = {
+  'N/A': { fill: 'FFF0F0F0', font: 'FF666666' },
+  'Started': { fill: 'FFE3F2FD', font: 'FF1565C0' },
+  'Stable': { fill: 'FFE8F5E9', font: 'FF2E7D32' },
+  'Testing': { fill: 'FFFFF3E0', font: 'FFE65100' },
+  'Automation': { fill: 'FFF3E5F5', font: 'FF6A1B9A' },
+  'On Hold': { fill: 'FFFBE9E7', font: 'FFBF360C' },
+  'Yet to Start': { fill: 'FFE8EAF6', font: 'FF283593' },
+  'Completed': { fill: 'FFE8F5E9', font: 'FF1B5E20' },
+  'In Progress': { fill: 'FFE1F5FE', font: 'FF01579B' },
+  'Blocker': { fill: 'FFFFEBEE', font: 'FFB71C1C' },
+  'Issue Assigned': { fill: 'FFFFF8E1', font: 'FFF57F17' },
+  'Developer': { fill: 'FFE8EAF6', font: 'FF3949AB' },
+  'New Development': { fill: 'FFE0F2F1', font: 'FF00796B' }
+};
+
+const TASK_STATUS_XL = {
+  'To-Do': { fill: 'FFF0F0F0', font: 'FF666666' },
+  'In Progress': { fill: 'FFE1F5FE', font: 'FF01579B' },
+  'Done': { fill: 'FFE8F5E9', font: 'FF1B5E20' },
+  'On Hold': { fill: 'FFFBE9E7', font: 'FFBF360C' }
+};
+
+const RELEASE_STATUS_XL = {
+  'Draft': { fill: 'FFECEFF1', font: 'FF546E7A' },
+  'Planned': { fill: 'FFEDE7F6', font: 'FF5E35B1' },
+  'In Progress': { fill: 'FFE3F2FD', font: 'FF1565C0' },
+  'Testing': { fill: 'FFFFF3E0', font: 'FFEF6C00' },
+  'Approved': { fill: 'FFE8F5E9', font: 'FF2E7D32' },
+  'Released': { fill: 'FFE8F5EE', font: 'FF059669' },
+  'Rolled Back': { fill: 'FFFFEBEE', font: 'FFDC2626' }
+};
+
+const TC_STATUS_XL = {
+  'Not executed': { fill: 'FFF5F5F5', font: 'FF757575' },
+  'Passed': { fill: 'FFE8F5EE', font: 'FF2D6A4F' },
+  'Failed': { fill: 'FFFDECEA', font: 'FFC0392B' },
+  'Blocked': { fill: 'FFFFF3E0', font: 'FFEF6C00' }
+};
+
+const PRIORITY_XL = {
+  'Critical': { fill: 'FFFFEBEE', font: 'FFB71C1C' },
+  'High': { fill: 'FFFFF3E0', font: 'FFE65100' },
+  'Medium': { fill: 'FFFFFDE7', font: 'FFF57F17' },
+  'Low': { fill: 'FFE8F5E9', font: 'FF2E7D32' }
+};
+
+const thinBorder = (color = XL.border) => ({
+  top: { style: 'thin', color: { argb: color } },
+  bottom: { style: 'thin', color: { argb: color } },
+  left: { style: 'thin', color: { argb: color } },
+  right: { style: 'thin', color: { argb: color } }
+});
+
+const styleHeaderRow = (row, fillColor = XL.accent) => {
+  row.height = 22;
+  row.eachCell({ includeEmpty: true }, cell => {
+    cell.font = { bold: true, color: { argb: XL.white }, size: 11 };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillColor } };
+    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    cell.border = thinBorder(fillColor);
+  });
+};
+
+const zebraRow = (row, isEven) => {
+  row.eachCell({ includeEmpty: true }, cell => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isEven ? XL.zebra : XL.white } };
+    cell.border = thinBorder();
+    cell.alignment = { vertical: 'middle' };
+  });
+};
+
+const colorCell = (cell, colorMap, value) => {
+  const c = colorMap[value];
+  if (!c) return;
+  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: c.fill } };
+  cell.font = { color: { argb: c.font }, bold: true };
+};
+
+const sectionBanner = (ws, rowNum, text, span, fillColor = XL.accentDark) => {
+  ws.mergeCells(rowNum, 1, rowNum, span);
+  const cell = ws.getCell(rowNum, 1);
+  cell.value = text;
+  cell.font = { bold: true, color: { argb: XL.white }, size: 12 };
+  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillColor } };
+  cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ws.getRow(rowNum).height = 24;
+};
+
+const pickPrimaryStatus = (statuses) => {
+  if (!statuses || !statuses.length) return null;
+  if (statuses.includes('Stable')) return 'Stable';
+  if (statuses.includes('Testing')) return 'Testing';
+  if (statuses.includes('In Progress')) return 'In Progress';
+  if (statuses.includes('Started')) return 'Started';
+  return statuses[0];
+};
+
+const generateExcelReport = async () => {
+  if (typeof ExcelJS === 'undefined') {
+    showToast('Excel library (ExcelJS) is not loaded', 'error');
+    return;
+  }
+
+  const checkedProjectIds = Array.from(document.querySelectorAll('input[name="reportProjectCheck"]:checked')).map(cb => cb.value);
+  const checkedDevIds = Array.from(document.querySelectorAll('input[name="reportDevCheck"]:checked')).map(cb => cb.value);
+  const dateFrom = document.getElementById('reportDateFrom').value;
+  const dateTo = document.getElementById('reportDateTo').value;
+  const taskStatusFilter = document.getElementById('reportTaskStatus').value;
+  const releaseStatusFilter = document.getElementById('reportReleaseStatus').value;
+  const tcStatusFilter = document.getElementById('reportTestCaseStatus').value;
+
+  const projectFilterActive = checkedProjectIds.length > 0 && checkedProjectIds.length < state.projects.length;
+  const devFilterActive = checkedDevIds.length > 0 && checkedDevIds.length < state.developers.length;
+
+  const projects = state.projects.filter(p => !projectFilterActive || checkedProjectIds.includes(p.id));
+  const projectIdSet = new Set(projects.map(p => p.id));
+  const projectIdsOf = (obj) => (obj.projectIds && obj.projectIds.length ? obj.projectIds : (obj.projectId ? [obj.projectId] : []));
+  const projectNamesOf = (obj) => projectIdsOf(obj).map(id => { const p = state.projects.find(pr => pr.id === id); return p ? p.name : null; }).filter(Boolean).join(', ') || '—';
+
+  // ── Tasks ──
+  let tasks = state.tasks.filter(t => projectIdsOf(t).some(id => projectIdSet.has(id)));
+  if (taskStatusFilter !== 'all') tasks = tasks.filter(t => t.status === 'Done');
+  if (devFilterActive) tasks = tasks.filter(t => (t.developerIds || []).some(id => checkedDevIds.includes(id)));
+  tasks = tasks.filter(t => isWithinDateRange(t.completedDate || t.endDate, dateFrom, dateTo));
+
+  // ── Releases ──
+  let releases = (state.releases || []).filter(r => projectIdsOf(r).some(id => projectIdSet.has(id)));
+  if (releaseStatusFilter) releases = releases.filter(r => r.status === releaseStatusFilter);
+  if (devFilterActive) releases = releases.filter(r => (r.developerIds || []).some(id => checkedDevIds.includes(id)));
+  releases = releases.filter(r => isWithinDateRange(r.releaseDate || r.updatedAt || r.createdAt, dateFrom, dateTo));
+
+  // ── Release Points ──
+  let releasePoints = (state.releasePoints || []).filter(rp => projectIdsOf(rp).some(id => projectIdSet.has(id)));
+  if (devFilterActive) releasePoints = releasePoints.filter(rp => (rp.developerIds || []).some(id => checkedDevIds.includes(id)));
+  releasePoints = releasePoints.filter(rp => isWithinDateRange(rp.updatedAt || rp.createdAt, dateFrom, dateTo));
+
+  // ── Test Cases (numeric only) ──
+  let testCases = (state.testCases || []).filter(tc => projectIdSet.has(tc.projectId));
+  if (tcStatusFilter) testCases = testCases.filter(tc => (tc.status || 'Not executed') === tcStatusFilter);
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Clair';
+  wb.created = new Date();
+
+  // ══════════════════ Overview ══════════════════
+  const ov = wb.addWorksheet('Overview', { properties: { tabColor: { argb: XL.accent } }, views: [{ showGridLines: false }] });
+  ov.columns = Array.from({ length: 10 }, () => ({ width: 16 }));
+
+  ov.mergeCells('A1:J2');
+  const titleCell = ov.getCell('A1');
+  titleCell.value = 'Clair — Project & Task Report';
+  titleCell.font = { bold: true, size: 20, color: { argb: XL.white } };
+  titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  for (let c = 1; c <= 10; c++) {
+    ov.getCell(1, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.bannerFrom } };
+    ov.getCell(2, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.bannerFrom } };
+  }
+  ov.getRow(1).height = 22;
+  ov.getRow(2).height = 22;
+
+  ov.mergeCells('A3:J3');
+  const subCell = ov.getCell('A3');
+  subCell.value = `Generated ${new Date().toLocaleString('en-IN')}`;
+  subCell.font = { italic: true, size: 10, color: { argb: XL.textMuted } };
+  ov.getRow(3).height = 18;
+
+  // KPI cards
+  const kpis = [
+    { label: 'Projects', value: projects.length, color: CAT_XL.projects },
+    { label: 'Tasks', value: tasks.length, color: CAT_XL.tasks },
+    { label: 'Releases', value: releases.length, color: CAT_XL.releases },
+    { label: 'Release Points', value: releasePoints.length, color: CAT_XL.releasePoints },
+    { label: 'Test Cases', value: testCases.length, color: CAT_XL.testCases }
+  ];
+  const cardRow = 5, labelRow = 6;
+  kpis.forEach((k, i) => {
+    const startCol = i * 2 + 1;
+    const endCol = startCol + 1;
+    ov.mergeCells(cardRow, startCol, cardRow, endCol);
+    ov.mergeCells(labelRow, startCol, labelRow, endCol);
+    const numCell = ov.getCell(cardRow, startCol);
+    numCell.value = k.value;
+    numCell.font = { bold: true, size: 20, color: { argb: k.color } };
+    numCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    const labelCell = ov.getCell(labelRow, startCol);
+    labelCell.value = k.label;
+    labelCell.font = { size: 10, bold: true, color: { argb: XL.textMuted } };
+    labelCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    for (let c = startCol; c <= endCol; c++) {
+      ov.getCell(cardRow, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.zebra } };
+      ov.getCell(labelRow, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.zebra } };
+      ov.getCell(cardRow, c).border = { top: { style: 'medium', color: { argb: k.color } } };
+    }
+  });
+  ov.getRow(cardRow).height = 34;
+  ov.getRow(labelRow).height = 18;
+
+  // Applied Filters section
+  sectionBanner(ov, 8, 'Applied Filters', 10);
+  const filterPairs = [
+    ['Projects', projectFilterActive ? projects.map(p => p.name).join(', ') || 'None' : 'All Projects'],
+    ['Developers', devFilterActive ? checkedDevIds.map(getDevName).join(', ') || 'None' : 'All Developers'],
+    ['Date Range', (dateFrom || dateTo) ? `${dateFrom || '—'} to ${dateTo || '—'}` : 'All Time'],
+    ['Task Status', taskStatusFilter === 'all' ? 'All Statuses' : 'Completed Only'],
+    ['Release Status', releaseStatusFilter || 'All Statuses'],
+    ['Test Case Status', tcStatusFilter || 'All Statuses']
+  ];
+  filterPairs.forEach((pair, i) => {
+    const r = 9 + i;
+    ov.mergeCells(r, 1, r, 2);
+    ov.mergeCells(r, 3, r, 10);
+    const labelC = ov.getCell(r, 1);
+    labelC.value = pair[0];
+    labelC.font = { bold: true, size: 10.5 };
+    const valC = ov.getCell(r, 3);
+    valC.value = pair[1];
+    valC.font = { size: 10.5 };
+    [labelC, valC].forEach(c => {
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: i % 2 === 0 ? XL.white : XL.zebra } };
+      c.border = thinBorder();
+      c.alignment = { vertical: 'middle', indent: 1, wrapText: true };
+    });
+  });
+
+  // Category breakdown section
+  const breakdownStart = 9 + filterPairs.length + 1;
+  sectionBanner(ov, breakdownStart, 'Category Breakdown', 10);
+  const breakdownRows = [
+    ['Projects', projects.length, CAT_XL.projects],
+    ['Tasks (in scope)', tasks.length, CAT_XL.tasks],
+    ['Releases', releases.length, CAT_XL.releases],
+    ['Release Points', releasePoints.length, CAT_XL.releasePoints],
+    ['Test Cases', testCases.length, CAT_XL.testCases]
+  ];
+  breakdownRows.forEach((br, i) => {
+    const r = breakdownStart + 1 + i;
+    ov.mergeCells(r, 1, r, 8);
+    ov.mergeCells(r, 9, r, 10);
+    const labelC = ov.getCell(r, 1);
+    labelC.value = br[0];
+    labelC.font = { bold: true, size: 10.5 };
+    labelC.border = { left: { style: 'medium', color: { argb: br[2] } } };
+    const valC = ov.getCell(r, 9);
+    valC.value = br[1];
+    valC.font = { bold: true, size: 10.5, color: { argb: br[2] } };
+    valC.alignment = { horizontal: 'center' };
+    [labelC, valC].forEach(c => {
+      c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: i % 2 === 0 ? XL.white : XL.zebra } };
+      c.alignment = { ...(c.alignment || {}), vertical: 'middle', indent: c === labelC ? 1 : 0 };
+    });
+  });
+
+  // ══════════════════ Projects ══════════════════
+  const projSheet = wb.addWorksheet('Projects', {
+    properties: { tabColor: { argb: CAT_XL.projects } },
+    views: [{ state: 'frozen', ySplit: 1, showGridLines: false }]
+  });
+  projSheet.columns = [
+    { header: '#', key: 'idx', width: 6 },
+    { header: 'Project Name', key: 'name', width: 24 },
+    { header: 'Type', key: 'type', width: 12 },
+    { header: 'Current Status', key: 'status', width: 22 },
+    { header: 'Version (Prev → Upcoming)', key: 'version', width: 34 },
+    { header: 'Past Released Versions', key: 'history', width: 40 },
+    { header: 'Completed Tasks', key: 'completed', width: 15 },
+    { header: 'Total Tasks', key: 'total', width: 12 }
+  ];
+  styleHeaderRow(projSheet.getRow(1), CAT_XL.projects);
+
+  projects.forEach((p, i) => {
+    const completed = state.tasks.filter(t => projectIdsOf(t).includes(p.id) && t.status === 'Done').length;
+    const total = state.tasks.filter(t => projectIdsOf(t).includes(p.id)).length;
+    const pastVersions = (p.releaseHistory || [])
+      .map(h => `${h.platform ? h.platform + ' ' : ''}${h.version} (${fmtDate(h.releasedAt)})`)
+      .join('\n') || '—';
+    const versionInfo = p.projectType === 'app'
+      ? `Android: ${p.androidPreviousVersion || '—'} → ${p.androidUpcomingVersion || '—'}\niOS: ${p.iosPreviousVersion || '—'} → ${p.iosUpcomingVersion || '—'}`
+      : `${p.previousVersion || '—'} → ${p.upcomingVersion || '—'}`;
+    const row = projSheet.addRow({
+      idx: i + 1,
+      name: p.name,
+      type: p.projectType === 'app' ? 'Mobile App' : 'Web',
+      status: (p.statuses || []).join(', ') || '—',
+      version: versionInfo,
+      history: pastVersions,
+      completed,
+      total
+    });
+    zebraRow(row, i % 2 === 0);
+    colorCell(row.getCell('status'), PROJECT_STATUS_XL, pickPrimaryStatus(p.statuses));
+    row.getCell('idx').alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell('completed').alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell('total').alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell('history').alignment = { vertical: 'middle', wrapText: true };
+    if (p.projectType === 'app') {
+      row.getCell('version').alignment = { vertical: 'middle', wrapText: true };
+    }
+  });
+  if (!projects.length) {
+    projSheet.mergeCells(2, 1, 2, 8);
+    projSheet.getCell(2, 1).value = 'No projects match the selected filters';
+    projSheet.getCell(2, 1).alignment = { horizontal: 'center' };
+  } else {
+    projSheet.autoFilter = { from: 'A1', to: `H${projects.length + 1}` };
+  }
+
+  // ══════════════════ Tasks ══════════════════
+  const taskSheet = wb.addWorksheet('Tasks', {
+    properties: { tabColor: { argb: CAT_XL.tasks } },
+    views: [{ state: 'frozen', ySplit: 1, showGridLines: false }]
+  });
+  taskSheet.columns = [
+    { header: '#', key: 'idx', width: 6 },
+    { header: 'Task Name', key: 'name', width: 26 },
+    { header: 'Project(s)', key: 'project', width: 24 },
+    { header: 'Status', key: 'status', width: 12 },
+    { header: 'Priority', key: 'priority', width: 10 },
+    { header: 'Developer(s)', key: 'developer', width: 20 },
+    { header: 'Start Date', key: 'start', width: 12 },
+    { header: 'End Date', key: 'end', width: 12 },
+    { header: 'Completed Date', key: 'completedDate', width: 14 },
+    { header: 'Tags', key: 'tags', width: 20 },
+    { header: 'Description', key: 'description', width: 40 }
+  ];
+  styleHeaderRow(taskSheet.getRow(1), CAT_XL.tasks);
+
+  tasks.forEach((t, i) => {
+    const row = taskSheet.addRow({
+      idx: i + 1,
+      name: t.title,
+      project: getTaskProjectNames(t).join(', ') || '—',
+      status: t.status,
+      priority: t.priority || '—',
+      developer: getTaskDevNames(t).join(', ') || '—',
+      start: t.startDate ? new Date(t.startDate) : null,
+      end: t.endDate ? new Date(t.endDate) : null,
+      completedDate: t.completedDate ? new Date(t.completedDate) : null,
+      tags: (t.tags || []).join(', '),
+      description: t.description || ''
+    });
+    zebraRow(row, i % 2 === 0);
+    colorCell(row.getCell('status'), TASK_STATUS_XL, t.status);
+    colorCell(row.getCell('priority'), PRIORITY_XL, t.priority);
+    ['start', 'end', 'completedDate'].forEach(k => { row.getCell(k).numFmt = 'dd mmm yyyy'; });
+    row.getCell('idx').alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell('description').alignment = { vertical: 'middle', wrapText: true };
+  });
+  if (!tasks.length) {
+    taskSheet.mergeCells(2, 1, 2, 11);
+    taskSheet.getCell(2, 1).value = 'No tasks match the selected filters';
+    taskSheet.getCell(2, 1).alignment = { horizontal: 'center' };
+  } else {
+    taskSheet.autoFilter = { from: 'A1', to: `K${tasks.length + 1}` };
+  }
+
+  // ══════════════════ Releases ══════════════════
+  const relSheet = wb.addWorksheet('Releases', {
+    properties: { tabColor: { argb: CAT_XL.releases } },
+    views: [{ showGridLines: false }]
+  });
+  const relCols = [
+    { header: '#', width: 6 },
+    { header: 'Release Name', width: 26 }, { header: 'Project(s)', width: 26 }, { header: 'Version(s)', width: 18 },
+    { header: 'Status', width: 14 }, { header: 'Release Date', width: 14 }, { header: 'Manager', width: 18 }, { header: 'Developers', width: 22 }
+  ];
+  relSheet.columns = relCols.map(c => ({ width: c.width }));
+
+  sectionBanner(relSheet, 1, `Manual Releases — Total: ${releases.length}`, relCols.length, CAT_XL.releases);
+  relCols.forEach((c, i) => { relSheet.getCell(2, i + 1).value = c.header; });
+  styleHeaderRow(relSheet.getRow(2), CAT_XL.releases);
+  releases.forEach((r, i) => {
+    const rowNum = 3 + i;
+    const values = [
+      i + 1,
+      r.name,
+      projectNamesOf(r),
+      (r.versions && r.versions.length ? r.versions : [r.version]).filter(Boolean).join(', ') || '—',
+      r.status || 'Draft',
+      r.releaseDate ? new Date(r.releaseDate) : null,
+      r.managerName || '—',
+      (r.developerIds || []).map(getDevName).join(', ') || '—'
+    ];
+    values.forEach((v, c) => { relSheet.getCell(rowNum, c + 1).value = v; });
+    const row = relSheet.getRow(rowNum);
+    zebraRow(row, i % 2 === 0);
+    row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+    colorCell(row.getCell(5), RELEASE_STATUS_XL, r.status || 'Draft');
+    row.getCell(6).numFmt = 'dd mmm yyyy';
+  });
+  if (!releases.length) {
+    relSheet.mergeCells(3, 1, 3, relCols.length);
+    relSheet.getCell(3, 1).value = 'No manual releases match the selected filters';
+    relSheet.getCell(3, 1).alignment = { horizontal: 'center' };
+  }
+
+  const rpCols = [
+    { header: '#', width: 6 },
+    { header: 'Release Point Title', width: 28 }, { header: 'Project(s)', width: 26 }, { header: 'Type', width: 12 },
+    { header: 'Version(s)', width: 18 }, { header: 'Checklist Progress', width: 18 }, { header: 'Completed', width: 12 }
+  ];
+  const rpStart = (releases.length ? 3 + releases.length : 4) + 1;
+  sectionBanner(relSheet, rpStart, `Release Points — Total: ${releasePoints.length}`, relCols.length, CAT_XL.releasePoints);
+  rpCols.forEach((c, i) => { relSheet.getCell(rpStart + 1, i + 1).value = c.header; });
+  styleHeaderRow(relSheet.getRow(rpStart + 1), CAT_XL.releasePoints);
+  releasePoints.forEach((rp, i) => {
+    const rowNum = rpStart + 2 + i;
+    const done = (rp.checklistItems || []).filter(it => it.done).length;
+    const totalItems = (rp.checklistItems || []).length;
+    const values = [
+      i + 1,
+      rp.title,
+      projectNamesOf(rp),
+      rp.releaseType === 'upcoming' ? 'Upcoming' : 'Past',
+      (rp.versions || []).join(', ') || '—',
+      `${done}/${totalItems}`,
+      rp.isCompleted ? 'Yes' : 'No'
+    ];
+    values.forEach((v, c) => { relSheet.getCell(rowNum, c + 1).value = v; });
+    const row = relSheet.getRow(rowNum);
+    zebraRow(row, i % 2 === 0);
+    row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+    colorCell(row.getCell(7), { 'Yes': PROJECT_STATUS_XL['Stable'], 'No': PROJECT_STATUS_XL['N/A'] }, rp.isCompleted ? 'Yes' : 'No');
+  });
+  if (!releasePoints.length) {
+    relSheet.mergeCells(rpStart + 2, 1, rpStart + 2, rpCols.length);
+    relSheet.getCell(rpStart + 2, 1).value = 'No release points match the selected filters';
+    relSheet.getCell(rpStart + 2, 1).alignment = { horizontal: 'center' };
+  }
+
+  // ══════════════════ Test Cases (numeric only) ══════════════════
+  const tcSheet = wb.addWorksheet('Test Cases', {
+    properties: { tabColor: { argb: CAT_XL.testCases } },
+    views: [{ showGridLines: false }]
+  });
+  const tcStatuses = ['Not executed', 'Passed', 'Failed', 'Blocked'];
+  const tcPriorities = ['Critical', 'High', 'Medium', 'Low'];
+  const tcTypes = ['Manual', 'Automated', 'API', 'Security', 'Performance', 'Regression'];
+  const tcColCount = 7;
+  tcSheet.columns = [{ width: 6 }, { width: 22 }, { width: 16 }, { width: 14 }, { width: 10 }, { width: 10 }, { width: 10 }];
+
+  sectionBanner(tcSheet, 1, 'Test Case Counts by Project', tcColCount, CAT_XL.testCases);
+  const tcHeader = ['#', 'Project', 'Total Test Cases', ...tcStatuses];
+  tcHeader.forEach((h, i) => { tcSheet.getCell(2, i + 1).value = h; });
+  styleHeaderRow(tcSheet.getRow(2), CAT_XL.testCases);
+
+  projects.forEach((p, i) => {
+    const rowNum = 3 + i;
+    const pTc = testCases.filter(tc => tc.projectId === p.id);
+    const counts = tcStatuses.map(s => pTc.filter(tc => (tc.status || 'Not executed') === s).length);
+    [i + 1, p.name, pTc.length, ...counts].forEach((v, c) => { tcSheet.getCell(rowNum, c + 1).value = v; });
+    const row = tcSheet.getRow(rowNum);
+    zebraRow(row, i % 2 === 0);
+    row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+    tcStatuses.forEach((s, si) => {
+      const cell = row.getCell(4 + si);
+      if (cell.value > 0) colorCell(cell, TC_STATUS_XL, s);
+    });
+  });
+  const totalRowNum = 3 + projects.length;
+  const totalCounts = tcStatuses.map(s => testCases.filter(tc => (tc.status || 'Not executed') === s).length);
+  ['', 'TOTAL', testCases.length, ...totalCounts].forEach((v, c) => { tcSheet.getCell(totalRowNum, c + 1).value = v; });
+  const totalRow = tcSheet.getRow(totalRowNum);
+  totalRow.eachCell({ includeEmpty: true }, cell => {
+    cell.font = { bold: true };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.zebra } };
+    cell.border = { top: { style: 'medium', color: { argb: CAT_XL.testCases } }, bottom: thinBorder().bottom, left: thinBorder().left, right: thinBorder().right };
+  });
+
+  const priStart = totalRowNum + 2;
+  sectionBanner(tcSheet, priStart, 'By Priority', tcColCount, CAT_XL.tasks);
+  tcSheet.getCell(priStart + 1, 1).value = '#';
+  tcSheet.getCell(priStart + 1, 2).value = 'Priority';
+  tcSheet.getCell(priStart + 1, 3).value = 'Count';
+  styleHeaderRow(tcSheet.getRow(priStart + 1), CAT_XL.tasks);
+  tcPriorities.forEach((pr, i) => {
+    const rowNum = priStart + 2 + i;
+    tcSheet.getCell(rowNum, 1).value = i + 1;
+    tcSheet.getCell(rowNum, 2).value = pr;
+    tcSheet.getCell(rowNum, 3).value = testCases.filter(tc => tc.priority === pr).length;
+    const row = tcSheet.getRow(rowNum);
+    zebraRow(row, i % 2 === 0);
+    row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+    colorCell(row.getCell(2), PRIORITY_XL, pr);
+  });
+
+  const typeStart = priStart + 2 + tcPriorities.length + 1;
+  sectionBanner(tcSheet, typeStart, 'By Type', tcColCount, CAT_XL.releases);
+  tcSheet.getCell(typeStart + 1, 1).value = '#';
+  tcSheet.getCell(typeStart + 1, 2).value = 'Type';
+  tcSheet.getCell(typeStart + 1, 3).value = 'Count';
+  styleHeaderRow(tcSheet.getRow(typeStart + 1), CAT_XL.releases);
+  tcTypes.forEach((ty, i) => {
+    const rowNum = typeStart + 2 + i;
+    tcSheet.getCell(rowNum, 1).value = i + 1;
+    tcSheet.getCell(rowNum, 2).value = ty;
+    tcSheet.getCell(rowNum, 3).value = testCases.filter(tc => tc.type === ty).length;
+    const row = tcSheet.getRow(rowNum);
+    zebraRow(row, i % 2 === 0);
+    row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+  });
+
+  const filename = `clair-report-${new Date().toISOString().split('T')[0]}.xlsx`;
+  const arrayBuffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([arrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+
+  if (typeof chrome !== 'undefined' && chrome.downloads) {
+    await new Promise(resolve => {
+      chrome.downloads.download({
+        url,
+        filename: `Extensions/project-extension/Reports/${filename}`,
+        conflictAction: 'uniquify',
+        saveAs: false
+      }, (downloadId) => {
+        URL.revokeObjectURL(url);
+        if (chrome.runtime.lastError) {
+          console.error(chrome.runtime.lastError);
+          const fallbackUrl = URL.createObjectURL(blob);
+          triggerReportDownload(fallbackUrl, filename);
+        } else {
+          showToast('Report exported to Reports folder');
+        }
+        resolve();
+      });
+    });
+  } else {
+    triggerReportDownload(url, filename);
+  }
+
+  closeModals();
 };
 
 
@@ -836,12 +1468,12 @@ const renderDashboard = () => {
 
   const pendingTasksHtml = pendingTasksLimit.length ? pendingTasksLimit.map(item => {
     const t = item.task;
-    const proj = t.projectId ? state.projects.find(p => p.id === t.projectId) : null;
+    const projNames = getTaskProjectNames(t);
     return `
       <div class="db-item">
         <div class="db-item-details">
           <span class="db-item-title">${t.title}</span>
-          <span class="db-item-subtitle">${proj ? proj.name : 'No Project'} · ${getDevName(t.developer)}</span>
+          <span class="db-item-subtitle">${projNames.length ? projNames.join(', ') : 'No Project'} · ${getTaskDevNames(t).join(', ') || 'Unassigned'}</span>
         </div>
         <div class="db-item-right">
           <span class="db-badge ${item.badgeClass}">${item.type}</span>
@@ -852,13 +1484,13 @@ const renderDashboard = () => {
   }).join('') : '<div style="color:var(--text-muted);font-size:13px;font-style:italic;padding:24px 0;text-align:center;">No overdue or due soon tasks</div>';
 
   const completedTasksHtml = completedTasksLimit.length ? completedTasksLimit.map(t => {
-    const proj = t.projectId ? state.projects.find(p => p.id === t.projectId) : null;
+    const projNames = getTaskProjectNames(t);
     const compDate = t.completedDate || t.updatedAt || t.endDate || t.createdAt;
     return `
       <div class="db-item">
         <div class="db-item-details">
           <span class="db-item-title" style="text-decoration: line-through; color: var(--text-muted);">${t.title}</span>
-          <span class="db-item-subtitle">${proj ? proj.name : 'No Project'} · ${getDevName(t.developer)}</span>
+          <span class="db-item-subtitle">${projNames.length ? projNames.join(', ') : 'No Project'} · ${getTaskDevNames(t).join(', ') || 'Unassigned'}</span>
         </div>
         <div class="db-item-right">
           <span class="db-badge db-badge-success">Done</span>
@@ -1480,7 +2112,7 @@ const renderTasks = () => {
     tasks = tasks.filter(t =>
       t.title.toLowerCase().includes(q) ||
       (t.description || '').toLowerCase().includes(q) ||
-      getDevName(t.developer).toLowerCase().includes(q)
+      getTaskDevNames(t).join(' ').toLowerCase().includes(q)
     );
   }
 
@@ -1489,7 +2121,7 @@ const renderTasks = () => {
   }
 
   if (state.filters.taskProject) {
-    tasks = tasks.filter(t => t.projectId === state.filters.taskProject);
+    tasks = tasks.filter(t => (t.projectIds || []).includes(state.filters.taskProject));
   }
 
   if (state.filters.taskPriority) {
@@ -1896,7 +2528,10 @@ window.dropTask = async (taskId, newStatus) => {
 
 
 const renderTaskCard = (t, q = '') => {
-  const proj = t.projectId ? state.projects.find(p => p.id === t.projectId) : null;
+  const projNames = getTaskProjectNames(t);
+  const maxVisibleProjTags = 2;
+  const visibleProjNames = projNames.slice(0, maxVisibleProjTags);
+  const extraProjCount = projNames.length - visibleProjNames.length;
   const alerts = getTaskAlert(t.endDate, t.status);
   const stage = getTaskStage(t);
   const stageClass = `stage-${stage}`;
@@ -1905,7 +2540,10 @@ const renderTaskCard = (t, q = '') => {
     <div class="task-card ${stageClass} ${alerts.card}" data-id="${t.id}" draggable="true">
       <!-- Top header row for Project Tag and Priority Badge -->
       <div class="task-card-header-row">
-        ${proj ? `<span class="task-project-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:10px;height:10px;margin-right:4px;"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>${proj.name}</span>` : '<span></span>'}
+        <span class="task-project-tags-wrap" ${projNames.length ? `title="${projNames.join(', ')}"` : ''}>
+          ${visibleProjNames.map(name => `<span class="task-project-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:10px;height:10px;margin-right:4px;"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>${name}</span>`).join('')}
+          ${extraProjCount > 0 ? `<span class="task-project-tag task-project-tag-more">+${extraProjCount}</span>` : ''}
+        </span>
         <span class="priority-pill ${String(t.priority || 'Medium').toLowerCase()}">${t.priority || 'Medium'}</span>
       </div>
 
@@ -1928,10 +2566,10 @@ const renderTaskCard = (t, q = '') => {
         <!-- Footer metadata rows -->
         <div class="task-meta-footer">
           <div class="task-meta-row">
-            ${t.developer ? `
+            ${(t.developerIds && t.developerIds.length) ? `
               <span class="task-meta-item">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-                ${highlight(getDevName(t.developer), q)}
+                ${highlight(getTaskDevNames(t).join(', '), q)}
               </span>
             ` : `<span class="task-meta-item"></span>`}
             <span class="task-meta-item">
@@ -2123,6 +2761,26 @@ const renderSettings = () => {
             <button class="btn-ghost" id="settingsImportBtn">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 15px; height: 15px; margin-right: 8px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
               Import System Backup
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Export Report -->
+      <div class="settings-card">
+        <div class="settings-info">
+          <div class="settings-header-wrap">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              Reports
+            </h3>
+            <p>Generate a multi-sheet Excel report of projects, tasks, releases, and test case counts.</p>
+          </div>
+
+          <div class="portability-btn-group">
+            <button class="btn-ghost" id="openExportReportBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 15px; height: 15px; margin-right: 8px;"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              Export Report (Excel)
             </button>
           </div>
         </div>
@@ -2664,6 +3322,12 @@ const attachCardListeners = () => {
       document.getElementById('importInput').click();
       return;
     }
+
+    const openExportReportBtn = e.target.closest('#openExportReportBtn');
+    if (openExportReportBtn) {
+      openExportReportModal();
+      return;
+    }
   });
 
   // Change delegation (filters)
@@ -2894,7 +3558,7 @@ const confirmDeleteDeveloper = (devId) => {
 const deleteDeveloper = async (devId) => {
   state.developers = state.developers.filter(d => d.id !== devId);
   state.tasks.forEach(t => {
-    if (t.developer === devId) t.developer = '';
+    t.developerIds = (t.developerIds || []).filter(id => id !== devId);
   });
   state.tests.forEach(t => {
     if (t.developer === devId) t.developer = '';
@@ -3128,14 +3792,31 @@ const clearReleaseHistory = async (projectId) => {
 };
 
 // ─── Task Modal ──────────────────────────────────────────
+const loadTaskProjectChecklist = (selectedProjectIds = []) => {
+  const container = document.getElementById('taskProjectChecklist');
+  if (!container) return;
+  container.innerHTML = state.projects.map(p => `
+    <label class="dev-project-label">
+      <input type="checkbox" name="taskProjectCheck" value="${p.id}" ${selectedProjectIds.includes(p.id) ? 'checked' : ''} />
+      <span>${p.name}</span>
+    </label>
+  `).join('') || '<span style="color:var(--text-muted);font-size:12.5px;">No projects added yet.</span>';
+};
+
+const loadTaskDevChecklist = (selectedDevIds = []) => {
+  const container = document.getElementById('taskDevChecklist');
+  if (!container) return;
+  container.innerHTML = state.developers.map(d => `
+    <label class="dev-project-label">
+      <input type="checkbox" name="taskDevCheck" value="${d.id}" ${selectedDevIds.includes(d.id) ? 'checked' : ''} />
+      <span>${d.name}</span>
+    </label>
+  `).join('') || '<span style="color:var(--text-muted);font-size:12.5px;">No developers added yet.</span>';
+};
+
 const openTaskModal = (id = null) => {
   const modal = document.getElementById('taskModal');
   const title = document.getElementById('taskModalTitle');
-
-  // Populate project dropdown
-  const sel = document.getElementById('taskProject');
-  sel.innerHTML = `<option value="">— None —</option>` +
-    state.projects.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
 
   const todayIso = new Date().toISOString().split('T')[0];
 
@@ -3151,8 +3832,8 @@ const openTaskModal = (id = null) => {
     document.getElementById('taskEndDate').value = t.endDate || '';
     document.getElementById('taskStatus').value = t.status || 'To-Do';
     document.getElementById('taskPriority').value = t.priority || 'Medium';
-    document.getElementById('taskProject').value = t.projectId || '';
-    updateDeveloperDropdown(t.projectId || '', 'taskDeveloper', t.developer || '');
+    loadTaskProjectChecklist(t.projectIds || []);
+    loadTaskDevChecklist(t.developerIds || []);
     const cdg = document.getElementById('completionDateGroup');
     const cdi = document.getElementById('taskCompletedDate');
     if (t.status === 'Done') {
@@ -3172,10 +3853,10 @@ const openTaskModal = (id = null) => {
     document.getElementById('taskEndDate').value = '';
     document.getElementById('taskStatus').value = 'To-Do';
     document.getElementById('taskPriority').value = 'Medium';
-    document.getElementById('taskProject').value = '';
+    loadTaskProjectChecklist([]);
+    loadTaskDevChecklist([]);
     document.getElementById('completionDateGroup').style.display = 'none';
     document.getElementById('taskCompletedDate').value = '';
-    updateDeveloperDropdown('', 'taskDeveloper', '');
   }
 
   // Toggle completion date field when status changes
@@ -3203,8 +3884,8 @@ const saveTask = async () => {
   const endDate = document.getElementById('taskEndDate').value;
   const status = document.getElementById('taskStatus').value;
   const priority = document.getElementById('taskPriority').value || 'Medium';
-  const projectId = document.getElementById('taskProject').value;
-  const developer = document.getElementById('taskDeveloper').value;
+  const projectIds = Array.from(document.querySelectorAll('input[name="taskProjectCheck"]:checked')).map(cb => cb.value);
+  const developerIds = Array.from(document.querySelectorAll('input[name="taskDevCheck"]:checked')).map(cb => cb.value);
 
   if (!title) { showToast('Task title is required', 'error'); return; }
 
@@ -3222,7 +3903,7 @@ const saveTask = async () => {
         ? new Date(completedDateInput + 'T12:00:00').toISOString()
         : (old.completedDate || now);
     }
-    state.tasks[idx] = { ...old, title, description: desc, tags, startDate, endDate, status, priority, projectId, developer, completedDate, updatedAt: now };
+    state.tasks[idx] = { ...old, title, description: desc, tags, startDate, endDate, status, priority, projectIds, developerIds, completedDate, updatedAt: now };
     delete state.tasks[idx].date;
     logActivity(`Updated task "${title}"`, 'task');
     showToast('Task updated');
@@ -3234,7 +3915,7 @@ const saveTask = async () => {
         : now;
     }
     state.tasks.unshift({
-      id: uid(), title, description: desc, tags, startDate, endDate, status, priority, projectId, developer,
+      id: uid(), title, description: desc, tags, startDate, endDate, status, priority, projectIds, developerIds,
       completedDate, createdAt: now, updatedAt: now
     });
     logActivity(`Added task "${title}"`, 'task');
@@ -3291,9 +3972,8 @@ const openDetailModal = (type, id) => {
     if (!task) return;
 
     titleEl.textContent = 'Task Details';
-    const proj = task.projectId ? state.projects.find(p => p.id === task.projectId) : null;
-    const projectName = proj ? proj.name : '';
-    const devName = getDevName(task.developer);
+    const projectNames = getTaskProjectNames(task);
+    const devName = getTaskDevNames(task).join(', ') || '–';
 
     const taskStatusClass = (task.status || 'To-Do').toLowerCase().replace(' ', '').replace('-', '');
     const priorityClass = (task.priority || 'Medium').toLowerCase();
@@ -3314,7 +3994,7 @@ const openDetailModal = (type, id) => {
         <div class="detail-header-section">
           <span class="detail-badge ${taskStatusClass}">${task.status || 'To-Do'}</span>
           <span class="priority-pill ${priorityClass}">${task.priority || 'Medium'}</span>
-          ${projectName ? `<span class="detail-project-tag">${projectName}</span>` : ''}
+          ${projectNames.map(name => `<span class="detail-project-tag">${name}</span>`).join('')}
         </div>
         <h3 class="detail-title">${task.title}</h3>
 
@@ -7477,7 +8157,7 @@ ${(r.managerName && r.managerName !== '— Select Manager —') ? r.managerName 
 const init = async () => {
   const data = await storage.load();
   state.projects = data.projects;
-  state.tasks = data.tasks;
+  state.tasks = migrateTasks(data.tasks);
   state.tests = data.tests || [];
   state.activity = data.activity;
   state.developers = data.developers || [];
@@ -7495,7 +8175,7 @@ const init = async () => {
       if (response.ok) {
         const backupData = await response.json();
         state.projects = backupData.projects || [];
-        state.tasks = backupData.tasks || [];
+        state.tasks = migrateTasks(backupData.tasks || []);
         state.tests = backupData.tests || [];
         state.activity = backupData.activity || [];
         state.developers = backupData.developers || [];
@@ -7560,9 +8240,6 @@ const init = async () => {
   });
 
   // Link developer dropdown updates to project selection changes
-  document.getElementById('taskProject').addEventListener('change', (e) => {
-    updateDeveloperDropdown(e.target.value, 'taskDeveloper', document.getElementById('taskDeveloper').value);
-  });
   document.getElementById('testProject').addEventListener('change', (e) => {
     updateDeveloperDropdown(e.target.value, 'testDeveloper', document.getElementById('testDeveloper').value);
   });
@@ -7601,6 +8278,35 @@ const init = async () => {
   document.getElementById('cancelBulkUpdateModal').addEventListener('click', closeModals);
   document.getElementById('closeReleasePtModal').addEventListener('click', closeModals);
   document.getElementById('cancelReleasePtModal').addEventListener('click', closeModals);
+  document.getElementById('closeExportReportModal').addEventListener('click', closeModals);
+  document.getElementById('cancelExportReportModal').addEventListener('click', closeModals);
+  document.getElementById('generateReportBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('generateReportBtn');
+    const originalHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = 'Generating…';
+    try {
+      await generateExcelReport();
+    } catch (err) {
+      console.error(err);
+      showToast('Failed to generate report', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = originalHTML;
+    }
+  });
+  document.getElementById('reportProjectSelectAllBtn').addEventListener('click', () => {
+    document.querySelectorAll('input[name="reportProjectCheck"]').forEach(cb => cb.checked = true);
+  });
+  document.getElementById('reportProjectClearBtn').addEventListener('click', () => {
+    document.querySelectorAll('input[name="reportProjectCheck"]').forEach(cb => cb.checked = false);
+  });
+  document.getElementById('reportDevSelectAllBtn').addEventListener('click', () => {
+    document.querySelectorAll('input[name="reportDevCheck"]').forEach(cb => cb.checked = true);
+  });
+  document.getElementById('reportDevClearBtn').addEventListener('click', () => {
+    document.querySelectorAll('input[name="reportDevCheck"]').forEach(cb => cb.checked = false);
+  });
   // Completion date modal
   const applyCompletionDate = async (dateIso) => {
     const taskId = document.getElementById('completionTaskId').value;
