@@ -453,9 +453,7 @@ In **Settings**, click **Export Data**. A timestamped JSON file is downloaded to
 clair-export-2026-06-20.json
 ```
 
-The export includes: `projects`, `tasks`, `tests` (insights), `developers`, `testCases`, `modules`, `releasePoints`, and `activity`.
-
-> **Known limitation:** `releases` are currently excluded from export/import. Recreate them manually after a restore, or extend the export/import functions in [app.js](app.js) to include the `releases` collection.
+The export includes: `projects`, `tasks`, `tests` (insights), `developers`, `releases`, `testCases`, `modules`, `releasePoints`, and `activity`.
 
 ### Importing
 
@@ -469,6 +467,7 @@ In **Settings**, click **Import Data** and select a previously exported JSON fil
   "tasks": [...],
   "tests": [...],
   "developers": [...],
+  "releases": [...],
   "testCases": [...],
   "modules": [...],
   "releasePoints": [...],
@@ -484,7 +483,6 @@ In **Settings**, click **Import Data** and select a previously exported JSON fil
 |---|---|---|
 | Toolbar icon does nothing | Extension not loaded or disabled | Reload unpacked extension at `chrome://extensions` |
 | Data missing after switching modes | Extension and standalone modes use separate storage | Export from one mode and import in the other |
-| Releases missing after import | `releases` collection is excluded from export | Recreate releases manually; or extend the export/import code in [app.js](app.js) |
 | Developer dropdown is empty | No developers linked to the selected project | Link developers to the project in Settings |
 | Release version dropdown is empty | Project has no version fields configured | Edit the project and add previous/upcoming version values |
 | Clipboard copy fails | Clipboard API requires a secure context | Use the extension tab (`chrome-extension://`) instead of a plain `file://` page |
@@ -524,7 +522,8 @@ Clair follows a no-build, no-framework approach. Keep contributions consistent w
 - [ ] Inline checklist item delete removes the item without opening the modal.
 - [ ] Bulk Add count picker inserts the correct number of empty rows.
 - [ ] Export creates a valid JSON backup.
-- [ ] Import restores projects, tasks, insights, developers, test cases, and release points.
+- [ ] Import restores projects, tasks, insights, developers, releases, test cases, and release points.
+- [ ] Calendar view correctly renders monthly grid, navigates months, filters tasks, and opens task edit/create modals.
 
 ---
 

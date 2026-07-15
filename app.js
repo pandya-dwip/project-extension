@@ -77,7 +77,12 @@ let state = {
   releaseFilters: { status: '' },
   releasePtFilters: { project: '', releaseType: '', completion: '' },
   inlineEditing: null,
-  chartMonth: null        // { year, month } — set on first render to last month
+  chartMonth: null,        // { year, month } — set on first render to last month
+  calendarMonth: null,     // { year, month } — set on first render to current month
+  calendarFilters: { project: '', type: '' },
+  selectedCalendarDate: '',
+  calendarRightPanelFilter: 'all',
+  calendarRightPanelSort: 'priority'
 };
 
 let confirmCallback = null;
@@ -1106,6 +1111,7 @@ const setView = (view) => {
     dashboard: 'Dashboard',
     projects: 'Projects',
     tasks: 'Tasks',
+    calendar: 'Calendar',
     tests: 'Project Insights',
     releases: 'Release Management',
     releasepoints: 'Release Points',
@@ -1150,6 +1156,7 @@ const render = () => {
     case 'dashboard': ct.innerHTML = renderDashboard(); initWeeklyChart(); break;
     case 'projects': ct.innerHTML = renderProjects(); break;
     case 'tasks': ct.innerHTML = renderTasks(); break;
+    case 'calendar': ct.innerHTML = renderCalendar(); break;
     case 'tests': ct.innerHTML = renderTests(); break;
     case 'releases': ct.innerHTML = renderReleases(); break;
     case 'releasepoints': ct.innerHTML = renderReleasePoints(); break;
@@ -1248,7 +1255,7 @@ const initWeeklyChart = () => {
   }
   const { year: cy, month: cm } = state.chartMonth;
   const lmStart = new Date(cy, cm, 1);
-  const lmEnd   = new Date(cy, cm + 1, 0);
+  const lmEnd = new Date(cy, cm + 1, 0);
   const firstDay = new Date(lmStart);
   const dow = firstDay.getDay();
   const off = dow === 0 ? -6 : 1 - dow;
@@ -1256,8 +1263,8 @@ const initWeeklyChart = () => {
   const wData = [];
   while (wCursor <= lmEnd) {
     const wEnd = new Date(wCursor); wEnd.setDate(wCursor.getDate() + 6);
-    const dS = new Date(wCursor); dS.setHours(0,0,0,0);
-    const dE = new Date(wEnd);    dE.setHours(23,59,59,999);
+    const dS = new Date(wCursor); dS.setHours(0, 0, 0, 0);
+    const dE = new Date(wEnd); dE.setHours(23, 59, 59, 999);
     const dispS = new Date(Math.max(dS, lmStart));
     const dispE = new Date(Math.min(dE, lmEnd));
     const mo = (d) => d.toLocaleDateString('en', { month: 'short' });
@@ -1274,7 +1281,7 @@ const initWeeklyChart = () => {
   }
 
   const labels = wData.map((_, i) => `Wk ${i + 1}`);
-  const counts  = wData.map(w => w.count);
+  const counts = wData.map(w => w.count);
   const subLabels = wData.map(w => `(${w.label})`);
 
   _weeklyChartInstance = new Chart(canvas, {
@@ -1343,7 +1350,7 @@ const initWeeklyChart = () => {
         chart.data.datasets[0].data.forEach((val, i) => {
           if (!val) return;
           const meta = chart.getDatasetMeta(0);
-          const bar  = meta.data[i];
+          const bar = meta.data[i];
           ctx.save();
           ctx.fillStyle = '#1a1916';
           ctx.font = 'bold 12px inherit';
@@ -2029,21 +2036,21 @@ const renderKanbanBoard = (projects, q = '') => {
   return `
     <div class="projects-kanban-board">
       ${columns.map(col => {
-        const colProjects = projects.filter(p => (p.overallProjectStatus || 'YET_TO_START') === col.id);
-        return `
+    const colProjects = projects.filter(p => (p.overallProjectStatus || 'YET_TO_START') === col.id);
+    return `
           <div class="projects-kanban-column" data-status="${col.id}">
             <div class="projects-kanban-column-header">
               <h3 class="projects-kanban-column-title">${col.label}</h3>
               <span class="projects-kanban-column-count">${colProjects.length}</span>
             </div>
             <div class="projects-kanban-cards">
-              ${colProjects.length === 0 
-                ? `<div class="projects-kanban-empty">No projects in this stage</div>` 
-                : colProjects.map(p => renderKanbanCard(p, q)).join('')}
+              ${colProjects.length === 0
+        ? `<div class="projects-kanban-empty">No projects in this stage</div>`
+        : colProjects.map(p => renderKanbanCard(p, q)).join('')}
             </div>
           </div>
         `;
-      }).join('')}
+  }).join('')}
     </div>
   `;
 };
@@ -2051,7 +2058,7 @@ const renderKanbanBoard = (projects, q = '') => {
 const renderKanbanCard = (p, q = '') => {
   const isApp = p.projectType === 'app';
   const statusPills = (p.statuses || []).map(s => statusPill(s)).join('');
-  
+
   const clientLine = p.clientName ? `
     <div class="kanban-meta-item" title="Client">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -2089,7 +2096,7 @@ const renderKanbanCard = (p, q = '') => {
     </div>
   ` : '';
 
-  const typeBadge = isApp 
+  const typeBadge = isApp
     ? `<span class="project-type-badge app" style="font-size: 9px; padding: 1px 6px;">App</span>`
     : `<span class="project-type-badge web" style="font-size: 9px; padding: 1px 6px;">Web</span>`;
 
@@ -2202,14 +2209,14 @@ const renderProjectCard = (p, q = '') => {
   const checkSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:13px;height:13px;color:var(--accent);flex-shrink:0;margin-top:1px;"><path d="M20 6L9 17l-5-5"/></svg>`;
   const historyHtml = displayHistory.length
     ? displayHistory.slice(0, 3).map(h => {
-        const displayLog = h.log || `${h.platform ? h.platform + ' ' : ''}${h.version} released`;
-        return `
+      const displayLog = h.log || `${h.platform ? h.platform + ' ' : ''}${h.version} released`;
+      return `
           <div class="pc-history-item">
             ${checkSvg}
             <span class="pc-history-text">${displayLog}</span>
             <span class="pc-history-date">${fmtDate(h.releasedAt)}</span>
           </div>`;
-      }).join('')
+    }).join('')
     : `<div class="pc-history-empty">No releases logged yet</div>`;
 
   const primaryStatus = (p.statuses || []).includes('Stable') ? 'stable' :
@@ -2394,6 +2401,280 @@ const renderTasks = () => {
           </div>
         `;
   }).join('')}
+    </div>
+  `;
+};
+
+const renderCalendarPanelTaskCard = (t) => {
+  const projNames = getTaskProjectNames(t).join(', ') || 'No Project';
+  const devNames = getTaskDevNames(t).join(', ') || 'Unassigned';
+  const isDone = t.status === 'Done';
+
+  const statusLabels = {
+    'To-Do': 'Pending',
+    'In Progress': 'In Progress',
+    'Done': 'Completed',
+    'On Hold': 'On-hold'
+  };
+  const statusClass = t.status ? t.status.toLowerCase().replace(' ', '-') : 'todo';
+
+  return `
+    <div class="calendar-task-card" data-action="edit-task" data-id="${t.id}">
+      <div class="calendar-task-card-header">
+        <span class="calendar-task-project">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:10px;height:10px;margin-right:4px;"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+          ${projNames}
+        </span>
+        <span class="priority-pill ${String(t.priority || 'Medium').toLowerCase()}">${t.priority || 'Medium'}</span>
+      </div>
+      <div class="calendar-task-card-title ${isDone ? 'done' : ''}">
+        ${t.title}
+      </div>
+      ${t.description ? `<div class="calendar-task-card-desc">${formatCardDescription(t.description)}</div>` : ''}
+      <div class="calendar-task-card-footer">
+        <span class="calendar-task-dev">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:11px;height:11px;margin-right:4px;"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+          ${devNames}
+        </span>
+        <span class="calendar-task-status badge-${statusClass}">
+          ${statusLabels[t.status] || t.status || 'Pending'}
+        </span>
+      </div>
+      <div class="calendar-task-card-dates">
+        ${t.startDate ? `<span>Start: ${t.startDate}</span>` : ''}
+        ${t.endDate ? `<span>Due: ${t.endDate}</span>` : ''}
+      </div>
+    </div>
+  `;
+};
+
+const renderCalendar = () => {
+  // Helper to format date YYYY-MM-DD
+  const formatDateStr = (y, m, d) => {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${y}-${pad(m + 1)}-${pad(d)}`;
+  };
+
+  const getTaskCalendarRange = (t) => {
+    const start = t.startDate || t.date || (t.createdAt ? t.createdAt.split('T')[0] : null);
+    let end = t.endDate || t.startDate || t.date || null;
+    if (t.status === 'Done') {
+      if (t.completedDate) end = t.completedDate.split('T')[0];
+      else if (t.updatedAt) end = t.updatedAt.split('T')[0];
+    }
+    return { start, end };
+  };
+
+  const isTaskActiveOnDate = (t, dateStr) => {
+    const { start, end } = getTaskCalendarRange(t);
+    if (start && end) {
+      return dateStr >= start && dateStr <= end;
+    }
+    if (end) {
+      return end === dateStr;
+    }
+    if (start) {
+      return start === dateStr;
+    }
+    return false;
+  };
+
+  if (!state.calendarMonth) {
+    const d = new Date();
+    state.calendarMonth = { year: d.getFullYear(), month: d.getMonth() };
+  }
+
+  if (!state.selectedCalendarDate) {
+    const today = new Date();
+    state.selectedCalendarDate = formatDateStr(today.getFullYear(), today.getMonth(), today.getDate());
+  }
+
+  const { year, month } = state.calendarMonth;
+  const filterProjId = state.calendarFilters.project;
+
+  // 1. Filter tasks
+  let tasks = state.tasks;
+  if (filterProjId) {
+    tasks = tasks.filter(t => (t.projectIds || []).includes(filterProjId) || t.projectId === filterProjId);
+  }
+
+  // 2. Calendar math
+  const numDays = new Date(year, month + 1, 0).getDate();
+  const firstDayIndex = new Date(year, month, 1).getDay();
+  const paddingPrev = firstDayIndex;
+  const prevMonthNumDays = new Date(year, month, 0).getDate();
+
+  const days = [];
+
+  // Prev Month Padding
+  for (let i = paddingPrev - 1; i >= 0; i--) {
+    const d = new Date(year, month - 1, prevMonthNumDays - i);
+    days.push({
+      date: d,
+      dayNum: d.getDate(),
+      isCurrentMonth: false,
+      dateStr: formatDateStr(d.getFullYear(), d.getMonth(), d.getDate())
+    });
+  }
+
+  // Current Month
+  for (let i = 1; i <= numDays; i++) {
+    days.push({
+      date: new Date(year, month, i),
+      dayNum: i,
+      isCurrentMonth: true,
+      dateStr: formatDateStr(year, month, i)
+    });
+  }
+
+  // Next Month Padding
+  const totalCells = Math.ceil(days.length / 7) * 7;
+  const nextMonthPadding = totalCells - days.length;
+  for (let i = 1; i <= nextMonthPadding; i++) {
+    const d = new Date(year, month + 1, i);
+    days.push({
+      date: d,
+      dayNum: i,
+      isCurrentMonth: false,
+      dateStr: formatDateStr(d.getFullYear(), d.getMonth(), d.getDate())
+    });
+  }
+
+  const todayStr = formatDateStr(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+  const monthName = new Date(year, month).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  const projectOptions = state.projects.map(p =>
+    `<option value="${p.id}" ${state.calendarFilters.project === p.id ? 'selected' : ''}>${p.name}</option>`
+  ).join('');
+
+  // 3. Build weekdays header
+  const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const weekdaysHtml = weekdays.map(day => `<div class="calendar-weekday">${day}</div>`).join('');
+
+  // 4. Build days grid HTML
+  const gridHtml = days.map(day => {
+    // Find tasks overlapping this day
+    const dayTasks = tasks.filter(t => isTaskActiveOnDate(t, day.dateStr));
+
+    const isSelected = day.dateStr === state.selectedCalendarDate;
+    const taskCount = dayTasks.length;
+    const badgeClass = taskCount > 0 ? '' : 'none';
+
+    // Check if tasks are all completed (Done)
+    const allDone = taskCount > 0 && dayTasks.every(t => t.status === 'Done');
+    const badgeTypeClass = allDone ? 'done-only' : '';
+
+    return `
+      <div class="calendar-day-cell ${day.isCurrentMonth ? '' : 'other-month'} ${day.dateStr === todayStr ? 'today' : ''} ${isSelected ? 'selected' : ''}" data-action="select-calendar-date" data-date="${day.dateStr}">
+        <div class="calendar-day-header">
+          <span class="calendar-day-number">${day.dayNum}</span>
+        </div>
+        <div class="calendar-day-events" style="align-items: center; justify-content: center;">
+          <span class="calendar-day-task-badge ${badgeClass} ${badgeTypeClass}">${taskCount} ${taskCount === 1 ? 'task' : 'tasks'}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // 5. Gather tasks for selected date
+  const selectedDateStr = state.selectedCalendarDate;
+  const rawSelTasks = tasks.filter(t => isTaskActiveOnDate(t, selectedDateStr));
+
+  // Apply status filter
+  let filteredSelTasks = rawSelTasks;
+  const statusFilter = state.calendarRightPanelFilter || 'all';
+  if (statusFilter !== 'all') {
+    filteredSelTasks = rawSelTasks.filter(t => t.status === statusFilter);
+  }
+
+  // Apply sorting
+  const sortType = state.calendarRightPanelSort || 'priority';
+  if (sortType === 'priority') {
+    const priorityWeights = { 'Critical': 4, 'High': 3, 'Medium': 2, 'Low': 1 };
+    filteredSelTasks.sort((a, b) => (priorityWeights[b.priority] || 0) - (priorityWeights[a.priority] || 0));
+  } else if (sortType === 'due') {
+    filteredSelTasks.sort((a, b) => {
+      if (!a.endDate && !b.endDate) return 0;
+      if (!a.endDate) return 1;
+      if (!b.endDate) return -1;
+      return a.endDate.localeCompare(b.endDate);
+    });
+  }
+
+  const selectedDateLabel = new Date(selectedDateStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+
+  // 6. Right Panel Filters & Sort Buttons
+  const filterBtnsHtml = [
+    { key: 'all', label: 'All' },
+    { key: 'To-Do', label: 'Pending' },
+    { key: 'In Progress', label: 'In Progress' },
+    { key: 'Done', label: 'Completed' },
+    { key: 'On Hold', label: 'On-hold' }
+  ].map(f => {
+    const activeClass = statusFilter === f.key ? 'active' : '';
+    return `<button class="right-panel-filter-btn ${activeClass}" data-action="calendar-right-filter" data-filter="${f.key}">${f.label}</button>`;
+  }).join('');
+
+  const taskCardsHtml = filteredSelTasks.length > 0
+    ? filteredSelTasks.map(t => renderCalendarPanelTaskCard(t)).join('')
+    : `<div class="calendar-task-empty">No tasks scheduled for this date.</div>`;
+
+  return `
+    <div class="calendar-two-panel-layout">
+      <!-- Left Panel: Calendar Grid -->
+      <div class="calendar-left-panel">
+        <div class="filters-bar" style="margin-top: 0; padding-bottom: 12px; border-bottom: none; background: transparent;">
+          <div class="calendar-nav">
+            <button class="btn-ghost" data-action="calendar-prev" style="padding: 6px 10px;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px;"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <span class="calendar-title">${monthName}</span>
+            <button class="btn-ghost" data-action="calendar-next" style="padding: 6px 10px;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px;"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
+
+          <select class="filter-select" id="filterCalendarProject" data-calfilter="project" style="margin-left: auto; min-width: 180px;">
+            <option value="">All Projects</option>
+            ${projectOptions}
+          </select>
+        </div>
+
+        <div class="calendar-grid-container">
+          <div class="calendar-weekdays">
+            ${weekdaysHtml}
+          </div>
+          <div class="calendar-days-grid">
+            ${gridHtml}
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Panel: Tasks List -->
+      <div class="calendar-right-panel">
+        <div class="right-panel-header">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+            <h3>Tasks for ${selectedDateLabel}</h3>
+            <button class="btn-ghost" data-action="calendar-add-task" data-date="${selectedDateStr}" style="padding: 4px 8px; font-size: 11px; font-weight: 600; display: flex; align-items: center; gap: 4px;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 12px; height: 12px;"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              Add Task
+            </button>
+          </div>
+          <div class="right-panel-filters">
+            ${filterBtnsHtml}
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
+            <span style="font-size: 11px; font-weight: 600; color: var(--text-muted);">Sort By:</span>
+            <select class="right-panel-sort-select" data-cal-sort="type" style="flex: 1;">
+              <option value="priority" ${sortType === 'priority' ? 'selected' : ''}>Priority</option>
+              <option value="due" ${sortType === 'due' ? 'selected' : ''}>Due Date</option>
+            </select>
+          </div>
+        </div>
+        <div class="right-panel-task-list">
+          ${taskCardsHtml}
+        </div>
+      </div>
     </div>
   `;
 };
@@ -3184,6 +3465,29 @@ const attachCardListeners = () => {
         state.chartMonth = { year, month };
         render();
       }
+      else if (action === 'calendar-prev') {
+        let { year, month } = state.calendarMonth || { year: new Date().getFullYear(), month: new Date().getMonth() };
+        month--; if (month < 0) { month = 11; year--; }
+        state.calendarMonth = { year, month };
+        render();
+      }
+      else if (action === 'calendar-next') {
+        let { year, month } = state.calendarMonth || { year: new Date().getFullYear(), month: new Date().getMonth() };
+        month++; if (month > 11) { month = 0; year++; }
+        state.calendarMonth = { year, month };
+        render();
+      }
+      else if (action === 'select-calendar-date') {
+        state.selectedCalendarDate = btn.dataset.date;
+        render();
+      }
+      else if (action === 'calendar-right-filter') {
+        state.calendarRightPanelFilter = btn.dataset.filter;
+        render();
+      }
+      else if (action === 'calendar-add-task') {
+        openTaskModal(null, btn.dataset.date);
+      }
       else if (action === 'edit-release-pt') openReleasePtModal(cardId);
       else if (action === 'delete-release-pt') confirmDeleteReleasePt(cardId);
       else if (action === 'toggle-checklist-item') {
@@ -3502,6 +3806,16 @@ const attachCardListeners = () => {
 
   // Change delegation (filters)
   content.addEventListener('change', e => {
+    const calSortSelect = e.target.closest('[data-cal-sort]');
+    if (calSortSelect) {
+      state.calendarRightPanelSort = calSortSelect.value;
+      render();
+    }
+    const calSelect = e.target.closest('[data-calfilter]');
+    if (calSelect) {
+      state.calendarFilters[calSelect.dataset.calfilter] = calSelect.value;
+      render();
+    }
     const select = e.target.closest('[data-filter]');
     if (select) {
       applyFilter(select.dataset.filter, select.value);
@@ -3688,7 +4002,7 @@ const attachCardListeners = () => {
         if (project && project.overallProjectStatus !== newStatus) {
           project.overallProjectStatus = newStatus;
           project.updatedAt = new Date().toISOString();
-          
+
           const statusLabels = {
             'YET_TO_START': 'Yet to Start',
             'ON_GOING': 'On Going',
@@ -3698,7 +4012,7 @@ const attachCardListeners = () => {
           };
           const friendlyStatus = statusLabels[newStatus] || newStatus;
           logActivity(`Moved project "${project.name}" to status "${friendlyStatus}"`, 'project');
-          
+
           await storage.save();
           render();
         }
@@ -3957,19 +4271,19 @@ const saveProject = async () => {
     const idx = state.projects.findIndex(p => p.id === id);
     if (idx === -1) return;
     const old = state.projects[idx];
-    state.projects[idx] = { 
-      ...old, 
-      name, 
-      description: desc, 
-      projectType, 
-      ...versionData, 
-      statuses: selectedStatuses, 
-      clientName, 
-      assignedTeam, 
-      dueDate, 
-      priority, 
-      overallProjectStatus, 
-      updatedAt: now 
+    state.projects[idx] = {
+      ...old,
+      name,
+      description: desc,
+      projectType,
+      ...versionData,
+      statuses: selectedStatuses,
+      clientName,
+      assignedTeam,
+      dueDate,
+      priority,
+      overallProjectStatus,
+      updatedAt: now
     };
     // Clean up old fields if type changed
     if (projectType === 'app') {
@@ -3986,18 +4300,18 @@ const saveProject = async () => {
     showToast('Project updated');
   } else {
     state.projects.unshift({
-      id: uid(), 
-      name, 
-      description: desc, 
-      projectType, 
+      id: uid(),
+      name,
+      description: desc,
+      projectType,
       ...versionData,
       statuses: selectedStatuses,
-      clientName, 
-      assignedTeam, 
-      dueDate, 
-      priority, 
+      clientName,
+      assignedTeam,
+      dueDate,
+      priority,
       overallProjectStatus,
-      createdAt: now, 
+      createdAt: now,
       updatedAt: now
     });
     logActivity(`Created project "${name}" (${logVersion})`, 'project');
@@ -4076,7 +4390,7 @@ const loadTaskDevChecklist = (selectedDevIds = []) => {
   `).join('') || '<span style="color:var(--text-muted);font-size:12.5px;">No developers added yet.</span>';
 };
 
-const openTaskModal = (id = null) => {
+const openTaskModal = (id = null, defaultDate = null) => {
   const modal = document.getElementById('taskModal');
   const title = document.getElementById('taskModalTitle');
 
@@ -4111,8 +4425,8 @@ const openTaskModal = (id = null) => {
     document.getElementById('taskTitle').value = '';
     document.getElementById('taskDesc').value = '';
     document.getElementById('taskTags').value = '';
-    document.getElementById('taskStartDate').value = todayIso;
-    document.getElementById('taskEndDate').value = '';
+    document.getElementById('taskStartDate').value = defaultDate || todayIso;
+    document.getElementById('taskEndDate').value = defaultDate || '';
     document.getElementById('taskStatus').value = 'To-Do';
     document.getElementById('taskPriority').value = 'Medium';
     loadTaskProjectChecklist([]);
