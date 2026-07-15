@@ -64,6 +64,9 @@ let state = {
   testCaseSelectionMode: false,
   visibleTestCaseCount: 100,
   view: 'dashboard',
+  projectsViewMode: localStorage.getItem('clair_projects_view_mode') || 'list',
+  projectsKanbanBoardScrollLeft: 0,
+  projectsKanbanColumnScrollTops: {},
   searchQuery: '',
   taskSearch: '',
   testSearch: '',
@@ -1124,6 +1127,25 @@ const render = () => {
   const ct = document.getElementById('mainContent');
   const scrollPos = ct ? ct.scrollTop : 0;
 
+  let boardScrollLeft = state.projectsKanbanBoardScrollLeft || 0;
+  let columnScrollTops = state.projectsKanbanColumnScrollTops || {};
+  if (state.view === 'projects') {
+    const boardEl = document.querySelector('.projects-kanban-board');
+    if (boardEl) {
+      boardScrollLeft = boardEl.scrollLeft;
+      columnScrollTops = {};
+      document.querySelectorAll('.projects-kanban-cards').forEach(col => {
+        const colColumn = col.closest('.projects-kanban-column');
+        const colId = colColumn ? colColumn.dataset.status : null;
+        if (colId) {
+          columnScrollTops[colId] = col.scrollTop;
+        }
+      });
+      state.projectsKanbanBoardScrollLeft = boardScrollLeft;
+      state.projectsKanbanColumnScrollTops = columnScrollTops;
+    }
+  }
+
   switch (state.view) {
     case 'dashboard': ct.innerHTML = renderDashboard(); initWeeklyChart(); break;
     case 'projects': ct.innerHTML = renderProjects(); break;
@@ -1134,6 +1156,20 @@ const render = () => {
     case 'testcases': ct.innerHTML = renderTestCaseManagement(); break;
     case 'activity': ct.innerHTML = renderActivity(); break;
     case 'settings': ct.innerHTML = renderSettings(); break;
+  }
+
+  if (state.view === 'projects' && state.projectsViewMode === 'kanban') {
+    const boardEl = document.querySelector('.projects-kanban-board');
+    if (boardEl) {
+      boardEl.scrollLeft = boardScrollLeft;
+      document.querySelectorAll('.projects-kanban-cards').forEach(col => {
+        const colColumn = col.closest('.projects-kanban-column');
+        const colId = colColumn ? colColumn.dataset.status : null;
+        if (colId && columnScrollTops[colId] !== undefined) {
+          col.scrollTop = columnScrollTops[colId];
+        }
+      });
+    }
   }
 
   if (state.view === 'testcases' || state.view === 'releasepoints') {
@@ -1929,6 +1965,22 @@ const renderProjects = () => {
     }
   });
 
+  const viewContent = state.projectsViewMode === 'kanban'
+    ? renderKanbanBoard(projects, q)
+    : (projects.length === 0 ? `
+      <div class="empty-state">
+        <div class="empty-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+        </div>
+        <h3>${q || state.filters.status ? 'No results found' : 'No projects yet'}</h3>
+        <p>${q || state.filters.status ? 'Try a different search or filter.' : 'Click "Add Project" in the header to create your first project.'}</p>
+      </div>
+    ` : `
+      <div class="project-list">
+        ${projects.map(p => renderProjectCard(p, q)).join('')}
+      </div>
+    `);
+
   return `
     ${hero}
 
@@ -1948,25 +2000,134 @@ const renderProjects = () => {
       ${(state.filters.status || state.filters.previousVersion || state.filters.upcomingVersion) ? `
         <button class="btn-ghost" id="clearProjectsFilters" style="font-size:12px;padding:6px 10px">Clear filters</button>
       ` : ''}
-      <span class="section-count" style="margin-left:auto;">${projects.length} project${projects.length !== 1 ? 's' : ''}</span>
+      
+      <div class="view-toggle-group">
+        <button class="view-toggle-btn ${state.projectsViewMode !== 'kanban' ? 'active' : ''}" data-view-mode="list" title="List View">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          List
+        </button>
+        <button class="view-toggle-btn ${state.projectsViewMode === 'kanban' ? 'active' : ''}" data-view-mode="kanban" title="Kanban View">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+          Kanban
+        </button>
+      </div>
     </div>
 
-    ${projects.length === 0 ? `
-      <div class="empty-state">
-        <div class="empty-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
-        </div>
-        <h3>${q || state.filters.status ? 'No results found' : 'No projects yet'}</h3>
-        <p>${q || state.filters.status ? 'Try a different search or filter.' : 'Click "Add Project" in the header to create your first project.'}</p>
-      </div>
-    ` : `
-      <div class="project-list">
-        ${projects.map(p => renderProjectCard(p, q)).join('')}
-      </div>
-    `}
+    ${viewContent}
   `;
 };
 
+const renderKanbanBoard = (projects, q = '') => {
+  const columns = [
+    { id: 'YET_TO_START', label: 'Yet to Start' },
+    { id: 'ON_GOING', label: 'On Going' },
+    { id: 'COMPLETED', label: 'Completed' },
+    { id: 'MONITORING', label: 'Monitoring' },
+    { id: 'ON_HOLD', label: 'On Hold' }
+  ];
+
+  return `
+    <div class="projects-kanban-board">
+      ${columns.map(col => {
+        const colProjects = projects.filter(p => (p.overallProjectStatus || 'YET_TO_START') === col.id);
+        return `
+          <div class="projects-kanban-column" data-status="${col.id}">
+            <div class="projects-kanban-column-header">
+              <h3 class="projects-kanban-column-title">${col.label}</h3>
+              <span class="projects-kanban-column-count">${colProjects.length}</span>
+            </div>
+            <div class="projects-kanban-cards">
+              ${colProjects.length === 0 
+                ? `<div class="projects-kanban-empty">No projects in this stage</div>` 
+                : colProjects.map(p => renderKanbanCard(p, q)).join('')}
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+};
+
+const renderKanbanCard = (p, q = '') => {
+  const isApp = p.projectType === 'app';
+  const statusPills = (p.statuses || []).map(s => statusPill(s)).join('');
+  
+  const clientLine = p.clientName ? `
+    <div class="kanban-meta-item" title="Client">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span>${highlight(p.clientName, q)}</span>
+    </div>
+  ` : '';
+
+  const teamLine = p.assignedTeam ? `
+    <div class="kanban-meta-item" title="Assigned Team">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      <span>${highlight(p.assignedTeam, q)}</span>
+    </div>
+  ` : '';
+
+  const dueDateLine = p.dueDate ? `
+    <div class="kanban-meta-item" title="Due Date">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      <span>${fmtDate(p.dueDate)}</span>
+    </div>
+  ` : '';
+
+  const priorityBadge = p.priority ? `
+    <span class="kanban-priority-badge ${p.priority.toLowerCase()}">${p.priority}</span>
+  ` : '';
+
+  const projTasks = state.tasks.filter(t => (t.projectIds || []).includes(p.id));
+  const completedTasks = projTasks.filter(t => t.status === 'Done').length;
+  const progressPct = projTasks.length === 0 ? 0 : Math.round((completedTasks / projTasks.length) * 100);
+  const progressHtml = projTasks.length > 0 ? `
+    <div class="kanban-card-progress" title="${completedTasks} of ${projTasks.length} tasks completed">
+      <div class="kanban-card-progress-bar">
+        <div class="kanban-card-progress-fill" style="width: ${progressPct}%;"></div>
+      </div>
+      <span class="kanban-card-progress-text">${progressPct}%</span>
+    </div>
+  ` : '';
+
+  const typeBadge = isApp 
+    ? `<span class="project-type-badge app" style="font-size: 9px; padding: 1px 6px;">App</span>`
+    : `<span class="project-type-badge web" style="font-size: 9px; padding: 1px 6px;">Web</span>`;
+
+  return `
+    <div class="kanban-card" data-id="${p.id}" draggable="true">
+      <div class="kanban-card-header" style="display:flex; justify-content:space-between; align-items:flex-start; gap: 8px; margin-bottom: 6px;">
+        <h4 class="kanban-card-title">${highlight(p.name, q)}</h4>
+        ${typeBadge}
+      </div>
+      
+      ${p.description ? `<div class="kanban-card-desc">${highlight(trimText(p.description, 80), q)}</div>` : ''}
+      
+      <div class="kanban-card-meta">
+        ${clientLine}
+        ${teamLine}
+        ${dueDateLine}
+      </div>
+
+      <div class="kanban-card-statuses" style="display:flex; flex-wrap:wrap; gap:4px; margin-top: 8px;">
+        ${statusPills}
+      </div>
+
+      ${progressHtml}
+
+      <div class="kanban-card-footer">
+        ${priorityBadge}
+        <div class="kanban-card-actions">
+          <button class="icon-btn" data-action="edit-project" data-id="${p.id}" title="Edit" style="padding:4px; width:24px; height:24px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px; height:13px;"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <button class="icon-btn danger" data-action="delete-project" data-id="${p.id}" title="Delete" style="padding:4px; width:24px; height:24px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px; height:13px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+};
 
 const renderProjectCard = (p, q = '') => {
   const isApp = p.projectType === 'app';
@@ -2963,6 +3124,15 @@ const attachCardListeners = () => {
 
   // Click delegation
   content.addEventListener('click', async e => {
+    const toggleBtn = e.target.closest('.view-toggle-btn');
+    if (toggleBtn) {
+      const mode = toggleBtn.dataset.viewMode;
+      state.projectsViewMode = mode;
+      localStorage.setItem('clair_projects_view_mode', mode);
+      render();
+      return;
+    }
+
     const btn = e.target.closest('[data-action]');
     if (btn) {
       const { action, id } = btn.dataset;
@@ -3453,6 +3623,19 @@ const attachCardListeners = () => {
     if (card) {
       e.dataTransfer.setData('text/plain', card.dataset.id);
       card.classList.add('dragging');
+      return;
+    }
+    const projectCard = e.target.closest('.kanban-card');
+    if (projectCard) {
+      e.dataTransfer.setData('text/plain', projectCard.dataset.id);
+      projectCard.classList.add('dragging');
+    }
+  });
+
+  content.addEventListener('dragend', e => {
+    const card = e.target.closest('.task-card') || e.target.closest('.kanban-card');
+    if (card) {
+      card.classList.remove('dragging');
     }
   });
 
@@ -3461,6 +3644,12 @@ const attachCardListeners = () => {
     if (column) {
       e.preventDefault();
       column.classList.add('drag-over');
+      return;
+    }
+    const projectColumn = e.target.closest('.projects-kanban-column');
+    if (projectColumn) {
+      e.preventDefault();
+      projectColumn.classList.add('drag-over');
     }
   });
 
@@ -3468,10 +3657,15 @@ const attachCardListeners = () => {
     const column = e.target.closest('.kanban-column');
     if (column) {
       column.classList.remove('drag-over');
+      return;
+    }
+    const projectColumn = e.target.closest('.projects-kanban-column');
+    if (projectColumn) {
+      projectColumn.classList.remove('drag-over');
     }
   });
 
-  content.addEventListener('drop', e => {
+  content.addEventListener('drop', async e => {
     const column = e.target.closest('.kanban-column');
     if (column) {
       e.preventDefault();
@@ -3480,6 +3674,35 @@ const attachCardListeners = () => {
       const taskId = e.dataTransfer.getData('text/plain');
       const newStatus = column.dataset.status;
       dropTask(taskId, newStatus);
+      return;
+    }
+    const projectColumn = e.target.closest('.projects-kanban-column');
+    if (projectColumn) {
+      e.preventDefault();
+      projectColumn.classList.remove('drag-over');
+
+      const projectId = e.dataTransfer.getData('text/plain');
+      const newStatus = projectColumn.dataset.status;
+      if (projectId && newStatus) {
+        const project = state.projects.find(p => p.id === projectId);
+        if (project && project.overallProjectStatus !== newStatus) {
+          project.overallProjectStatus = newStatus;
+          project.updatedAt = new Date().toISOString();
+          
+          const statusLabels = {
+            'YET_TO_START': 'Yet to Start',
+            'ON_GOING': 'On Going',
+            'COMPLETED': 'Completed',
+            'MONITORING': 'Monitoring',
+            'ON_HOLD': 'On Hold'
+          };
+          const friendlyStatus = statusLabels[newStatus] || newStatus;
+          logActivity(`Moved project "${project.name}" to status "${friendlyStatus}"`, 'project');
+          
+          await storage.save();
+          render();
+        }
+      }
     }
   });
 };
@@ -3630,6 +3853,12 @@ const openProjectModal = (id = null) => {
       document.getElementById('projectUpcomingVersion').value = p.upcomingVersion || p.version || '';
     }
 
+    document.getElementById('projectClient').value = p.clientName || '';
+    document.getElementById('projectTeam').value = p.assignedTeam || '';
+    document.getElementById('projectDueDate').value = p.dueDate || '';
+    document.getElementById('projectPriority').value = p.priority || '';
+    document.getElementById('projectOverallStatus').value = p.overallProjectStatus || 'YET_TO_START';
+
     selectedStatuses = [...(p.statuses || [])];
   } else {
     title.textContent = 'New Project';
@@ -3644,6 +3873,11 @@ const openProjectModal = (id = null) => {
     document.getElementById('projectAndroidUpcoming').value = '';
     document.getElementById('projectIosPrev').value = '';
     document.getElementById('projectIosUpcoming').value = '';
+    document.getElementById('projectClient').value = '';
+    document.getElementById('projectTeam').value = '';
+    document.getElementById('projectDueDate').value = '';
+    document.getElementById('projectPriority').value = '';
+    document.getElementById('projectOverallStatus').value = 'YET_TO_START';
   }
 
   renderStatusPicker();
@@ -3683,6 +3917,11 @@ const saveProject = async () => {
   const name = document.getElementById('projectName').value.trim();
   const desc = document.getElementById('projectDesc').value.trim();
   const projectType = document.getElementById('projectType').value;
+  const clientName = document.getElementById('projectClient').value.trim();
+  const assignedTeam = document.getElementById('projectTeam').value.trim();
+  const dueDate = document.getElementById('projectDueDate').value;
+  const priority = document.getElementById('projectPriority').value;
+  const overallProjectStatus = document.getElementById('projectOverallStatus').value;
 
   if (!name) { showToast('Project name is required', 'error'); return; }
 
@@ -3718,7 +3957,20 @@ const saveProject = async () => {
     const idx = state.projects.findIndex(p => p.id === id);
     if (idx === -1) return;
     const old = state.projects[idx];
-    state.projects[idx] = { ...old, name, description: desc, projectType, ...versionData, statuses: selectedStatuses, updatedAt: now };
+    state.projects[idx] = { 
+      ...old, 
+      name, 
+      description: desc, 
+      projectType, 
+      ...versionData, 
+      statuses: selectedStatuses, 
+      clientName, 
+      assignedTeam, 
+      dueDate, 
+      priority, 
+      overallProjectStatus, 
+      updatedAt: now 
+    };
     // Clean up old fields if type changed
     if (projectType === 'app') {
       delete state.projects[idx].previousVersion;
@@ -3734,9 +3986,19 @@ const saveProject = async () => {
     showToast('Project updated');
   } else {
     state.projects.unshift({
-      id: uid(), name, description: desc, projectType, ...versionData,
+      id: uid(), 
+      name, 
+      description: desc, 
+      projectType, 
+      ...versionData,
       statuses: selectedStatuses,
-      createdAt: now, updatedAt: now
+      clientName, 
+      assignedTeam, 
+      dueDate, 
+      priority, 
+      overallProjectStatus,
+      createdAt: now, 
+      updatedAt: now
     });
     logActivity(`Created project "${name}" (${logVersion})`, 'project');
     showToast('Project created');

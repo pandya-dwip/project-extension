@@ -57,6 +57,14 @@ The current app version is displayed in the sidebar footer and is always read di
 - **Weekly task completion chart** — a Chart.js bar chart shows task completions grouped by day of week for the selected month. Month navigation (prev / next) is shared with the Released section.
 - **Released section with month switcher** — the "Released This Month" section is now labelled "Released" and includes the same month navigation pill used by the chart, so you can browse released projects for any past month without leaving the dashboard.
 
+#### Projects Page — Kanban View & Metadata
+
+- **List/Kanban view toggle** — replaced the project count in the project bar with a view toggle segmented button group, allowing users to switch between the traditional list view and a new Kanban Board view representing the overall lifecycle status of projects. Selection is persisted in `localStorage` (`clair_projects_view_mode`).
+- **Lifecycle status Kanban view** — projects are organized into five lifecycle columns (*Yet to Start*, *On Going*, *Completed*, *Monitoring*, *On Hold*). Supports full horizontal board scrolling and individual column vertical scrolling. Features custom cards displaying Client, Team, Due Date, Priority, current internal statuses, and overall task completion progress.
+- **Project modal extensions** — added Overall Project Status select, Client Name input, Assigned Team input, Due Date input, and Priority select to allow full visual coordination of projects.
+- **Interactive drag-and-drop lifecycle tracking** — drag cards between lifecycle columns on the Kanban board to update `overallProjectStatus` instantly.
+- **Persistent projects scroll state** — saves and restores horizontal and vertical scroll positions of the Kanban board and columns across view mode switching.
+
 #### Project Cards — full redesign
 
 - **3-column horizontal card layout** — each project card is now a horizontal row divided into three sections: project info (left), version (center), release history + actions (right). Cards stack vertically in a single column so no information is ever off-screen.
@@ -85,7 +93,7 @@ The current app version is displayed in the sidebar footer and is always read di
 | Area | What you can do |
 |---|---|
 | **Dashboard** | Live counts for projects, tasks, and insights; weekly task completion bar chart; released projects by month; recent projects, tasks, and insights. |
-| **Projects** | Create web and mobile app projects with platform-specific version fields; 3-column horizontal card showing status, version boxes, and release history; set up to 3 concurrent statuses; search, filter, edit, delete. |
+| **Projects** | Create web and mobile app projects with platform-specific version fields; support custom metadata (Client, Team, Due Date, Priority); toggle between classic 3-column List view and 5-column lifecycle Kanban board view with HTML5 drag-and-drop; search, filter, edit, delete. |
 | **Tasks** | 4-column Kanban board (To-Do, In Progress, Done, On Hold); drag cards between columns; visual date alerts for overdue, due-today, and due-tomorrow tasks; assign tasks to developers. |
 | **Project Insights** | Capture issues, enhancements, and notes per project; track each item through a Dev → QA → Done workflow; filter by developer, status, and assignment state. |
 | **Release Management** | Log releases sorted by release date; advance through a seven-stage status workflow (Draft → Released); generate email-style release announcements; copy notes to clipboard. |
@@ -144,20 +152,24 @@ Displays four metric cards (projects, tasks, insights, top status), a weekly tas
 
 ### Projects
 
+Supports two interchangeable modes:
+
+- **List View**: The classic view rendering horizontal 3-column rows:
+  1. **Left — Info**: Project name, type badge (WEB/APP), status pills, description, edit/delete actions.
+  2. **Center — Version**: Version boxes with Previous/Current for Web, or Android/iOS rows for App. Empty values display as `—`.
+  3. **Right — History + Actions**: Up to three release log entries, last-updated date, and Release button(s).
+- **Kanban View**: Visualizes projects inside five lifecycle status columns (*Yet to Start*, *On Going*, *Completed*, *Monitoring*, *On Hold*). Cards are draggable between columns to update status instantly. Card display includes Client Name, Assigned Team, Due Date, Priority badge, current internal statuses, and overall task progress bars.
+
 Supports two project types with different version fields:
 
-- **Web** — single version track: previous release version + upcoming release version, displayed in a single rounded box inside the card's center column.
-- **App** — dual platform tracks: Android (previous/upcoming) + iOS (previous/upcoming), each displayed in its own rounded box stacked inside the center column.
+- **Web** — single version track: previous release version + upcoming release version, displayed in a single rounded box.
+- **App** — dual platform tracks: Android (previous/upcoming) + iOS (previous/upcoming), each displayed in its own rounded box.
 
-Each project card is a horizontal 3-column row:
-1. **Left — Info**: project name, type badge (WEB/APP), status pills, description, edit/delete actions.
-2. **Center — Version**: version boxes with Previous/Current for Web, or Android/iOS rows for App. Empty values display as `—`.
-3. **Right — History + Actions**: up to three release log entries, last-updated date, and Release button(s).
+Projects support two types of status values independently:
+1. **Statuses (Concurrent)**: Up to three simultaneous tags drawn from: `N/A`, `Started`, `Stable`, `Testing`, `Automation`, `On Hold`, `Yet to Start`, `Completed`, `In Progress`, `Blocker`, `Issue Assigned`, `Developer`, `New Development`.
+2. **Overall Project Status (Lifecycle)**: A single lifecycle categorization: `Yet to Start`, `On Going`, `Completed`, `Monitoring`, `On Hold`.
 
-Each project holds up to three concurrent statuses drawn from a fixed list:
-`N/A`, `Started`, `Stable`, `Testing`, `Automation`, `On Hold`, `Yet to Start`, `Completed`, `In Progress`, `Blocker`, `Issue Assigned`, `Developer`, `New Development`.
-
-Filters: project status, previous version, upcoming version. Search matches name, description, and both version fields.
+Filters: project status, previous version, upcoming version. Search matches name, description, client, team, and version fields.
 
 ### Tasks — Kanban Board
 
@@ -288,6 +300,11 @@ chrome.storage.local    localStorage
   "iosPreviousVersion": "string",
   "iosUpcomingVersion": "string",
   "statuses": ["string"],
+  "clientName": "string",
+  "assignedTeam": "string",
+  "dueDate": "YYYY-MM-DD",
+  "priority": "Critical | High | Medium | Low",
+  "overallProjectStatus": "YET_TO_START | ON_GOING | COMPLETED | MONITORING | ON_HOLD",
   "releaseHistory": [{ "version": "string", "platform": "string", "releasedAt": "ISO 8601", "log": "string" }],
   "createdAt": "ISO 8601",
   "updatedAt": "ISO 8601"
@@ -492,7 +509,11 @@ Clair follows a no-build, no-framework approach. Keep contributions consistent w
 
 - [ ] Extension icon opens Clair and focuses the same tab on a second click.
 - [ ] Sidebar footer shows the correct version from `manifest.json`.
-- [ ] Projects can be created for both `web` and `app` types.
+- [ ] Projects can be created for both `web` and `app` types, with Client, Team, Due Date, Priority, and Overall Lifecycle Status properly saved.
+- [ ] Projects can be toggled between classic List view and 5-column lifecycle Kanban view.
+- [ ] Project cards on the Kanban board display all relevant metadata (Client, Team, Due Date, Priority, current status pills, and task progress bars).
+- [ ] Project cards can be dragged and dropped between lifecycle columns to update Overall Project Status instantly.
+- [ ] Kanban scroll positions (board horizontal scroll and column vertical scrolls) are preserved across re-renders and view switching.
 - [ ] Project cards display the correct version boxes (single box for Web, two stacked boxes for App).
 - [ ] Tasks move between Kanban columns via drag-and-drop.
 - [ ] Developer dropdowns filter to the selected project.
