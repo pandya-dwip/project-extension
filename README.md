@@ -4,7 +4,7 @@
 
 **A local-first project & release tracker — built as a Chrome Extension**
 
-![Version](https://img.shields.io/badge/version-2.1.3-informational?style=flat-square)
+![Version](https://img.shields.io/badge/version-2.3.5-informational?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Chrome%20Extension-4285F4?style=flat-square&logo=googlechrome&logoColor=white)
 ![Manifest](https://img.shields.io/badge/manifest-V3-success?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-Vanilla%20JS%20%2F%20HTML%20%2F%20CSS-F7DF1E?style=flat-square)
@@ -50,7 +50,7 @@ The current app version is displayed in the sidebar footer and is always read di
 
 ## What's New
 
-### v2.1.3 (current)
+### v2.3.5 (current)
 
 #### Dashboard
 
@@ -76,7 +76,7 @@ The current app version is displayed in the sidebar footer and is always read di
 - **Compact release history column** — the right column is fixed at 240 px so it never dominates wide viewports. It shows up to three recent release log entries with checkmarks and dates, a "Clear" button when history exists, and the last-updated date.
 - **Side-by-side release buttons** — Web projects show a single "Release Version" button; App projects show "Android Release" and "iOS Release" side by side, both filling the column equally.
 
-#### Earlier v2.1.3 changes
+#### Earlier v2.3.5 changes
 
 - **Release cards sorted by release date** — cards on the Release Management screen sort by release date descending; undated releases appear at the end.
 - **Release Point card redesign** — compact two-column horizontal layout with a slim inline progress bar. Cards sit 2-per-row on desktop.
@@ -408,7 +408,7 @@ DEVELOPER ─┬── PROJECT       (developer.projectIds[])
 
 ```
 project-extension/
-├── manifest.json            Chrome MV3 metadata, permissions, version (currently 2.1.3)
+├── manifest.json            Chrome MV3 metadata, permissions, version (currently 2.3.5)
 ├── background.js            Service worker — tab lifecycle management
 ├── index.html               Static shell: sidebar, top bar, modals, form controls
 ├── app.js                   Single-page controller (~7 400 lines)
