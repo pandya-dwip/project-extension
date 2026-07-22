@@ -64,7 +64,7 @@ let state = {
   testCaseSelectionMode: false,
   visibleTestCaseCount: 100,
   view: 'dashboard',
-  projectsViewMode: localStorage.getItem('clair_projects_view_mode') || 'list',
+  projectsViewMode: 'list', // hydrated from ClairDB pref in init(), since DB access is async
   projectsKanbanBoardScrollLeft: 0,
   projectsKanbanColumnScrollTops: {},
   searchQuery: '',
@@ -90,42 +90,15 @@ let activeDetailType = null;
 let activeDetailId = null;
 
 // ─── Storage helpers ─────────────────────────────────────
+// Backed by ClairDB (SQLite via sql.js, see db.js). Signature unchanged so the
+// rest of the app keeps working against plain in-memory arrays as before.
 const storage = {
   async load() {
-    return new Promise(resolve => {
-      if (typeof chrome !== 'undefined' && chrome.storage) {
-        chrome.storage.local.get(['projects', 'tasks', 'tests', 'activity', 'developers', 'releases', 'testCases', 'modules', 'releasePoints'], data => {
-          resolve({
-            projects: data.projects || [],
-            tasks: data.tasks || [],
-            tests: data.tests || [],
-            activity: data.activity || [],
-            developers: data.developers || [],
-            releases: data.releases || [],
-            testCases: data.testCases || [],
-            modules: data.modules || [],
-            releasePoints: data.releasePoints || []
-          });
-        });
-      } else {
-        // Fallback for development outside extension
-        resolve({
-          projects: JSON.parse(localStorage.getItem('clair_projects') || '[]'),
-          tasks: JSON.parse(localStorage.getItem('clair_tasks') || '[]'),
-          tests: JSON.parse(localStorage.getItem('clair_tests') || '[]'),
-          activity: JSON.parse(localStorage.getItem('clair_activity') || '[]'),
-          developers: JSON.parse(localStorage.getItem('clair_developers') || '[]'),
-          releases: JSON.parse(localStorage.getItem('clair_releases') || '[]'),
-          testCases: JSON.parse(localStorage.getItem('clair_testCases') || '[]'),
-          modules: JSON.parse(localStorage.getItem('clair_modules') || '[]'),
-          releasePoints: JSON.parse(localStorage.getItem('clair_releasePoints') || '[]')
-        });
-      }
-    });
+    return ClairDB.load();
   },
 
   async save() {
-    const payload = {
+    return ClairDB.save({
       projects: state.projects,
       tasks: state.tasks,
       tests: state.tests,
@@ -135,14 +108,7 @@ const storage = {
       testCases: state.testCases,
       modules: state.modules,
       releasePoints: state.releasePoints || []
-    };
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      return new Promise(resolve => chrome.storage.local.set(payload, resolve));
-    } else {
-      Object.entries(payload).forEach(([k, v]) =>
-        localStorage.setItem(`clair_${k}`, JSON.stringify(v))
-      );
-    }
+    });
   }
 };
 
@@ -3362,7 +3328,7 @@ const clearAllData = async () => {
   }
 
   // Set flag to prevent automatic re-initialization of mock data on next page load
-  localStorage.setItem('clair_db_initialized', 'true');
+  await ClairDB.setPref('db_initialized', 'true');
 
   // 3. Save to storage
   await storage.save();
@@ -3437,7 +3403,7 @@ const attachCardListeners = () => {
     if (toggleBtn) {
       const mode = toggleBtn.dataset.viewMode;
       state.projectsViewMode = mode;
-      localStorage.setItem('clair_projects_view_mode', mode);
+      await ClairDB.setPref('projects_view_mode', mode);
       render();
       return;
     }
@@ -8800,9 +8766,10 @@ const init = async () => {
   state.testCases = data.testCases || [];
   state.modules = data.modules || [];
   state.releasePoints = data.releasePoints || [];
+  state.projectsViewMode = await ClairDB.getPref('projects_view_mode', 'list');
 
   // Initialize mock data on first load only
-  const dbInitialized = localStorage.getItem('clair_db_initialized') === 'true';
+  const dbInitialized = (await ClairDB.getPref('db_initialized')) === 'true';
   if (!dbInitialized && (!state.projects || state.projects.length === 0)) {
     try {
       const backupPath = 'Backup/clair-export-2026-06-02.json';
@@ -8829,10 +8796,10 @@ const init = async () => {
       prepopulateMockData();
       await storage.save();
     }
-    localStorage.setItem('clair_db_initialized', 'true');
+    await ClairDB.setPref('db_initialized', 'true');
   } else if (!dbInitialized) {
     prepopulateMockData(); // to ensure default developers/default structures exist
-    localStorage.setItem('clair_db_initialized', 'true');
+    await ClairDB.setPref('db_initialized', 'true');
   }
 
   // Nav
