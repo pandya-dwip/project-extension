@@ -153,7 +153,7 @@
               <circle cx="11" cy="11" r="8" />
               <path d="M21 21l-4.35-4.35" />
             </svg>
-            <input type="text" id="globalSearch" class="search-input"
+            <input type="text" id="globalSearch" class="search-input" aria-label="Search projects, tasks, developers"
               placeholder="Search projects, tasks, developers…" />
             <kbd class="search-kbd">⌘K</kbd>
           </div>
@@ -233,7 +233,7 @@
   <div class="modal-backdrop" id="modalBackdrop"></div>
 
   <!-- Project Modal -->
-  <div class="modal" id="projectModal">
+  <div class="modal" id="projectModal" role="dialog" aria-modal="true">
     <div class="modal-header">
       <h2 class="modal-title" id="projectModalTitle">New Project</h2>
       <button class="modal-close" id="closeProjectModal">
@@ -376,7 +376,7 @@
   </div>
 
   <!-- Task Modal -->
-  <div class="modal" id="taskModal">
+  <div class="modal" id="taskModal" role="dialog" aria-modal="true">
     <div class="modal-header">
       <h2 class="modal-title" id="taskModalTitle">New Task</h2>
       <button class="modal-close" id="closeTaskModal">
@@ -437,14 +437,16 @@
       </div>
       <div class="form-group">
         <label>Project(s) <span class="hint">(optional, select multiple)</span></label>
-        <input type="text" id="taskProjectSearch" placeholder="Search projects..." style="margin-bottom:8px; font-size:12.5px; padding:6px 10px; border:1px solid var(--border); border-radius:var(--radius); width:100%; outline:none; background:var(--surface);" />
+        <input type="text" id="taskProjectSearch" placeholder="Search projects..."
+          style="margin-bottom:8px; font-size:12.5px; padding:6px 10px; border:1px solid var(--border); border-radius:var(--radius); width:100%; outline:none; background:var(--surface);" />
         <div class="dev-project-checklist" id="taskProjectChecklist" style="max-height:130px;">
           <!-- Loaded by JS -->
         </div>
       </div>
       <div class="form-group">
         <label>Developer(s) <span class="hint">(optional, select multiple)</span></label>
-        <input type="text" id="taskDevSearch" placeholder="Search developers..." style="margin-bottom:8px; font-size:12.5px; padding:6px 10px; border:1px solid var(--border); border-radius:var(--radius); width:100%; outline:none; background:var(--surface);" />
+        <input type="text" id="taskDevSearch" placeholder="Search developers..."
+          style="margin-bottom:8px; font-size:12.5px; padding:6px 10px; border:1px solid var(--border); border-radius:var(--radius); width:100%; outline:none; background:var(--surface);" />
         <div class="dev-project-checklist" id="taskDevChecklist" style="max-height:120px;">
           <!-- Loaded by JS -->
         </div>
@@ -501,7 +503,7 @@
   </div>
 
   <!-- Test Modal -->
-  <div class="modal" id="testModal">
+  <div class="modal" id="testModal" role="dialog" aria-modal="true">
     <div class="modal-header">
       <h2 class="modal-title" id="testModalTitle">New Insight</h2>
       <button class="modal-close" id="closeTestModal">
@@ -566,7 +568,7 @@
   </div>
 
   <!-- Release Modal -->
-  <div class="modal" id="releaseModal">
+  <div class="modal" id="releaseModal" role="dialog" aria-modal="true">
     <div class="modal-header">
       <h2 class="modal-title" id="releaseModalTitle">New Release</h2>
       <button class="modal-close" id="closeReleaseModal">
@@ -667,7 +669,7 @@
   </div>
 
   <!-- Test Case Modal -->
-  <div class="modal" id="testCaseModal">
+  <div class="modal" id="testCaseModal" role="dialog" aria-modal="true">
     <div class="modal-header">
       <h2 class="modal-title" id="testCaseModalTitle">New Test Case</h2>
       <button class="modal-close" id="closeTestCaseModal">
@@ -814,7 +816,7 @@
   </div>
 
   <!-- Module Modal -->
-  <div class="modal" id="moduleModal">
+  <div class="modal" id="moduleModal" role="dialog" aria-modal="true">
     <div class="modal-header">
       <h2 class="modal-title" id="moduleModalTitle">New Module</h2>
       <button class="modal-close" id="closeModuleModal">
@@ -847,7 +849,7 @@
   </div>
 
   <!-- Excel Import Modal -->
-  <div class="modal" id="excelImportModal">
+  <div class="modal" id="excelImportModal" role="dialog" aria-modal="true">
     <div class="modal-header">
       <h2 class="modal-title">Import Test Cases from Excel</h2>
       <button class="modal-close" id="closeExcelImportModal">
@@ -949,7 +951,7 @@
   </div>
 
   <!-- Bulk Update Modal -->
-  <div class="modal" id="bulkUpdateModal">
+  <div class="modal" id="bulkUpdateModal" role="dialog" aria-modal="true">
     <div class="modal-header">
       <h2 class="modal-title">Bulk Update Test Cases</h2>
       <button class="modal-close" id="closeBulkUpdateModal">
@@ -995,7 +997,7 @@
   </div>
 
   <!-- Detail Modal -->
-  <div class="modal" id="detailModal">
+  <div class="modal" id="detailModal" role="dialog" aria-modal="true">
     <div class="modal-header">
       <h2 class="modal-title" id="detailModalTitle">Details</h2>
       <button class="modal-close" id="closeDetailModal">

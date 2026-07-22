@@ -3,7 +3,11 @@
   "name": "Clair – Task & Project Tracker",
   "version": "2.3.5",
   "description": "A minimal personal workspace for managing projects and daily tasks.",
-  "permissions": ["storage", "tabs", "downloads"],
+  "permissions": [
+    "storage",
+    "tabs",
+    "downloads"
+  ],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },

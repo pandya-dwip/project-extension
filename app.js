@@ -65,6 +65,7 @@ let state = {
   visibleTestCaseCount: 100,
   view: 'dashboard',
   projectsViewMode: 'list', // hydrated from ClairDB pref in init(), since DB access is async
+  theme: 'system', // hydrated from ClairDB pref in init()
   projectsKanbanBoardScrollLeft: 0,
   projectsKanbanColumnScrollTops: {},
   searchQuery: '',
@@ -111,6 +112,38 @@ const storage = {
     });
   }
 };
+
+// ─── Theme ───────────────────────────────────────────────
+// 'system' defers to the OS via the CSS prefers-color-scheme query (no
+// data-theme attribute set); 'light'/'dark' pin it explicitly.
+const applyTheme = (theme) => {
+  if (theme === 'light' || theme === 'dark') {
+    document.documentElement.dataset.theme = theme;
+  } else {
+    delete document.documentElement.dataset.theme;
+  }
+};
+
+const setTheme = async (theme) => {
+  state.theme = theme;
+  applyTheme(theme);
+  await ClairDB.setPref('theme', theme);
+  render();
+};
+
+// Muted inline placeholder for empty sub-lists (checklists, dropdown sources, etc.)
+const emptyNote = (text) => `<span style="color:var(--text-muted);font-size:12.5px;">${text}</span>`;
+
+// Shared empty-state block (icon + title + message + optional CTA), used
+// wherever a list/view has nothing to show.
+const emptyState = (iconSvg, title, message, ctaHtml = '') => `
+  <div class="empty-state">
+    <div class="empty-icon">${iconSvg}</div>
+    <h3>${title}</h3>
+    <p>${message}</p>
+    ${ctaHtml}
+  </div>
+`;
 
 // ─── Utility ─────────────────────────────────────────────
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -440,7 +473,7 @@ const openExportReportModal = () => {
       <input type="checkbox" name="reportProjectCheck" value="${p.id}" checked />
       <span>${p.name}</span>
     </label>
-  `).join('') || '<span style="color:var(--text-muted);font-size:12.5px;">No projects added yet.</span>';
+  `).join('') || emptyNote('No projects added yet.');
 
   const devContainer = document.getElementById('reportDeveloperChecklist');
   devContainer.innerHTML = state.developers.map(d => `
@@ -448,7 +481,7 @@ const openExportReportModal = () => {
       <input type="checkbox" name="reportDevCheck" value="${d.id}" checked />
       <span>${d.name}</span>
     </label>
-  `).join('') || '<span style="color:var(--text-muted);font-size:12.5px;">No developers added yet.</span>';
+  `).join('') || emptyNote('No developers added yet.');
 
   const releaseStatusSel = document.getElementById('reportReleaseStatus');
   releaseStatusSel.innerHTML = `<option value="">All Statuses</option>` +
@@ -1776,14 +1809,14 @@ const renderDashboard = () => {
               Released
             </div>
             <div class="db-chart-nav">
-              <button class="db-chart-nav-btn" data-action="released-month-prev" title="Previous month">
+              <button class="db-chart-nav-btn" data-action="released-month-prev" aria-label="Previous month" title="Previous month">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:13px;height:13px;"><path d="M15 18l-6-6 6-6"/></svg>
               </button>
               <div class="db-chart-nav-center">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;color:var(--accent);flex-shrink:0;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
                 <span class="db-chart-nav-label">${rmName}</span>
               </div>
-              <button class="db-chart-nav-btn" data-action="released-month-next" title="Next month"
+              <button class="db-chart-nav-btn" data-action="released-month-next" aria-label="Next month" title="Next month"
                 ${(() => { const n = new Date(); return (rmYear === n.getFullYear() && rmMonth === n.getMonth()) ? 'disabled' : ''; })()}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:13px;height:13px;"><path d="M9 18l6-6-6-6"/></svg>
               </button>
@@ -1799,14 +1832,14 @@ const renderDashboard = () => {
               Charts &amp; Metrics
             </div>
             <div class="db-chart-nav">
-              <button class="db-chart-nav-btn" data-action="chart-month-prev" title="Previous month">
+              <button class="db-chart-nav-btn" data-action="chart-month-prev" aria-label="Previous month" title="Previous month">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:13px;height:13px;"><path d="M15 18l-6-6 6-6"/></svg>
               </button>
               <div class="db-chart-nav-center">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;color:var(--accent);flex-shrink:0;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
                 <span class="db-chart-nav-label">${lmName}</span>
               </div>
-              <button class="db-chart-nav-btn" data-action="chart-month-next" title="Next month"
+              <button class="db-chart-nav-btn" data-action="chart-month-next" aria-label="Next month" title="Next month"
                 ${(() => { const n = new Date(); return (cmYear === n.getFullYear() && cmMonth === n.getMonth()) ? 'disabled' : ''; })()}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:13px;height:13px;"><path d="M9 18l6-6-6-6"/></svg>
               </button>
@@ -1941,13 +1974,11 @@ const renderProjects = () => {
   const viewContent = state.projectsViewMode === 'kanban'
     ? renderKanbanBoard(projects, q)
     : (projects.length === 0 ? `
-      <div class="empty-state">
-        <div class="empty-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
-        </div>
-        <h3>${q || state.filters.status ? 'No results found' : 'No projects yet'}</h3>
-        <p>${q || state.filters.status ? 'Try a different search or filter.' : 'Click "Add Project" in the header to create your first project.'}</p>
-      </div>
+      ${emptyState(
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>',
+        q || state.filters.status ? 'No results found' : 'No projects yet',
+        q || state.filters.status ? 'Try a different search or filter.' : 'Click "Add Project" in the header to create your first project.'
+      )}
     ` : `
       <div class="project-list">
         ${projects.map(p => renderProjectCard(p, q)).join('')}
@@ -1975,11 +2006,11 @@ const renderProjects = () => {
       ` : ''}
       
       <div class="view-toggle-group">
-        <button class="view-toggle-btn ${state.projectsViewMode !== 'kanban' ? 'active' : ''}" data-view-mode="list" title="List View">
+        <button class="view-toggle-btn ${state.projectsViewMode !== 'kanban' ? 'active' : ''}" data-view-mode="list" aria-label="List View" title="List View">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
           List
         </button>
-        <button class="view-toggle-btn ${state.projectsViewMode === 'kanban' ? 'active' : ''}" data-view-mode="kanban" title="Kanban View">
+        <button class="view-toggle-btn ${state.projectsViewMode === 'kanban' ? 'active' : ''}" data-view-mode="kanban" aria-label="Kanban View" title="Kanban View">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
           Kanban
         </button>
@@ -2090,10 +2121,10 @@ const renderKanbanCard = (p, q = '') => {
       <div class="kanban-card-footer">
         ${priorityBadge}
         <div class="kanban-card-actions">
-          <button class="icon-btn" data-action="edit-project" data-id="${p.id}" title="Edit" style="padding:4px; width:24px; height:24px;">
+          <button class="icon-btn" data-action="edit-project" data-id="${p.id}" aria-label="Edit" title="Edit" style="padding:4px; width:24px; height:24px;">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px; height:13px;"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>
-          <button class="icon-btn danger" data-action="delete-project" data-id="${p.id}" title="Delete" style="padding:4px; width:24px; height:24px;">
+          <button class="icon-btn danger" data-action="delete-project" data-id="${p.id}" aria-label="Delete" title="Delete" style="padding:4px; width:24px; height:24px;">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px; height:13px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
           </button>
         </div>
@@ -2204,10 +2235,10 @@ const renderProjectCard = (p, q = '') => {
       ${p.description ? `<div class="project-desc">${highlight(formatCardDescription(p.description), q)}</div>` : ''}
       <div class="pc-footer">
         <div class="card-actions">
-          <button class="icon-btn" data-action="edit-project" data-id="${p.id}" title="Edit">
+          <button class="icon-btn" data-action="edit-project" data-id="${p.id}" aria-label="Edit" title="Edit">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>
-          <button class="icon-btn danger" data-action="delete-project" data-id="${p.id}" title="Delete">
+          <button class="icon-btn danger" data-action="delete-project" data-id="${p.id}" aria-label="Delete" title="Delete">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
           </button>
         </div>
@@ -2804,10 +2835,10 @@ const renderTestCard = (t, q = '') => {
         </div>
       </div>
       <div class="task-actions">
-        <button class="icon-btn" data-action="edit-test" data-id="${t.id}" title="Edit">
+        <button class="icon-btn" data-action="edit-test" data-id="${t.id}" aria-label="Edit" title="Edit">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
         </button>
-        <button class="icon-btn danger" data-action="delete-test" data-id="${t.id}" title="Delete">
+        <button class="icon-btn danger" data-action="delete-test" data-id="${t.id}" aria-label="Delete" title="Delete">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
         </button>
       </div>
@@ -2998,10 +3029,10 @@ const renderTaskCard = (t, q = '') => {
 
       <!-- Actions (Edit/Delete) floating overlay -->
       <div class="task-actions">
-        <button class="icon-btn" data-action="edit-task" data-id="${t.id}" title="Edit">
+        <button class="icon-btn" data-action="edit-task" data-id="${t.id}" aria-label="Edit" title="Edit">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
         </button>
-        <button class="icon-btn danger" data-action="delete-task" data-id="${t.id}" title="Delete">
+        <button class="icon-btn danger" data-action="delete-task" data-id="${t.id}" aria-label="Delete" title="Delete">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
         </button>
       </div>
@@ -3066,13 +3097,11 @@ const renderActivity = () => {
   return `
     ${hero}
     ${state.activity.length === 0 ? `
-      <div class="empty-state">
-        <div class="empty-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-        </div>
-        <h3>No activity yet</h3>
-        <p>Start creating projects and tasks — every action will be tracked here.</p>
-      </div>
+      ${emptyState(
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
+        'No activity yet',
+        'Start creating projects and tasks — every action will be tracked here.'
+      )}
     ` : `
       <div class="activity-list">
         ${state.activity.map(a => `
@@ -3117,7 +3146,34 @@ const renderSettings = () => {
   <div class="settings-container">
     <!-- Left Pane: General Info & Actions -->
     <div class="settings-left-col">
-      
+
+      <!-- Appearance -->
+      <div class="settings-card">
+        <div class="settings-info">
+          <div class="settings-header-wrap">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+              Appearance
+            </h3>
+            <p>Choose how Clair looks on this device.</p>
+          </div>
+          <div class="project-type-toggle" id="themeToggle" role="radiogroup" aria-label="Theme">
+            <button type="button" class="type-btn${state.theme === 'system' ? ' active' : ''}" data-theme-choice="system" role="radio" aria-checked="${state.theme === 'system'}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+              System
+            </button>
+            <button type="button" class="type-btn${state.theme === 'light' ? ' active' : ''}" data-theme-choice="light" role="radio" aria-checked="${state.theme === 'light'}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+              Light
+            </button>
+            <button type="button" class="type-btn${state.theme === 'dark' ? ' active' : ''}" data-theme-choice="dark" role="radio" aria-checked="${state.theme === 'dark'}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+              Dark
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- General Information -->
       <div class="settings-card">
         <div class="settings-info">
@@ -3246,7 +3302,7 @@ const renderSettings = () => {
                   <input type="checkbox" name="devProjectCheck" value="${p.id}" />
                   <span>${p.name}</span>
                 </label>
-              `).join('') || '<span style="color: var(--text-muted); font-size: 12.5px;">No projects created yet.</span>'}
+              `).join('') || emptyNote('No projects created yet.')}
             </div>
           </div>
           
@@ -3272,10 +3328,10 @@ const renderSettings = () => {
                   <div class="dev-card-header">
                     <span class="dev-card-name">${d.name}</span>
                     <div class="dev-card-actions">
-                      <button class="icon-btn" data-action="edit-dev" data-dev-id="${d.id}" title="Edit Developer">
+                      <button class="icon-btn" data-action="edit-dev" data-dev-id="${d.id}" aria-label="Edit Developer" title="Edit Developer">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                       </button>
-                      <button class="icon-btn danger" data-action="delete-dev" data-dev-id="${d.id}" title="Delete Developer">
+                      <button class="icon-btn danger" data-action="delete-dev" data-dev-id="${d.id}" aria-label="Delete Developer" title="Delete Developer">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width: 14px; height: 14px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
                       </button>
                     </div>
@@ -3405,6 +3461,12 @@ const attachCardListeners = () => {
       state.projectsViewMode = mode;
       await ClairDB.setPref('projects_view_mode', mode);
       render();
+      return;
+    }
+
+    const themeBtn = e.target.closest('#themeToggle .type-btn');
+    if (themeBtn) {
+      await setTheme(themeBtn.dataset.themeChoice);
       return;
     }
 
@@ -4385,7 +4447,7 @@ const loadTaskProjectChecklist = (selectedProjectIds = []) => {
       <input type="checkbox" name="taskProjectCheck" value="${p.id}" ${selectedProjectIds.includes(p.id) ? 'checked' : ''} />
       <span>${p.name}</span>
     </label>
-  `).join('') || '<span style="color:var(--text-muted);font-size:12.5px;">No projects added yet.</span>';
+  `).join('') || emptyNote('No projects added yet.');
 };
 
 const loadTaskDevChecklist = (selectedDevIds = []) => {
@@ -4406,7 +4468,7 @@ const loadTaskDevChecklist = (selectedDevIds = []) => {
       <input type="checkbox" name="taskDevCheck" value="${d.id}" ${selectedDevIds.includes(d.id) ? 'checked' : ''} />
       <span>${d.name}</span>
     </label>
-  `).join('') || '<span style="color:var(--text-muted);font-size:12.5px;">No developers linked to selected project(s).</span>';
+  `).join('') || emptyNote('No developers linked to selected project(s).');
 };
 
 const openTaskModal = (id = null, defaultDate = null) => {
@@ -5022,13 +5084,11 @@ const renderReleases = () => {
     </div>
 
     ${releases.length === 0 ? `
-      <div class="empty-state">
-        <div class="empty-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><polygon points="12 22.08 12 12 3 6.92 3 17.08 12 22.08"/><polygon points="12 22.08 21 17.08 21 6.92 12 12 12 22.08"/><polygon points="12 12 21 6.92 12 1.84 3 6.92 12 12"/></svg>
-        </div>
-        <h3>${q || state.releaseFilters.status ? 'No releases match search/filters' : 'No releases found'}</h3>
-        <p>${q || state.releaseFilters.status ? 'Try adjustments or click Clear.' : 'Click "Add Release" in the header to manage your first project release!'}</p>
-      </div>
+      ${emptyState(
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><polygon points="12 22.08 12 12 3 6.92 3 17.08 12 22.08"/><polygon points="12 22.08 21 17.08 21 6.92 12 12 12 22.08"/><polygon points="12 12 21 6.92 12 1.84 3 6.92 12 12"/></svg>',
+        q || state.releaseFilters.status ? 'No releases match search/filters' : 'No releases found',
+        q || state.releaseFilters.status ? 'Try adjustments or click Clear.' : 'Click "Add Release" in the header to manage your first project release!'
+      )}
     ` : `
       <div class="card-grid">
         ${releases.map(r => renderReleaseCard(r, q)).join('')}
@@ -5102,13 +5162,13 @@ const renderReleaseCard = (r, q = '') => {
       <div class="project-card-footer" style="margin-top:auto; padding-top:10px;">
         <span class="card-time">Created ${timeAgo(r.createdAt)}</span>
         <div class="card-actions" style="opacity: 1;">
-          <button class="icon-btn" data-action="copy-notes" data-id="${r.id}" title="Copy Email Notes">
+          <button class="icon-btn" data-action="copy-notes" data-id="${r.id}" aria-label="Copy Email Notes" title="Copy Email Notes">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
           </button>
-          <button class="icon-btn" data-action="edit-release" data-id="${r.id}" title="Edit">
+          <button class="icon-btn" data-action="edit-release" data-id="${r.id}" aria-label="Edit" title="Edit">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>
-          <button class="icon-btn danger" data-action="delete-release" data-id="${r.id}" title="Delete">
+          <button class="icon-btn danger" data-action="delete-release" data-id="${r.id}" aria-label="Delete" title="Delete">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
           </button>
         </div>
@@ -5420,11 +5480,11 @@ const renderReleasePtCard = (rp, q = '') => {
             </select>
           </div>
           <div class="rp-inline-edit-actions">
-            <button class="rp-inline-save-btn" data-action="save-checklist-item-inline" data-rp-id="${rp.id}" data-item-id="${item.id}" title="Save">
+            <button class="rp-inline-save-btn" data-action="save-checklist-item-inline" data-rp-id="${rp.id}" data-item-id="${item.id}" aria-label="Save" title="Save">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
               <span>Save</span>
             </button>
-            <button class="rp-inline-cancel-btn" data-action="cancel-checklist-item-inline" title="Cancel">
+            <button class="rp-inline-cancel-btn" data-action="cancel-checklist-item-inline" aria-label="Cancel" title="Cancel">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               <span>Cancel</span>
             </button>
@@ -5456,7 +5516,7 @@ const renderReleasePtCard = (rp, q = '') => {
             </div>
           ` : ''}
         </div>
-        <button class="rp-item-edit-btn" data-action="edit-checklist-item-inline" data-rp-id="${rp.id}" data-item-id="${item.id}" title="Edit Item">
+        <button class="rp-item-edit-btn" data-action="edit-checklist-item-inline" data-rp-id="${rp.id}" data-item-id="${item.id}" aria-label="Edit Item" title="Edit Item">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
         </button>
       </div>
@@ -5481,10 +5541,10 @@ const renderReleasePtCard = (rp, q = '') => {
             </div>
           </div>
           <div class="card-actions" style="opacity:1;display:flex;gap:4px;">
-            <button class="icon-btn" data-action="edit-release-pt" data-id="${rp.id}" title="Edit">
+            <button class="icon-btn" data-action="edit-release-pt" data-id="${rp.id}" aria-label="Edit" title="Edit">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             </button>
-            <button class="icon-btn danger" data-action="delete-release-pt" data-id="${rp.id}" title="Delete">
+            <button class="icon-btn danger" data-action="delete-release-pt" data-id="${rp.id}" aria-label="Delete" title="Delete">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
             </button>
           </div>
@@ -5646,7 +5706,7 @@ const populateReleasePtVersions = (projectIdOrIds, selectedVersions = []) => {
   if (!container) return;
   const pids = Array.isArray(projectIdOrIds) ? projectIdOrIds : (projectIdOrIds ? [projectIdOrIds] : []);
   if (pids.length === 0) {
-    container.innerHTML = '<span style="color:var(--text-muted);font-size:12.5px;">Select project(s) first.</span>';
+    container.innerHTML = emptyNote('Select project(s) first.');
     return;
   }
   let html = '';
@@ -5665,7 +5725,7 @@ const populateReleasePtVersions = (projectIdOrIds, selectedVersions = []) => {
     }
   });
   if (!html) {
-    container.innerHTML = '<span style="color:var(--text-muted);font-size:12.5px;">No versions configured for the selected project(s).</span>';
+    container.innerHTML = emptyNote('No versions configured for the selected project(s).');
   } else {
     container.innerHTML = html;
   }
@@ -5697,14 +5757,14 @@ const populateReleasePtDevs = (projectIdOrIds, selectedDevIds = []) => {
   if (!container) return;
   const pids = Array.isArray(projectIdOrIds) ? projectIdOrIds : (projectIdOrIds ? [projectIdOrIds] : []);
   if (pids.length === 0) {
-    container.innerHTML = '<span style="color:var(--text-muted);font-size:12.5px;">Select project(s) first.</span>';
+    container.innerHTML = emptyNote('Select project(s) first.');
     return;
   }
   const devs = state.developers.filter(d =>
     (d.projectIds || []).some(pid => pids.includes(pid))
   );
   if (devs.length === 0) {
-    container.innerHTML = '<span style="color:var(--text-muted);font-size:12.5px;">No developers for the selected project(s).</span>';
+    container.innerHTML = emptyNote('No developers for the selected project(s).');
     return;
   }
   container.innerHTML = devs.map(d => `
@@ -5762,7 +5822,7 @@ const renderChecklistEditor = () => {
             </select>
           </div>
         </div>
-        <button type="button" class="rp-checklist-remove-btn" data-idx="${idx}" title="Remove item">
+        <button type="button" class="rp-checklist-remove-btn" data-idx="${idx}" aria-label="Remove item" title="Remove item">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
         </button>
       </div>
@@ -6347,7 +6407,7 @@ const renderSingleTestCaseRow = (tc, index, projModules, developers, selectedTes
 
       <!-- Actions Column (Delete button only) -->
       <td style="text-align: center; vertical-align: middle;">
-        <button class="icon-btn danger" data-action="delete-testcase" data-id="${tc.id}" title="Delete Test Case" style="width: 24px; height: 24px; padding: 2px;">
+        <button class="icon-btn danger" data-action="delete-testcase" data-id="${tc.id}" aria-label="Delete Test Case" title="Delete Test Case" style="width: 24px; height: 24px; padding: 2px;">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="width:12px; height:12px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
         </button>
       </td>
@@ -6364,16 +6424,12 @@ const renderTestCaseManagement = () => {
   // Handle case where there are no projects at all
   if (state.projects.length === 0) {
     return `
-      <div class="empty-state">
-        <div class="empty-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
-          </svg>
-        </div>
-        <h3>No projects found</h3>
-        <p>You need to create a project first before creating modules or test cases.</p>
-        <button class="btn-primary" onclick="openProjectModal()" style="margin-top: 12px;">Create Project</button>
-      </div>
+      ${emptyState(
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>',
+        'No projects found',
+        'You need to create a project first before creating modules or test cases.',
+        '<button class="btn-primary" onclick="openProjectModal()" style="margin-top: 12px;">Create Project</button>'
+      )}
     `;
   }
 
@@ -6512,10 +6568,10 @@ const renderTestCaseManagement = () => {
         <div class="module-item-right">
           <span class="project-tab-count">${mCount}</span>
           <div class="module-item-actions">
-            <button class="module-item-btn" data-action="edit-module" data-id="${m.id}" title="Edit Module">
+            <button class="module-item-btn" data-action="edit-module" data-id="${m.id}" aria-label="Edit Module" title="Edit Module">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px; height:10px;"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             </button>
-            <button class="module-item-btn danger" data-action="delete-module" data-id="${m.id}" title="Delete Module">
+            <button class="module-item-btn danger" data-action="delete-module" data-id="${m.id}" aria-label="Delete Module" title="Delete Module">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px; height:10px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
             </button>
           </div>
@@ -6597,7 +6653,7 @@ const renderTestCaseManagement = () => {
           <div class="modules-horizontal-list" id="testCaseModulesList">
             ${modulesHtml}
           </div>
-          <button class="add-module-pill-btn" id="openAddModuleModalBtn" title="New Module">
+          <button class="add-module-pill-btn" id="openAddModuleModalBtn" aria-label="New Module" title="New Module">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:12px; height:12px; margin-right:4px;"><path d="M12 5v14M5 12h14"/></svg>
             Add Module
           </button>
@@ -7876,7 +7932,7 @@ const renderImportPreview = () => {
               </div>
               <span style="font-size: 10.5px; color: var(--text-muted);">Module: ${escapeHtml(moduleName)}</span>
             </div>
-            <button class="icon-btn danger delete-dupe-btn" data-tc-id="${tc.id}" title="Delete from system" style="padding: 0; width: 24px; height: 24px; flex-shrink: 0; border: 1px solid var(--border); border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; background: none; cursor: pointer; transition: all 0.2s;">
+            <button class="icon-btn danger delete-dupe-btn" data-tc-id="${tc.id}" aria-label="Delete from system" title="Delete from system" style="padding: 0; width: 24px; height: 24px; flex-shrink: 0; border: 1px solid var(--border); border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; background: none; cursor: pointer; transition: all 0.2s;">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px; color: var(--danger);"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
             </button>
           </div>
@@ -8472,7 +8528,7 @@ const loadReleaseProjectsList = (selectedProjectIds = []) => {
       <input type="checkbox" name="releaseProjectCheck" value="${p.id}" ${selectedProjectIds.includes(p.id) ? 'checked' : ''} />
       <span>${p.name}</span>
     </label>
-  `).join('') || '<span style="color:var(--text-muted);font-size:12.5px;">No projects added yet.</span>';
+  `).join('') || emptyNote('No projects added yet.');
 
   container.querySelectorAll('input[name="releaseProjectCheck"]').forEach(cb => {
     cb.onchange = () => {
@@ -8486,7 +8542,7 @@ const loadReleaseVersionsList = (projectIds, selectedVersions = []) => {
   const container = document.getElementById('releaseVersionChecklist');
   if (!container) return;
   if (!projectIds || projectIds.length === 0) {
-    container.innerHTML = '<span style="color:var(--text-muted);font-size:12.5px;">Select project(s) first.</span>';
+    container.innerHTML = emptyNote('Select project(s) first.');
     return;
   }
   let html = '';
@@ -8504,7 +8560,7 @@ const loadReleaseVersionsList = (projectIds, selectedVersions = []) => {
       `).join('');
     }
   });
-  container.innerHTML = html || '<span style="color:var(--text-muted);font-size:12.5px;">No versions configured for the selected project(s).</span>';
+  container.innerHTML = html || emptyNote('No versions configured for the selected project(s).');
 };
 
 const openReleaseModal = (id = null) => {
@@ -8527,7 +8583,7 @@ const openReleaseModal = (id = null) => {
       <input type="checkbox" name="releaseDevCheck" value="${d.id}" />
       <span>${d.name}</span>
     </label>
-  `).join('') || '<span style="color:var(--text-muted); font-size:12.5px;">No developers added in Settings.</span>';
+  `).join('') || emptyNote('No developers added in Settings.');
 
   if (id) {
     const r = state.releases.find(x => x.id === id);
@@ -8767,6 +8823,8 @@ const init = async () => {
   state.modules = data.modules || [];
   state.releasePoints = data.releasePoints || [];
   state.projectsViewMode = await ClairDB.getPref('projects_view_mode', 'list');
+  state.theme = await ClairDB.getPref('theme', 'system');
+  applyTheme(state.theme);
 
   // Initialize mock data on first load only
   const dbInitialized = (await ClairDB.getPref('db_initialized')) === 'true';
