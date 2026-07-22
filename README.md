@@ -65,6 +65,11 @@ The current app version is displayed in the sidebar footer and is always read di
 - **Interactive drag-and-drop lifecycle tracking** — drag cards between lifecycle columns on the Kanban board to update `overallProjectStatus` instantly.
 - **Persistent projects scroll state** — saves and restores horizontal and vertical scroll positions of the Kanban board and columns across view mode switching.
 
+#### Task Modal — Search & Filtering
+
+- **Dynamic developer filtering** — selecting a project in the Task modal instantly filters the developer checklist to display only team members linked to the selected project(s). If no projects are selected, it displays the full developer list.
+- **Searchable checklists** — added search boxes above both the Project and Developer checklists inside the Task modal, allowing instant text-filtering of items dynamically while keeping selections intact.
+
 #### Project Cards — full redesign
 
 - **3-column horizontal card layout** — each project card is now a horizontal row divided into three sections: project info (left), version (center), release history + actions (right). Cards stack vertically in a single column so no information is ever off-screen.
@@ -178,6 +183,9 @@ Four columns: **To-Do** · **In Progress** · **Done** · **On Hold**
 - Drag a card between columns to update its status instantly.
 - Click the circular check button on a card to mark it **Done**.
 - Cards display a coloured date indicator when the end date has passed (overdue), is today, or is tomorrow.
+- **Task modal search & dynamic developer filter**:
+  - **Checklist Search**: Adding or editing a task features built-in search boxes above the **Project** and **Developer** checklists to quickly filter items without scrolling the checklist container.
+  - **Dynamic Developer Filtering**: Selecting a project dynamically filters the developer checklist, displaying only developers who are linked to the selected project(s). If no projects are checked, all developers are displayed.
 
 Filters: project, date range. Search matches title, description, and developer name.
 

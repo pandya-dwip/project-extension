@@ -3377,6 +3377,34 @@ const clearAllData = async () => {
 const attachCardListeners = () => {
   const content = document.getElementById('mainContent');
 
+  // Task Modal Search & Project-based Developer Filtering
+  const projectSearch = document.getElementById('taskProjectSearch');
+  if (projectSearch) {
+    projectSearch.addEventListener('input', (e) => {
+      filterChecklist('taskProjectChecklist', e.target.value);
+    });
+  }
+
+  const devSearch = document.getElementById('taskDevSearch');
+  if (devSearch) {
+    devSearch.addEventListener('input', (e) => {
+      filterChecklist('taskDevChecklist', e.target.value);
+    });
+  }
+
+  const projectChecklist = document.getElementById('taskProjectChecklist');
+  if (projectChecklist) {
+    projectChecklist.addEventListener('change', (e) => {
+      if (e.target.name === 'taskProjectCheck') {
+        const checkedDevIds = Array.from(document.querySelectorAll('input[name="taskDevCheck"]:checked')).map(cb => cb.value);
+        loadTaskDevChecklist(checkedDevIds);
+        // Re-apply dev search query if any exists
+        const query = document.getElementById('taskDevSearch')?.value || '';
+        filterChecklist('taskDevChecklist', query);
+      }
+    });
+  }
+
   // Add scroll listener for infinite scrolling in Test Case Management
   content.addEventListener('scroll', () => {
     if (state.view !== 'testcases') return;
@@ -4368,6 +4396,21 @@ const clearReleaseHistory = async (projectId) => {
 };
 
 // ─── Task Modal ──────────────────────────────────────────
+const filterChecklist = (containerId, query) => {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const labels = container.querySelectorAll('.dev-project-label');
+  const q = query.toLowerCase().trim();
+  labels.forEach(label => {
+    const text = label.textContent.toLowerCase();
+    if (text.includes(q)) {
+      label.style.display = '';
+    } else {
+      label.style.display = 'none';
+    }
+  });
+};
+
 const loadTaskProjectChecklist = (selectedProjectIds = []) => {
   const container = document.getElementById('taskProjectChecklist');
   if (!container) return;
@@ -4382,12 +4425,22 @@ const loadTaskProjectChecklist = (selectedProjectIds = []) => {
 const loadTaskDevChecklist = (selectedDevIds = []) => {
   const container = document.getElementById('taskDevChecklist');
   if (!container) return;
-  container.innerHTML = state.developers.map(d => `
+
+  const checkedProjects = Array.from(document.querySelectorAll('input[name="taskProjectCheck"]:checked')).map(cb => cb.value);
+
+  let devs = state.developers;
+  if (checkedProjects.length > 0) {
+    devs = state.developers.filter(d =>
+      (d.projectIds || []).some(pid => checkedProjects.includes(pid))
+    );
+  }
+
+  container.innerHTML = devs.map(d => `
     <label class="dev-project-label">
       <input type="checkbox" name="taskDevCheck" value="${d.id}" ${selectedDevIds.includes(d.id) ? 'checked' : ''} />
       <span>${d.name}</span>
     </label>
-  `).join('') || '<span style="color:var(--text-muted);font-size:12.5px;">No developers added yet.</span>';
+  `).join('') || '<span style="color:var(--text-muted);font-size:12.5px;">No developers linked to selected project(s).</span>';
 };
 
 const openTaskModal = (id = null, defaultDate = null) => {
@@ -4395,6 +4448,12 @@ const openTaskModal = (id = null, defaultDate = null) => {
   const title = document.getElementById('taskModalTitle');
 
   const todayIso = new Date().toISOString().split('T')[0];
+
+  // Reset search inputs when opening modal
+  const projectSearch = document.getElementById('taskProjectSearch');
+  if (projectSearch) projectSearch.value = '';
+  const devSearch = document.getElementById('taskDevSearch');
+  if (devSearch) devSearch.value = '';
 
   if (id) {
     const t = state.tasks.find(x => x.id === id);
