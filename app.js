@@ -62,7 +62,8 @@ let state = {
   testCaseFilters: { status: '', priority: '', type: '' },
   selectedTestCaseIds: new Set(),
   testCaseSelectionMode: false,
-  visibleTestCaseCount: 100,
+  testCasePage: 1,
+  testCasePageSize: 25,
   view: 'dashboard',
   projectsViewMode: 'list', // hydrated from ClairDB pref in init(), since DB access is async
   theme: 'system', // hydrated from ClairDB pref in init()
@@ -156,6 +157,9 @@ const migrateTasks = (tasks) => {
     }
     if (!Array.isArray(t.developerIds)) {
       t.developerIds = t.developer ? [t.developer] : [];
+    }
+    if (t.workDone === undefined) {
+      t.workDone = 'task completed';
     }
     delete t.projectId;
     delete t.developer;
@@ -1090,7 +1094,7 @@ const updateStorageInfo = () => { };
 const setView = (view) => {
   state.view = view;
   if (view === 'testcases') {
-    state.visibleTestCaseCount = 100;
+    state.testCasePage = 1;
     const ct = document.getElementById('mainContent');
     if (ct) ct.scrollTop = 0;
   }
@@ -2995,7 +2999,8 @@ const renderTaskCard = (t, q = '') => {
       <!-- Indented section for Description, Tags, and Footer Meta -->
       <div class="task-indented-content">
         ${t.description ? `<div class="task-desc">${highlight(formatCardDescription(t.description), q)}</div>` : ''}
-        
+        ${t.workDone ? `<div class="task-desc task-work-done"><strong>Work done:</strong> ${highlight(formatCardDescription(t.workDone), q)}</div>` : ''}
+
         ${(t.tags && t.tags.length) ? `
           <div class="task-tags">
             ${t.tags.map(tag => `<span class="tag-pill ${getTagClass(tag)}">${highlight(tag, q)}</span>`).join('')}
@@ -3427,31 +3432,6 @@ const attachCardListeners = () => {
     });
   }
 
-  // Add scroll listener for infinite scrolling in Test Case Management
-  content.addEventListener('scroll', () => {
-    if (state.view !== 'testcases') return;
-
-    // Check if we are near the bottom of scroll
-    if (content.scrollTop + content.clientHeight >= content.scrollHeight - 150) {
-      const tbody = document.getElementById('testCasesTableBody');
-      if (!tbody) return;
-
-      const currentCount = tbody.querySelectorAll('tr.testcase-row').length;
-      const totalCount = state.lastFilteredCases ? state.lastFilteredCases.length : 0;
-
-      if (currentCount < totalCount) {
-        const nextSlice = state.lastFilteredCases.slice(currentCount, currentCount + 100);
-        const projModules = state.modules.filter(m => m.projectId === state.activeTestCaseProjectId);
-
-        const html = nextSlice.map((tc, idx) => {
-          return renderSingleTestCaseRow(tc, currentCount + idx, projModules, state.developers, state.selectedTestCaseIds);
-        }).join('');
-
-        tbody.insertAdjacentHTML('beforeend', html);
-        state.visibleTestCaseCount = currentCount + nextSlice.length;
-      }
-    }
-  });
 
   // Click delegation
   content.addEventListener('click', async e => {
@@ -3658,14 +3638,22 @@ const attachCardListeners = () => {
       return;
     }
 
-    // Toggle project tab
-    const tabBtn = e.target.closest('.project-tab');
-    if (tabBtn) {
-      state.activeTestCaseProjectId = tabBtn.dataset.projectId;
+    // Test Case project dropdown: toggle open/closed (no re-render needed)
+    const tcProjectTrigger = e.target.closest('#tcProjectDropdownTrigger');
+    if (tcProjectTrigger) {
+      document.getElementById('tcProjectDropdown').classList.toggle('open');
+      return;
+    }
+
+    // Test Case project dropdown / project overview card: select a project (or "All Projects")
+    const tcProjectOption = e.target.closest('[data-tc-project-select]');
+    if (tcProjectOption) {
+      const pid = tcProjectOption.dataset.tcProjectSelect;
+      state.activeTestCaseProjectId = pid || null;
       state.activeTestCaseModuleId = null;
       if (state.selectedTestCaseIds) state.selectedTestCaseIds.clear();
       state.testCaseSelectionMode = false;
-      state.visibleTestCaseCount = 100;
+      state.testCasePage = 1;
       if (content) content.scrollTop = 0;
       render();
       return;
@@ -3679,8 +3667,21 @@ const attachCardListeners = () => {
       }
       const mid = moduleItem.dataset.moduleId;
       state.activeTestCaseModuleId = mid === 'root' ? null : mid;
-      state.visibleTestCaseCount = 100;
+      state.testCasePage = 1;
       if (content) content.scrollTop = 0;
+      render();
+      return;
+    }
+
+    // Test Case pagination controls
+    const tcPrevPageBtn = e.target.closest('#tcPrevPageBtn');
+    if (tcPrevPageBtn) {
+      if (state.testCasePage > 1) { state.testCasePage -= 1; render(); }
+      return;
+    }
+    const tcNextPageBtn = e.target.closest('#tcNextPageBtn');
+    if (tcNextPageBtn) {
+      state.testCasePage += 1;
       render();
       return;
     }
@@ -3802,7 +3803,7 @@ const attachCardListeners = () => {
       } else if (clearBtn.id === 'clearTestCaseFilters') {
         state.testCaseSearch = '';
         state.testCaseFilters = { status: '', priority: '', type: '' };
-        state.visibleTestCaseCount = 100;
+        state.testCasePage = 1;
         if (content) content.scrollTop = 0;
         render();
       } else {
@@ -3826,7 +3827,7 @@ const attachCardListeners = () => {
     const clearTCSearch = e.target.closest('#clearTestCaseSearch');
     if (clearTCSearch) {
       state.testCaseSearch = '';
-      state.visibleTestCaseCount = 100;
+      state.testCasePage = 1;
       if (content) content.scrollTop = 0;
       render();
       return;
@@ -3894,8 +3895,15 @@ const attachCardListeners = () => {
     const tcSelect = e.target.closest('[data-tcfilter]');
     if (tcSelect) {
       state.testCaseFilters[tcSelect.dataset.tcfilter] = tcSelect.value;
-      state.visibleTestCaseCount = 100;
+      state.testCasePage = 1;
       if (content) content.scrollTop = 0;
+      render();
+    }
+    const tcPageSizeSelect = e.target.closest('#tcPageSizeSelect');
+    if (tcPageSizeSelect) {
+      const v = tcPageSizeSelect.value;
+      state.testCasePageSize = v === 'all' ? 'all' : parseInt(v, 10);
+      state.testCasePage = 1;
       render();
     }
     const selectAllTcCb = e.target.closest('#selectAllTcCb');
@@ -3941,6 +3949,19 @@ const attachCardListeners = () => {
     }
   });
 
+  // render() replaces #mainContent's innerHTML, which destroys and recreates
+  // the search input — losing focus and caret position. Re-render, then
+  // restore both on the fresh element so typing doesn't get interrupted.
+  const rerenderPreservingFocus = (inputEl) => {
+    const { id, selectionStart, selectionEnd } = inputEl;
+    render();
+    const el = document.getElementById(id);
+    if (el) {
+      el.focus();
+      el.setSelectionRange(selectionStart, selectionEnd);
+    }
+  };
+
   // Inline page search inputs
   let pageSearchTimer;
   content.addEventListener('input', e => {
@@ -3953,25 +3974,25 @@ const attachCardListeners = () => {
     const taskInput = e.target.closest('#taskSearchInput');
     if (taskInput) {
       clearTimeout(pageSearchTimer);
-      pageSearchTimer = setTimeout(() => { state.taskSearch = taskInput.value.toLowerCase(); render(); }, 180);
+      pageSearchTimer = setTimeout(() => { state.taskSearch = taskInput.value.toLowerCase(); rerenderPreservingFocus(taskInput); }, 180);
       return;
     }
     const testInput = e.target.closest('#testSearchInput');
     if (testInput) {
       clearTimeout(pageSearchTimer);
-      pageSearchTimer = setTimeout(() => { state.testSearch = testInput.value.toLowerCase(); render(); }, 180);
+      pageSearchTimer = setTimeout(() => { state.testSearch = testInput.value.toLowerCase(); rerenderPreservingFocus(testInput); }, 180);
       return;
     }
     const releaseInput = e.target.closest('#releaseSearchInput');
     if (releaseInput) {
       clearTimeout(pageSearchTimer);
-      pageSearchTimer = setTimeout(() => { state.releaseSearch = releaseInput.value.toLowerCase(); render(); }, 180);
+      pageSearchTimer = setTimeout(() => { state.releaseSearch = releaseInput.value.toLowerCase(); rerenderPreservingFocus(releaseInput); }, 180);
       return;
     }
     const releasePtInput = e.target.closest('#releasePtSearchInput');
     if (releasePtInput) {
       clearTimeout(pageSearchTimer);
-      pageSearchTimer = setTimeout(() => { state.releasePtSearch = releasePtInput.value.toLowerCase(); render(); }, 180);
+      pageSearchTimer = setTimeout(() => { state.releasePtSearch = releasePtInput.value.toLowerCase(); rerenderPreservingFocus(releasePtInput); }, 180);
       return;
     }
     const tcInput = e.target.closest('#testCaseSearchInput');
@@ -3979,10 +4000,21 @@ const attachCardListeners = () => {
       clearTimeout(pageSearchTimer);
       pageSearchTimer = setTimeout(() => {
         state.testCaseSearch = tcInput.value.toLowerCase();
-        state.visibleTestCaseCount = 100;
+        state.testCasePage = 1;
         if (content) content.scrollTop = 0;
-        render();
+        rerenderPreservingFocus(tcInput);
       }, 180);
+      return;
+    }
+    // Test Case project dropdown search — filters the option list in place,
+    // no state/render involved so the input never loses focus while typing.
+    const tcProjectSearchInput = e.target.closest('#tcProjectDropdownSearch');
+    if (tcProjectSearchInput) {
+      const q = tcProjectSearchInput.value.toLowerCase();
+      document.querySelectorAll('#tcProjectDropdown .tc-project-option').forEach(opt => {
+        const name = opt.dataset.searchName || '';
+        opt.style.display = name.includes(q) ? '' : 'none';
+      });
       return;
     }
   });
@@ -4490,6 +4522,7 @@ const openTaskModal = (id = null, defaultDate = null) => {
     document.getElementById('taskId').value = t.id;
     document.getElementById('taskTitle').value = t.title;
     document.getElementById('taskDesc').value = t.description || '';
+    document.getElementById('taskWorkDone').value = t.workDone || '';
     document.getElementById('taskTags').value = (t.tags || []).join(', ');
     document.getElementById('taskStartDate').value = t.startDate || t.date || '';
     document.getElementById('taskEndDate').value = t.endDate || '';
@@ -4511,6 +4544,7 @@ const openTaskModal = (id = null, defaultDate = null) => {
     document.getElementById('taskId').value = '';
     document.getElementById('taskTitle').value = '';
     document.getElementById('taskDesc').value = '';
+    document.getElementById('taskWorkDone').value = '';
     document.getElementById('taskTags').value = '';
     document.getElementById('taskStartDate').value = defaultDate || todayIso;
     document.getElementById('taskEndDate').value = defaultDate || '';
@@ -4542,6 +4576,7 @@ const saveTask = async () => {
   const id = document.getElementById('taskId').value;
   const title = document.getElementById('taskTitle').value.trim();
   const desc = document.getElementById('taskDesc').value.trim();
+  const workDone = document.getElementById('taskWorkDone').value.trim();
   const tags = document.getElementById('taskTags').value.split(',').map(s => s.trim()).filter(s => s !== '');
   const startDate = document.getElementById('taskStartDate').value;
   const endDate = document.getElementById('taskEndDate').value;
@@ -4566,7 +4601,7 @@ const saveTask = async () => {
         ? new Date(completedDateInput + 'T12:00:00').toISOString()
         : (old.completedDate || now);
     }
-    state.tasks[idx] = { ...old, title, description: desc, tags, startDate, endDate, status, priority, projectIds, developerIds, completedDate, updatedAt: now };
+    state.tasks[idx] = { ...old, title, description: desc, workDone, tags, startDate, endDate, status, priority, projectIds, developerIds, completedDate, updatedAt: now };
     delete state.tasks[idx].date;
     logActivity(`Updated task "${title}"`, 'task');
     showToast('Task updated');
@@ -4578,7 +4613,7 @@ const saveTask = async () => {
         : now;
     }
     state.tasks.unshift({
-      id: uid(), title, description: desc, tags, startDate, endDate, status, priority, projectIds, developerIds,
+      id: uid(), title, description: desc, workDone, tags, startDate, endDate, status, priority, projectIds, developerIds,
       completedDate, createdAt: now, updatedAt: now
     });
     logActivity(`Added task "${title}"`, 'task');
@@ -4714,6 +4749,11 @@ const openDetailModal = (type, id) => {
         <div class="detail-desc-section">
           <span class="detail-meta-label">Description</span>
           <div class="detail-desc-content">${formatFullDescription(task.description) || '<span class="no-desc">No description provided.</span>'}</div>
+        </div>
+
+        <div class="detail-desc-section">
+          <span class="detail-meta-label">Work Done</span>
+          <div class="detail-desc-content">${formatFullDescription(task.workDone) || '<span class="no-desc">No work logged yet.</span>'}</div>
         </div>
       </div>
     `;
@@ -6416,11 +6456,6 @@ const renderSingleTestCaseRow = (tc, index, projModules, developers, selectedTes
 };
 
 const renderTestCaseManagement = () => {
-  // Ensure we have active project selected
-  if (state.projects.length > 0 && !state.activeTestCaseProjectId) {
-    state.activeTestCaseProjectId = state.projects[0].id;
-  }
-
   // Handle case where there are no projects at all
   if (state.projects.length === 0) {
     return `
@@ -6433,19 +6468,21 @@ const renderTestCaseManagement = () => {
     `;
   }
 
-  const activeProj = state.projects.find(p => p.id === state.activeTestCaseProjectId) || state.projects[0];
-  state.activeTestCaseProjectId = activeProj.id;
-  const activeProjId = state.activeTestCaseProjectId;
+  // A previously-selected project may have been deleted since; fall back to "All Projects".
+  if (state.activeTestCaseProjectId && !state.projects.some(p => p.id === state.activeTestCaseProjectId)) {
+    state.activeTestCaseProjectId = null;
+  }
+
+  const activeProjId = state.activeTestCaseProjectId || null;
+  const activeProj = activeProjId ? state.projects.find(p => p.id === activeProjId) : null;
 
   // 1. Pre-group test cases by moduleId and projectId for O(1) lookups
-  const projectCases = [];
-  const moduleCasesMap = {}; // moduleId -> array of test cases
-  const projectCounts = {}; // projectId -> count
+  const moduleCasesMap = {}; // moduleId -> array of test cases (only meaningful within a selected project)
+  const projectCounts = {}; // projectId -> count, across ALL projects (for the dropdown/overview cards)
 
   state.testCases.forEach(tc => {
     projectCounts[tc.projectId] = (projectCounts[tc.projectId] || 0) + 1;
-    if (tc.projectId === activeProjId) {
-      projectCases.push(tc);
+    if (activeProjId && tc.projectId === activeProjId) {
       const mid = tc.moduleId || '';
       if (!moduleCasesMap[mid]) {
         moduleCasesMap[mid] = [];
@@ -6453,6 +6490,9 @@ const renderTestCaseManagement = () => {
       moduleCasesMap[mid].push(tc);
     }
   });
+
+  // "All Projects" scopes to every test case; a specific project scopes to just its own.
+  const projectCases = activeProjId ? state.testCases.filter(tc => tc.projectId === activeProjId) : state.testCases;
 
   const isModuleSelected = (moduleId) => {
     let mCases;
@@ -6465,11 +6505,11 @@ const renderTestCaseManagement = () => {
     return mCases.every(tc => state.selectedTestCaseIds && state.selectedTestCaseIds.has(tc.id));
   };
 
-  // ─── Filter logic ───
+  // ─── Filter logic (only relevant once a specific project is selected) ───
   let filteredCases = projectCases;
 
   // Module filter
-  if (state.activeTestCaseModuleId !== null) {
+  if (activeProjId && state.activeTestCaseModuleId !== null) {
     filteredCases = moduleCasesMap[state.activeTestCaseModuleId] || [];
   }
 
@@ -6504,8 +6544,8 @@ const renderTestCaseManagement = () => {
   }
   state.lastFilteredCases = filteredCases;
 
-  // ─── Calculate stats for charts ───
-  const scopeCases = state.activeTestCaseModuleId !== null ? (moduleCasesMap[state.activeTestCaseModuleId] || []) : projectCases;
+  // ─── Calculate stats for the hero + charts — scoped to whatever is currently selected ───
+  const scopeCases = (activeProjId && state.activeTestCaseModuleId !== null) ? (moduleCasesMap[state.activeTestCaseModuleId] || []) : projectCases;
 
   const total = scopeCases.length;
   let passed = 0, failed = 0, blocked = 0, untested = 0, automated = 0;
@@ -6525,20 +6565,43 @@ const renderTestCaseManagement = () => {
   const circumference = 2 * Math.PI * 30; // 188.49
   const strokeDash = `${(passRate / 100) * circumference} ${circumference}`;
 
-  // Tabs HTML
-  const tabsHtml = state.projects.map(p => {
-    const count = projectCounts[p.id] || 0;
-    const isActive = p.id === state.activeTestCaseProjectId ? 'active' : '';
-    return `
-      <button class="project-tab ${isActive}" data-project-id="${p.id}">
-        <span>${p.name}</span>
-        <span class="project-tab-count">${count}</span>
-      </button>
-    `;
-  }).join('');
+  // Status breakdown bar chart math (Passed / Failed / Blocked / Untested)
+  const maxStatusVal = Math.max(passed, failed, blocked, untested, 1);
+  const barPct = (v) => Math.round((v / maxStatusVal) * 100);
 
-  // Modules List HTML
-  const projModules = state.modules.filter(m => m.projectId === state.activeTestCaseProjectId);
+  // Project dropdown HTML (top-right; "All Projects" first, then each project, with search)
+  const projectDropdownOptionsHtml = `
+    <button type="button" class="tc-project-option ${!activeProjId ? 'active' : ''}" data-tc-project-select="" data-search-name="all projects">
+      <span>All Projects</span>
+      <span class="tc-project-option-count">${state.testCases.length}</span>
+    </button>
+  ` + state.projects.map(p => `
+    <button type="button" class="tc-project-option ${activeProjId === p.id ? 'active' : ''}" data-tc-project-select="${p.id}" data-search-name="${p.name.toLowerCase()}">
+      <span>${p.name}</span>
+      <span class="tc-project-option-count">${projectCounts[p.id] || 0}</span>
+    </button>
+  `).join('');
+
+  const projectDropdownHtml = `
+    <div class="tc-project-dropdown" id="tcProjectDropdown">
+      <button type="button" class="tc-project-dropdown-trigger" id="tcProjectDropdownTrigger" aria-haspopup="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+        <span>${activeProj ? activeProj.name : 'All Projects'}</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;opacity:.6;"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="tc-project-dropdown-panel">
+        <div class="tc-project-search-wrap">
+          <input type="text" id="tcProjectDropdownSearch" placeholder="Search projects…" autocomplete="off" />
+        </div>
+        <div class="tc-project-option-list">
+          ${projectDropdownOptionsHtml}
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Modules List HTML (only built/used when a specific project is selected)
+  const projModules = activeProjId ? state.modules.filter(m => m.projectId === activeProjId) : [];
   const rootActive = state.activeTestCaseModuleId === null ? 'active' : '';
 
   const modulesHtml = `
@@ -6586,10 +6649,18 @@ const renderTestCaseManagement = () => {
   const blockWidth = total > 0 ? (blocked / total) * 100 : 0;
   const untestWidth = total > 0 ? (untested / total) * 100 : 0;
 
-  // Table Rows layout with pagination
-  const visibleCount = state.visibleTestCaseCount || 100;
-  const tableRowsHtml = filteredCases.slice(0, visibleCount).map((tc, index) => {
-    return renderSingleTestCaseRow(tc, index, projModules, state.developers, state.selectedTestCaseIds);
+  // Pagination
+  const pageSizeIsAll = state.testCasePageSize === 'all';
+  const pageSize = pageSizeIsAll ? Math.max(filteredCases.length, 1) : state.testCasePageSize;
+  const totalPages = pageSizeIsAll ? 1 : Math.max(1, Math.ceil(filteredCases.length / pageSize));
+  if (state.testCasePage > totalPages) state.testCasePage = totalPages;
+  if (state.testCasePage < 1) state.testCasePage = 1;
+  const pageStart = pageSizeIsAll ? 0 : (state.testCasePage - 1) * pageSize;
+  const pageEnd = pageSizeIsAll ? filteredCases.length : Math.min(pageStart + pageSize, filteredCases.length);
+  const pagedCases = filteredCases.slice(pageStart, pageEnd);
+
+  const tableRowsHtml = pagedCases.map((tc, i) => {
+    return renderSingleTestCaseRow(tc, pageStart + i, projModules, state.developers, state.selectedTestCaseIds);
   }).join('') || `
     <tr>
       <td colspan="19" style="text-align: center; padding: 40px 20px; color: var(--text-secondary);">
@@ -6597,6 +6668,27 @@ const renderTestCaseManagement = () => {
         <p>Try clearing filters or click "Add Test Case" to create one.</p>
       </td>
     </tr>
+  `;
+
+  const pageSizeOptions = [5, 10, 25, 50, 100, 150].map(n =>
+    `<option value="${n}" ${state.testCasePageSize === n ? 'selected' : ''}>${n}</option>`
+  ).join('') + `<option value="all" ${pageSizeIsAll ? 'selected' : ''}>All</option>`;
+
+  const paginationBarHtml = `
+    <div class="tc-pagination-bar">
+      <div class="tc-pagination-size">
+        <label for="tcPageSizeSelect">Rows per page</label>
+        <select class="filter-select" id="tcPageSizeSelect">${pageSizeOptions}</select>
+      </div>
+      <div class="tc-pagination-info">
+        ${filteredCases.length === 0 ? 'No results' : `Showing ${pageStart + 1}–${pageEnd} of ${filteredCases.length}`}
+      </div>
+      <div class="tc-pagination-nav">
+        <button class="btn-ghost" id="tcPrevPageBtn" ${state.testCasePage <= 1 ? 'disabled' : ''}>‹ Prev</button>
+        <span class="tc-pagination-page">Page ${state.testCasePage} of ${totalPages}</span>
+        <button class="btn-ghost" id="tcNextPageBtn" ${state.testCasePage >= totalPages ? 'disabled' : ''}>Next ›</button>
+      </div>
+    </div>
   `;
 
   const selectedCount = state.selectedTestCaseIds ? state.selectedTestCaseIds.size : 0;
@@ -6626,7 +6718,7 @@ const renderTestCaseManagement = () => {
     title: 'Test Case Management',
     subtitle: 'Manage, execute and track test cases across your project modules.',
     stats: [
-      { label: 'Total Cases', value: state.testCases.length },
+      { label: 'Total Cases', value: total },
       { label: 'Passed', value: passed, color: '#4ade80' },
       { label: 'Failed', value: failed, color: '#f87171' },
       { label: 'Blocked', value: blocked, color: '#fb923c' },
@@ -6636,189 +6728,229 @@ const renderTestCaseManagement = () => {
     progressBar: { pct: passRate, label: `${passed} / ${total} passed`, color: 'linear-gradient(90deg, #4ade80, #22c55e)' }
   });
 
+  // "All Projects" overview cards — replaces the table entirely when no specific project is selected
+  const projectsOverviewHtml = state.projects.map(p => {
+    const pCases = state.testCases.filter(tc => tc.projectId === p.id);
+    const pPassed = pCases.filter(tc => tc.status === 'Passed').length;
+    const pFailed = pCases.filter(tc => tc.status === 'Failed').length;
+    const pBlocked = pCases.filter(tc => tc.status === 'Blocked').length;
+    const pUntested = pCases.filter(tc => tc.status === 'Untested').length;
+    const pPassRate = pCases.length > 0 ? Math.round((pPassed / pCases.length) * 100) : 0;
+    return `
+      <div class="tc-project-overview-card" data-tc-project-select="${p.id}">
+        <div class="tc-project-overview-top">
+          <span class="tc-project-overview-name">${p.name}</span>
+          <span class="tc-project-overview-total">${pCases.length} ${pCases.length === 1 ? 'case' : 'cases'}</span>
+        </div>
+        <div class="tc-project-overview-stats">
+          <div class="tc-project-overview-stat"><span class="dot passed"></span>Passed <strong>${pPassed}</strong></div>
+          <div class="tc-project-overview-stat"><span class="dot failed"></span>Failed <strong>${pFailed}</strong></div>
+          <div class="tc-project-overview-stat"><span class="dot blocked"></span>Blocked <strong>${pBlocked}</strong></div>
+          <div class="tc-project-overview-stat"><span class="dot untested"></span>Untested <strong>${pUntested}</strong></div>
+        </div>
+        <div class="tc-project-overview-passrate">
+          <div class="tc-project-overview-bar"><div style="width:${pPassRate}%"></div></div>
+          <span>${pPassRate}% pass rate</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const chartsRowHtml = `
+    <div class="testcases-charts-row">
+      <!-- Pass Rate Donut Chart -->
+      <div class="chart-card">
+        <span class="chart-card-title">Test Pass Rate</span>
+        <div class="chart-container">
+          <div style="position:relative; width:90px; height:90px; display:grid; place-items:center;">
+            <svg class="donut-svg">
+              <circle cx="45" cy="45" r="30" fill="none" stroke="var(--border)" stroke-width="12"></circle>
+              <circle class="donut-segment" cx="45" cy="45" r="30" fill="none" stroke="#2d6a4f" stroke-dasharray="${strokeDash}" stroke-dashoffset="0"></circle>
+            </svg>
+            <div class="donut-center">
+              <span class="donut-val">${passRate}%</span>
+              <span class="donut-lbl">Passed</span>
+            </div>
+          </div>
+          <div class="chart-legend">
+            <div class="legend-item">
+              <span class="legend-color" style="background:#2d6a4f;"></span>
+              <span>Passed</span>
+              <span class="legend-val">${passed}</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-color" style="background:#c0392b;"></span>
+              <span>Failed</span>
+              <span class="legend-val">${failed}</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-color" style="background:#ef6c00;"></span>
+              <span>Blocked</span>
+              <span class="legend-val">${blocked}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Status Breakdown Bar Chart -->
+      <div class="chart-card">
+        <span class="chart-card-title">Status Breakdown</span>
+        <div class="tc-bar-chart">
+          <div class="tc-bar-col">
+            <span class="tc-bar-value">${passed}</span>
+            <div class="tc-bar-track"><div class="tc-bar-fill passed" style="height:${barPct(passed)}%"></div></div>
+            <span class="tc-bar-label">Passed</span>
+          </div>
+          <div class="tc-bar-col">
+            <span class="tc-bar-value">${failed}</span>
+            <div class="tc-bar-track"><div class="tc-bar-fill failed" style="height:${barPct(failed)}%"></div></div>
+            <span class="tc-bar-label">Failed</span>
+          </div>
+          <div class="tc-bar-col">
+            <span class="tc-bar-value">${blocked}</span>
+            <div class="tc-bar-track"><div class="tc-bar-fill blocked" style="height:${barPct(blocked)}%"></div></div>
+            <span class="tc-bar-label">Blocked</span>
+          </div>
+          <div class="tc-bar-col">
+            <span class="tc-bar-value">${untested}</span>
+            <div class="tc-bar-track"><div class="tc-bar-fill untested" style="height:${barPct(untested)}%"></div></div>
+            <span class="tc-bar-label">Untested</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const filtersBarHtml = `
+    <div class="filters-bar" style="margin-bottom: 0;">
+      <div class="page-search-wrap">
+        <svg class="page-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+        </svg>
+        <input type="text" class="page-search-input" id="testCaseSearchInput" placeholder="Search test cases…" value="${state.testCaseSearch || ''}" />
+        ${state.testCaseSearch ? `<button class="page-search-clear" id="clearTestCaseSearch">✕</button>` : ''}
+      </div>
+
+      <select class="filter-select" id="filterTCStatus" data-tcfilter="status">
+        <option value="">All Run Statuses</option>
+        <option value="Passed" ${state.testCaseFilters.status === 'Passed' ? 'selected' : ''}>Passed</option>
+        <option value="Failed" ${state.testCaseFilters.status === 'Failed' ? 'selected' : ''}>Failed</option>
+        <option value="Blocked" ${state.testCaseFilters.status === 'Blocked' ? 'selected' : ''}>Blocked</option>
+        <option value="Untested" ${state.testCaseFilters.status === 'Untested' ? 'selected' : ''}>Untested</option>
+      </select>
+
+      <select class="filter-select" id="filterTCPriority" data-tcfilter="priority">
+        <option value="">All Priorities</option>
+        <option value="Critical" ${state.testCaseFilters.priority === 'Critical' ? 'selected' : ''}>Critical</option>
+        <option value="High" ${state.testCaseFilters.priority === 'High' ? 'selected' : ''}>High</option>
+        <option value="Medium" ${state.testCaseFilters.priority === 'Medium' ? 'selected' : ''}>Medium</option>
+        <option value="Low" ${state.testCaseFilters.priority === 'Low' ? 'selected' : ''}>Low</option>
+      </select>
+
+      <select class="filter-select" id="filterTCType" data-tcfilter="type">
+        <option value="">All Types</option>
+        <option value="Manual" ${state.testCaseFilters.type === 'Manual' ? 'selected' : ''}>Manual</option>
+        <option value="Automated" ${state.testCaseFilters.type === 'Automated' ? 'selected' : ''}>Automated</option>
+      </select>
+
+      <button class="btn-ghost" id="openExcelImportModalBtn" style="padding: 6px 12px; font-size: 12.5px; border-radius: var(--radius-sm); font-weight:500;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px; height:13px; margin-right:4px;">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+        </svg>
+        Import Excel
+      </button>
+
+      <button class="btn-ghost" id="openBulkUpdateModalBtn" style="padding: 6px 12px; font-size: 12.5px; border-radius: var(--radius-sm); font-weight:500; margin-left: 6px;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px; height:13px; margin-right:4px;">
+          <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+        </svg>
+        Bulk Update
+      </button>
+
+      <button class="btn-ghost ${state.testCaseSelectionMode ? 'active' : ''}" id="toggleTestCaseSelectionModeBtn" style="padding: 6px 12px; font-size: 12.5px; border-radius: var(--radius-sm); font-weight:500; margin-left: 6px; ${state.testCaseSelectionMode ? 'background: var(--accent-light); color: var(--accent); border-color: var(--accent); font-weight: 600;' : ''}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px; height:13px; margin-right:4px;">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+          <path d="M9 11l3 3 5-5"/>
+        </svg>
+        ${state.testCaseSelectionMode ? 'Cancel Selection' : 'Select Cases'}
+      </button>
+
+      ${(state.testCaseSearch || state.testCaseFilters.status || state.testCaseFilters.priority || state.testCaseFilters.type) ? `
+        <button class="btn-ghost" id="clearTestCaseFilters" style="font-size:12px; padding:6px 10px;">Clear filters</button>
+      ` : ''}
+    </div>
+  `;
+
+  const tableHtml = `
+    <div class="testcases-table-wrapper" id="testCasesContainer">
+      <table class="testcases-table">
+        <thead>
+          <tr>
+            <th style="width: 40px; text-align: center; vertical-align: middle;">
+              <input type="checkbox" id="selectAllTcCb" style="cursor: pointer;" ${state.selectedTestCaseIds && state.selectedTestCaseIds.size > 0 && state.selectedTestCaseIds.size === filteredCases.length ? 'checked' : ''} />
+            </th>
+            <th style="width: 60px; text-align: center; vertical-align: middle;">Sr No.</th>
+            <th style="min-width: 100px; vertical-align: middle;">ID</th>
+            <th style="min-width: 150px; vertical-align: middle;">Module</th>
+            <th style="min-width: 250px; vertical-align: middle;">Scenario</th>
+            <th style="min-width: 180px; vertical-align: middle;">Simplified Scenario</th>
+            <th style="min-width: 110px; text-align: center; vertical-align: middle;">Status</th>
+            <th style="min-width: 90px; text-align: center; vertical-align: middle;">Priority</th>
+            <th style="min-width: 90px; text-align: center; vertical-align: middle;">Severity</th>
+            <th style="min-width: 90px; text-align: center; vertical-align: middle;">Type</th>
+            <th style="min-width: 120px; vertical-align: middle;">Assignee</th>
+            <th style="min-width: 130px; vertical-align: middle;">Execution Date</th>
+            <th style="min-width: 100px; vertical-align: middle;">Defect ID</th>
+            <th style="min-width: 250px; vertical-align: middle;">Description</th>
+            <th style="min-width: 250px; vertical-align: middle;">Steps</th>
+            <th style="min-width: 250px; vertical-align: middle;">Expected Result</th>
+            <th style="min-width: 250px; vertical-align: middle;">Actual Result</th>
+            <th style="min-width: 200px; vertical-align: middle;">Comments</th>
+            <th style="min-width: 80px; text-align: center; vertical-align: middle;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="testCasesTableBody">
+          ${tableRowsHtml}
+        </tbody>
+      </table>
+    </div>
+    ${paginationBarHtml}
+  `;
+
+  const modulesPanelHtml = activeProjId ? `
+    <aside class="tc-modules-panel">
+      <div class="tc-modules-panel-header">
+        <span class="tc-modules-panel-title">Modules</span>
+        <button class="tc-modules-panel-add" id="openAddModuleModalBtn" aria-label="Add Module" title="Add Module">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+      <div class="tc-modules-panel-list" id="testCaseModulesList">
+        ${modulesHtml}
+      </div>
+    </aside>
+  ` : '';
+
   // Return full workspace markup
   return `
     ${tcHero}
-    <div class="project-tabs-container">
-      ${tabsHtml}
+    <div class="tc-toolbar-row">
+      ${projectDropdownHtml}
     </div>
 
-
     <div class="testcases-workspace">
-      <!-- Full-Width Main Panel -->
-      <section class="testcases-main-panel" style="width: 100%;">
-        <!-- Modules Horizontal Row -->
-        <div class="modules-horizontal-row">
-          <div class="modules-horizontal-title">Modules:</div>
-          <div class="modules-horizontal-list" id="testCaseModulesList">
-            ${modulesHtml}
+      ${modulesPanelHtml}
+      <section class="testcases-main-panel">
+        ${activeProjId ? `
+          ${selectionBarHtml}
+          ${chartsRowHtml}
+          ${filtersBarHtml}
+          ${tableHtml}
+        ` : `
+          <div class="tc-projects-overview-grid">
+            ${projectsOverviewHtml}
           </div>
-          <button class="add-module-pill-btn" id="openAddModuleModalBtn" aria-label="New Module" title="New Module">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:12px; height:12px; margin-right:4px;"><path d="M12 5v14M5 12h14"/></svg>
-            Add Module
-          </button>
-        </div>
-        ${selectionBarHtml}
-        
-        <!-- Reports and Analytics Charts Row -->
-        <div class="testcases-charts-row">
-          
-          <!-- Pass Rate Donut Chart -->
-          <div class="chart-card">
-            <span class="chart-card-title">Test Pass Rate</span>
-            <div class="chart-container">
-              <div style="position:relative; width:90px; height:90px; display:grid; place-items:center;">
-                <svg class="donut-svg">
-                  <circle cx="45" cy="45" r="30" fill="none" stroke="var(--border)" stroke-width="12"></circle>
-                  <circle class="donut-segment" cx="45" cy="45" r="30" fill="none" stroke="#2d6a4f" stroke-dasharray="${strokeDash}" stroke-dashoffset="0"></circle>
-                </svg>
-                <div class="donut-center">
-                  <span class="donut-val">${passRate}%</span>
-                  <span class="donut-lbl">Passed</span>
-                </div>
-              </div>
-              <div class="chart-legend">
-                <div class="legend-item">
-                  <span class="legend-color" style="background:#2d6a4f;"></span>
-                  <span>Passed</span>
-                  <span class="legend-val">${passed}</span>
-                </div>
-                <div class="legend-item">
-                  <span class="legend-color" style="background:#c0392b;"></span>
-                  <span>Failed</span>
-                  <span class="legend-val">${failed}</span>
-                </div>
-                <div class="legend-item">
-                  <span class="legend-color" style="background:#ef6c00;"></span>
-                  <span>Blocked</span>
-                  <span class="legend-val">${blocked}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Execution Summary Progress Bar & Automation Rate -->
-          <div class="chart-card">
-            <span class="chart-card-title">Automation & Run Status</span>
-            <div style="display:flex; flex-direction:column; justify-content:center; gap:16px; height:100%;">
-              <div class="stacked-progress-wrap">
-                <div style="display:flex; justify-content:space-between; font-size:11.5px;">
-                  <span style="font-weight:600; color:var(--text-secondary);">Execution Coverage</span>
-                  <span style="color:var(--text-muted);">${total - untested} / ${total} Run</span>
-                </div>
-                <div class="stacked-progress-bar">
-                  <div class="progress-segment pass" style="width: ${passWidth}%" title="Passed: ${passed}"></div>
-                  <div class="progress-segment fail" style="width: ${failWidth}%" title="Failed: ${failed}"></div>
-                  <div class="progress-segment blocked" style="width: ${blockWidth}%" title="Blocked: ${blocked}"></div>
-                  <div class="progress-segment untested" style="width: ${untestWidth}%" title="Untested: ${untested}"></div>
-                </div>
-              </div>
-              <div style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:12px;">
-                <div style="display:flex; flex-direction:column;">
-                  <span style="font-size:11px; text-transform:uppercase; color:var(--text-muted); font-weight:500;">Automation</span>
-                  <strong style="font-size:18px; color:var(--text);">${autoRate}%</strong>
-                </div>
-                <span class="status-pill automation" style="background:var(--accent-light); color:var(--accent); border:1px solid rgba(45,106,79,0.15); font-size:10.5px;">
-                  ${automated} Automated cases
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Filter Toolbar -->
-        <div class="filters-bar" style="margin-bottom: 0;">
-          <div class="page-search-wrap">
-            <svg class="page-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-              <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
-            </svg>
-            <input type="text" class="page-search-input" id="testCaseSearchInput" placeholder="Search test cases…" value="${state.testCaseSearch || ''}" />
-            ${state.testCaseSearch ? `<button class="page-search-clear" id="clearTestCaseSearch">✕</button>` : ''}
-          </div>
-
-          <select class="filter-select" id="filterTCStatus" data-tcfilter="status">
-            <option value="">All Run Statuses</option>
-            <option value="Passed" ${state.testCaseFilters.status === 'Passed' ? 'selected' : ''}>Passed</option>
-            <option value="Failed" ${state.testCaseFilters.status === 'Failed' ? 'selected' : ''}>Failed</option>
-            <option value="Blocked" ${state.testCaseFilters.status === 'Blocked' ? 'selected' : ''}>Blocked</option>
-            <option value="Untested" ${state.testCaseFilters.status === 'Untested' ? 'selected' : ''}>Untested</option>
-          </select>
-
-          <select class="filter-select" id="filterTCPriority" data-tcfilter="priority">
-            <option value="">All Priorities</option>
-            <option value="Critical" ${state.testCaseFilters.priority === 'Critical' ? 'selected' : ''}>Critical</option>
-            <option value="High" ${state.testCaseFilters.priority === 'High' ? 'selected' : ''}>High</option>
-            <option value="Medium" ${state.testCaseFilters.priority === 'Medium' ? 'selected' : ''}>Medium</option>
-            <option value="Low" ${state.testCaseFilters.priority === 'Low' ? 'selected' : ''}>Low</option>
-          </select>
-
-          <select class="filter-select" id="filterTCType" data-tcfilter="type">
-            <option value="">All Types</option>
-            <option value="Manual" ${state.testCaseFilters.type === 'Manual' ? 'selected' : ''}>Manual</option>
-            <option value="Automated" ${state.testCaseFilters.type === 'Automated' ? 'selected' : ''}>Automated</option>
-          </select>
-
-          <button class="btn-ghost" id="openExcelImportModalBtn" style="padding: 6px 12px; font-size: 12.5px; border-radius: var(--radius-sm); font-weight:500;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px; height:13px; margin-right:4px;">
-              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
-            </svg>
-            Import Excel
-          </button>
-
-          <button class="btn-ghost" id="openBulkUpdateModalBtn" style="padding: 6px 12px; font-size: 12.5px; border-radius: var(--radius-sm); font-weight:500; margin-left: 6px;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px; height:13px; margin-right:4px;">
-              <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
-            </svg>
-            Bulk Update
-          </button>
-
-          <button class="btn-ghost ${state.testCaseSelectionMode ? 'active' : ''}" id="toggleTestCaseSelectionModeBtn" style="padding: 6px 12px; font-size: 12.5px; border-radius: var(--radius-sm); font-weight:500; margin-left: 6px; ${state.testCaseSelectionMode ? 'background: var(--accent-light); color: var(--accent); border-color: var(--accent); font-weight: 600;' : ''}">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px; height:13px; margin-right:4px;">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-              <path d="M9 11l3 3 5-5"/>
-            </svg>
-            ${state.testCaseSelectionMode ? 'Cancel Selection' : 'Select Cases'}
-          </button>
-
-          ${(state.testCaseSearch || state.testCaseFilters.status || state.testCaseFilters.priority || state.testCaseFilters.type) ? `
-            <button class="btn-ghost" id="clearTestCaseFilters" style="font-size:12px; padding:6px 10px;">Clear filters</button>
-          ` : ''}
-        </div>
-
-        <!-- Table Container -->
-        <div class="testcases-table-wrapper" id="testCasesContainer">
-          <table class="testcases-table">
-            <thead>
-              <tr>
-                <th style="width: 40px; text-align: center; vertical-align: middle;">
-                  <input type="checkbox" id="selectAllTcCb" style="cursor: pointer;" ${state.selectedTestCaseIds && state.selectedTestCaseIds.size > 0 && state.selectedTestCaseIds.size === filteredCases.length ? 'checked' : ''} />
-                </th>
-                <th style="width: 60px; text-align: center; vertical-align: middle;">Sr No.</th>
-                <th style="min-width: 100px; vertical-align: middle;">ID</th>
-                <th style="min-width: 150px; vertical-align: middle;">Module</th>
-                <th style="min-width: 250px; vertical-align: middle;">Scenario</th>
-                <th style="min-width: 180px; vertical-align: middle;">Simplified Scenario</th>
-                <th style="min-width: 110px; text-align: center; vertical-align: middle;">Status</th>
-                <th style="min-width: 90px; text-align: center; vertical-align: middle;">Priority</th>
-                <th style="min-width: 90px; text-align: center; vertical-align: middle;">Severity</th>
-                <th style="min-width: 90px; text-align: center; vertical-align: middle;">Type</th>
-                <th style="min-width: 120px; vertical-align: middle;">Assignee</th>
-                <th style="min-width: 130px; vertical-align: middle;">Execution Date</th>
-                <th style="min-width: 100px; vertical-align: middle;">Defect ID</th>
-                <th style="min-width: 250px; vertical-align: middle;">Description</th>
-                <th style="min-width: 250px; vertical-align: middle;">Steps</th>
-                <th style="min-width: 250px; vertical-align: middle;">Expected Result</th>
-                <th style="min-width: 250px; vertical-align: middle;">Actual Result</th>
-                <th style="min-width: 200px; vertical-align: middle;">Comments</th>
-                <th style="min-width: 80px; text-align: center; vertical-align: middle;">Actions</th>
-              </tr>
-            </thead>
-            <tbody id="testCasesTableBody">
-              ${tableRowsHtml}
-            </tbody>
-          </table>
-        </div>
-
+        `}
       </section>
     </div>
   `;
@@ -7257,7 +7389,13 @@ const mapHeaders = (headers) => {
     else if (clean.includes('testtype') || clean === 'type') {
       addMapping('type', index);
     }
-    // 3. Test Scenario & Description
+    // 3. Simplified Test Scenario — must be checked before the generic
+    // "scenario" rule below, since "simplifiedscenario" also contains the
+    // substring "scenario" and would otherwise be swallowed by it.
+    else if (clean === 'simplifiedtestscenario' || clean === 'simplifiedscenario') {
+      addMapping('simplifiedScenario', index);
+    }
+    // 4. Test Scenario & Description
     else if (clean === 'testscenario' || clean === 'scenario' || clean === 'title' || clean === 'name' || clean.includes('description') || clean.includes('scenario')) {
       addMapping('scenario', index);
       if (clean.includes('description') || clean === 'desc') {
@@ -7267,10 +7405,6 @@ const mapHeaders = (headers) => {
     else if (clean.includes('description') || clean === 'desc') {
       addMapping('description', index);
       addMapping('scenario', index); // fallback
-    }
-    // 4. Simplified Test Scenario
-    else if (clean === 'simplifiedtestscenario' || clean === 'simplifiedscenario') {
-      addMapping('simplifiedScenario', index);
     }
     // 5. Test Steps
     else if (clean === 'teststeps' || clean === 'steps') {
@@ -8813,6 +8947,7 @@ ${(r.managerName && r.managerName !== '— Select Manager —') ? r.managerName 
 // ─── Boot ────────────────────────────────────────────────
 const init = async () => {
   const data = await storage.load();
+  const hadLegacyTasksWithoutWorkDone = (data.tasks || []).some(t => t.workDone === undefined);
   state.projects = data.projects;
   state.tasks = migrateTasks(data.tasks);
   state.tests = data.tests || [];
@@ -8825,6 +8960,12 @@ const init = async () => {
   state.projectsViewMode = await ClairDB.getPref('projects_view_mode', 'list');
   state.theme = await ClairDB.getPref('theme', 'system');
   applyTheme(state.theme);
+
+  // Persist the "task completed" backfill immediately so existing tasks have
+  // it in SQLite right away, not only after the next edit to each one.
+  if (hadLegacyTasksWithoutWorkDone) {
+    await storage.save();
+  }
 
   // Initialize mock data on first load only
   const dbInitialized = (await ClairDB.getPref('db_initialized')) === 'true';
@@ -9087,7 +9228,19 @@ const init = async () => {
       e.preventDefault();
       searchInput.focus();
     }
-    if (e.key === 'Escape') closeModals();
+    if (e.key === 'Escape') {
+      closeModals();
+      const tcDd = document.getElementById('tcProjectDropdown');
+      if (tcDd) tcDd.classList.remove('open');
+    }
+  });
+
+  // Test Case project dropdown: close on outside click
+  document.addEventListener('click', e => {
+    const tcDd = document.getElementById('tcProjectDropdown');
+    if (tcDd && tcDd.classList.contains('open') && !e.target.closest('#tcProjectDropdown')) {
+      tcDd.classList.remove('open');
+    }
   });
 
   // Enter to save in modal
