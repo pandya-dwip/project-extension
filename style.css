@@ -86,59 +86,13 @@
 }
 
 /* ─── Dark mode ───
-   Same token names, dark-tuned values. Applied when the OS is in dark mode
-   (prefers-color-scheme) or when the user explicitly picks a theme in
-   Settings (data-theme, which always wins over the OS setting). */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #0d1117;
-    --surface: #161b22;
-    --surface-2: #1c232c;
-    --surface-3: #262e38;
-    --border: #30363d;
-    --border-hover: #454e58;
-
-    --text: #e6edf3;
-    --text-secondary: #adb7c2;
-    --text-muted: #7d8590;
-
-    --accent: #34d399;
-    --accent-light: #113827;
-    --accent-hover: #6ee7b7;
-    --accent-subtle: #0f2419;
-
-    --danger: #f87171;
-    --danger-light: #3a1616;
-
-    --success: #4ade80;
-    --success-light: #14291a;
-    --warning: #fb923c;
-    --warning-light: #3a2510;
-    --info: #60a5fa;
-    --info-light: #142b47;
-    --info-accent: #60a5fa;
-    --info-border: #60a5fa;
-
-    --violet: #c084fc;
-    --violet-light: #2c1b3a;
-    --indigo: #a5b4fc;
-    --indigo-light: #202544;
-    --slate: #94a3b8;
-    --slate-light: #232b36;
-    --status-planned: #94a3b8;
-
-    --wash-danger: #1f1517;
-    --wash-warning: #1f1b12;
-    --wash-info: #131b24;
-    --wash-success: #12201a;
-    --wash-neutral: #161b22;
-
-    --shadow-sm: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
-    --shadow: 0 4px 12px rgba(0,0,0,0.45), 0 2px 4px rgba(0,0,0,0.3);
-    --shadow-lg: 0 12px 32px rgba(0,0,0,0.5), 0 4px 8px rgba(0,0,0,0.35);
-  }
-}
-
+   Same token names, dark-tuned values. The app defaults to light and only
+   switches to dark once app.js has loaded the saved preference (or resolved
+   "System" via matchMedia) and set data-theme="dark" — intentionally NOT a
+   prefers-color-scheme media query here, since that would apply instantly
+   at first paint (before the real saved preference loads from SQLite) and
+   cause a dark-then-light flash for anyone whose OS is dark but who prefers
+   light. */
 :root[data-theme="dark"] {
   --bg: #0d1117;
   --surface: #161b22;
@@ -743,6 +697,23 @@ textarea:focus-visible,
   box-shadow: var(--shadow);
   border-color: var(--border-hover);
   transform: translateY(-2px);
+}
+
+.project-list .project-card {
+  cursor: grab;
+}
+
+.project-list .project-card.dragging {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+
+.project-list .project-card.drag-over-top {
+  border-top: 3px solid var(--accent);
+}
+
+.project-list .project-card.drag-over-bottom {
+  border-bottom: 3px solid var(--accent);
 }
 
 .project-card.status-stable {
@@ -1536,6 +1507,21 @@ textarea:focus-visible,
 
 .filter-select:focus {
   border-color: var(--accent);
+}
+
+.date-range-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.date-range-wrap .filter-select {
+  width: 140px;
+}
+
+.date-range-sep {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 /* ─── Modal ─── */
@@ -3822,12 +3808,34 @@ textarea:focus-visible,
 /* ─── Test Case Management: project dropdown ─── */
 .tc-toolbar-row {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  gap: 16px;
   margin-bottom: 16px;
+}
+
+/* ─── Test Case Management: modules, shown inline in the toolbar row ─── */
+.tc-modules-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.tc-modules-inline-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .tc-project-dropdown {
   position: relative;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .tc-project-dropdown-trigger {
@@ -3966,157 +3974,77 @@ textarea:focus-visible,
   color: var(--accent);
 }
 
-/* ─── Test Case Management: vertical modules panel (left side) ─── */
-.tc-modules-panel {
-  width: 220px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
-  overflow: hidden;
-  align-self: flex-start;
-}
-
-.tc-modules-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
-}
-
-.tc-modules-panel-title {
-  font-size: 11.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: var(--text-muted);
-}
-
-.tc-modules-panel-add {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-  color: var(--accent);
-  cursor: pointer;
-  transition: all var(--transition);
-  padding: 0;
-}
-
-.tc-modules-panel-add svg {
-  width: 12px;
-  height: 12px;
-}
-
-.tc-modules-panel-add:hover {
-  background: var(--accent-light);
-  border-color: var(--accent);
-}
-
-.tc-modules-panel-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px;
-  max-height: 480px;
-  overflow-y: auto;
-}
-
-/* Vertical, full-width variant of .module-item within the panel */
-.tc-modules-panel-list .module-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 10px;
-  background: none;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  font-size: 13px;
-  cursor: pointer;
-  transition: all var(--transition);
-}
-
-.tc-modules-panel-list .module-item:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-
-.tc-modules-panel-list .module-item.active {
-  background: var(--accent-light);
-  border-color: rgba(var(--accent-rgb, 45, 106, 79), 0.25);
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.tc-modules-panel-list .module-item-name {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 110px;
-}
-
 /* ─── Test Case Management: status breakdown bar chart ─── */
 .tc-bar-chart {
   display: flex;
   align-items: flex-end;
   justify-content: space-around;
-  gap: 12px;
-  min-height: 120px;
-  padding-top: 8px;
+  gap: 20px;
+  min-height: 150px;
+  padding: 12px 6px 4px;
 }
 
 .tc-bar-col {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex: 1;
 }
 
 .tc-bar-value {
-  font-size: 12.5px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--text);
+  line-height: 1;
 }
 
 .tc-bar-track {
   width: 100%;
-  max-width: 36px;
-  height: 80px;
+  max-width: 44px;
+  height: 96px;
   display: flex;
   align-items: flex-end;
   background: var(--surface-2);
-  border-radius: var(--radius-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
 .tc-bar-fill {
   width: 100%;
-  min-height: 2px;
+  min-height: 3px;
   border-radius: var(--radius-xs) var(--radius-xs) 0 0;
-  transition: height 0.4s ease;
+  transition: height 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.tc-bar-fill.passed { background: #2d6a4f; }
-.tc-bar-fill.failed { background: #c0392b; }
-.tc-bar-fill.blocked { background: #ef6c00; }
-.tc-bar-fill.untested { background: #94a3b8; }
+.tc-bar-fill.passed { background: linear-gradient(180deg, #4ade80, #2d6a4f); }
+.tc-bar-fill.failed { background: linear-gradient(180deg, #f87171, #c0392b); }
+.tc-bar-fill.blocked { background: linear-gradient(180deg, #fbbf24, #ef6c00); }
+.tc-bar-fill.untested { background: linear-gradient(180deg, #cbd5e1, #94a3b8); }
 
 .tc-bar-label {
-  font-size: 11px;
-  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
   font-weight: 500;
 }
+
+/* Shared small status dot, used in the bar chart labels and the "All Projects" overview cards */
+.status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.passed { background: #2d6a4f; }
+.status-dot.failed { background: #c0392b; }
+.status-dot.blocked { background: #ef6c00; }
+.status-dot.untested { background: #94a3b8; }
 
 /* ─── Test Case Management: "All Projects" overview cards ─── */
 .tc-projects-overview-grid {
@@ -4189,18 +4117,6 @@ textarea:focus-visible,
   color: var(--text);
   font-weight: 700;
 }
-
-.tc-project-overview-stat .dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.tc-project-overview-stat .dot.passed { background: #2d6a4f; }
-.tc-project-overview-stat .dot.failed { background: #c0392b; }
-.tc-project-overview-stat .dot.blocked { background: #ef6c00; }
-.tc-project-overview-stat .dot.untested { background: #94a3b8; }
 
 .tc-project-overview-passrate {
   display: flex;

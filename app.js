@@ -66,7 +66,7 @@ let state = {
   testCasePageSize: 25,
   view: 'dashboard',
   projectsViewMode: 'list', // hydrated from ClairDB pref in init(), since DB access is async
-  theme: 'system', // hydrated from ClairDB pref in init()
+  theme: 'light', // hydrated from ClairDB pref in init()
   projectsKanbanBoardScrollLeft: 0,
   projectsKanbanColumnScrollTops: {},
   searchQuery: '',
@@ -74,7 +74,7 @@ let state = {
   testSearch: '',
   releaseSearch: '',
   releasePtSearch: '',
-  filters: { status: '', previousVersion: '', upcomingVersion: '', date: '', taskProject: '', taskPriority: '', taskDeadline: '' },
+  filters: { status: '', previousVersion: '', upcomingVersion: '', dateFrom: '', dateTo: '', taskProject: '', taskPriority: '', taskDeadline: '' },
   testFilters: { project: '', developer: '', status: '', assignedStatus: '' },
   releaseFilters: { status: '' },
   releasePtFilters: { project: '', releaseType: '', completion: '' },
@@ -115,11 +115,16 @@ const storage = {
 };
 
 // ─── Theme ───────────────────────────────────────────────
-// 'system' defers to the OS via the CSS prefers-color-scheme query (no
-// data-theme attribute set); 'light'/'dark' pin it explicitly.
+// Defaults to light. 'system' resolves against the OS here in JS (not via a
+// CSS prefers-color-scheme query) so the very first paint — before this has
+// even run — is always light instead of racing the OS setting.
 const applyTheme = (theme) => {
-  if (theme === 'light' || theme === 'dark') {
-    document.documentElement.dataset.theme = theme;
+  let resolved = theme;
+  if (theme === 'system' || !theme) {
+    resolved = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  }
+  if (resolved === 'dark') {
+    document.documentElement.dataset.theme = 'dark';
   } else {
     delete document.documentElement.dataset.theme;
   }
@@ -1258,7 +1263,7 @@ const initWeeklyChart = () => {
   }
   const { year: cy, month: cm } = state.chartMonth;
   const lmStart = new Date(cy, cm, 1);
-  const lmEnd = new Date(cy, cm + 1, 0);
+  const lmEnd = new Date(cy, cm + 1, 0, 23, 59, 59, 999);
   const firstDay = new Date(lmStart);
   const dow = firstDay.getDay();
   const off = dow === 0 ? -6 : 1 - dow;
@@ -1268,6 +1273,9 @@ const initWeeklyChart = () => {
     const wEnd = new Date(wCursor); wEnd.setDate(wCursor.getDate() + 6);
     const dS = new Date(wCursor); dS.setHours(0, 0, 0, 0);
     const dE = new Date(wEnd); dE.setHours(23, 59, 59, 999);
+    // Clamp both the label AND the count to this month's portion of the week —
+    // otherwise a week straddling two months (e.g. Jul 27–Aug 2) counts the
+    // same completed tasks in both months' totals.
     const dispS = new Date(Math.max(dS, lmStart));
     const dispE = new Date(Math.min(dE, lmEnd));
     const mo = (d) => d.toLocaleDateString('en', { month: 'short' });
@@ -1277,7 +1285,7 @@ const initWeeklyChart = () => {
     const count = state.tasks.filter(t => {
       if (t.status !== 'Done') return false;
       const cd = new Date(t.completedDate || t.updatedAt || t.createdAt);
-      return cd >= dS && cd <= dE;
+      return cd >= dispS && cd <= dispE;
     }).length;
     wData.push({ label: lbl, count });
     wCursor.setDate(wCursor.getDate() + 7);
@@ -1677,7 +1685,7 @@ const renderDashboard = () => {
   }
   const { year: cmYear, month: cmMonth } = state.chartMonth;
   const lmStart = new Date(cmYear, cmMonth, 1);
-  const lmEnd = new Date(cmYear, cmMonth + 1, 0);
+  const lmEnd = new Date(cmYear, cmMonth + 1, 0, 23, 59, 59, 999);
   const lmName = lmStart.toLocaleDateString('en', { month: 'long', year: 'numeric' });
   const moAbbr = lmStart.toLocaleDateString('en', { month: 'short' });
 
@@ -1691,15 +1699,17 @@ const renderDashboard = () => {
 
   while (wCursor <= lmEnd) {
     const wEnd = new Date(wCursor); wEnd.setDate(wCursor.getDate() + 6);
-    // Clamp to month boundaries for the label, but count all tasks in actual week
-    const displayStart = new Date(Math.max(wCursor.getTime(), lmStart.getTime()));
-    const displayEnd = new Date(Math.min(wEnd.getTime(), lmEnd.getTime()));
     const wS = new Date(wCursor); wS.setHours(0, 0, 0, 0);
     const wE = new Date(wEnd); wE.setHours(23, 59, 59, 999);
+    // Clamp both the label AND the count to this month's portion of the week —
+    // otherwise a week straddling two months (e.g. Jul 27–Aug 2) counts the
+    // same completed tasks in both months' totals.
+    const displayStart = new Date(Math.max(wS.getTime(), lmStart.getTime()));
+    const displayEnd = new Date(Math.min(wE.getTime(), lmEnd.getTime()));
     const count = state.tasks.filter(t => {
       if (t.status !== 'Done') return false;
       const cd = new Date(t.completedDate || t.updatedAt || t.createdAt);
-      return cd >= wS && cd <= wE;
+      return cd >= displayStart && cd <= displayEnd;
     }).length;
     const startMo = displayStart.toLocaleDateString('en', { month: 'short' });
     const endMo = displayEnd.toLocaleDateString('en', { month: 'short' });
@@ -2225,7 +2235,7 @@ const renderProjectCard = (p, q = '') => {
       ((p.statuses || []).includes('In Progress') || (p.statuses || []).includes('Started')) ? 'in-progress' : 'planned';
 
   return `
-  <div class="project-card status-${primaryStatus}" data-id="${p.id}">
+  <div class="project-card status-${primaryStatus}" data-id="${p.id}" draggable="true">
 
     <!-- Col 1: Project info -->
     <div class="pc-info">
@@ -2285,8 +2295,17 @@ const renderTasks = () => {
     );
   }
 
-  if (state.filters.date) {
-    tasks = tasks.filter(t => t.startDate === state.filters.date || t.endDate === state.filters.date);
+  if (state.filters.dateFrom || state.filters.dateTo) {
+    // Filters on the task's Start Date, not when it was entered into the
+    // system — bulk-logging a task today for a start date earlier this week
+    // should be found by that earlier date, not by today.
+    tasks = tasks.filter(t => {
+      if (!t.startDate) return false;
+      const start = t.startDate.split('T')[0]; // YYYY-MM-DD, string-comparable
+      if (state.filters.dateFrom && start < state.filters.dateFrom) return false;
+      if (state.filters.dateTo && start > state.filters.dateTo) return false;
+      return true;
+    });
   }
 
   if (state.filters.taskProject) {
@@ -2362,7 +2381,11 @@ const renderTasks = () => {
         <input type="text" class="page-search-input" id="taskSearchInput" placeholder="Search tasks…" value="${state.taskSearch}" />
         ${state.taskSearch ? `<button class="page-search-clear" id="clearTaskSearch">✕</button>` : ''}
       </div>
-      <input type="date" class="filter-select" id="filterDate" data-filter="date" value="${state.filters.date || ''}" style="cursor:pointer" />
+      <div class="date-range-wrap" title="Show tasks with a start date in this range">
+        <input type="date" class="filter-select" id="filterDateFrom" value="${state.filters.dateFrom || ''}" style="cursor:pointer" />
+        <span class="date-range-sep">to</span>
+        <input type="date" class="filter-select" id="filterDateTo" value="${state.filters.dateTo || ''}" style="cursor:pointer" />
+      </div>
       <select class="filter-select" id="filterTaskProject" data-filter="taskProject">
         <option value="">All Projects</option>
         ${projectOptions}
@@ -2381,7 +2404,7 @@ const renderTasks = () => {
         <option value="week" ${state.filters.taskDeadline === 'week' ? 'selected' : ''}>Within a Week</option>
         <option value="15days" ${state.filters.taskDeadline === '15days' ? 'selected' : ''}>Within 15 Days</option>
       </select>
-      ${(state.filters.date || state.filters.taskProject || state.filters.taskPriority || state.filters.taskDeadline) ? `
+      ${(state.filters.dateFrom || state.filters.dateTo || state.filters.taskProject || state.filters.taskPriority || state.filters.taskDeadline) ? `
         <button class="btn-ghost" id="clearTasksFilters" style="font-size:12px;padding:6px 10px">Clear filters</button>
       ` : ''}
 
@@ -3375,7 +3398,7 @@ const clearAllData = async () => {
   state.releasePoints = [];
   state.testCases = [];
   state.modules = [];
-  state.filters = { status: '', previousVersion: '', upcomingVersion: '', date: '', taskProject: '' };
+  state.filters = { status: '', previousVersion: '', upcomingVersion: '', dateFrom: '', dateTo: '', taskProject: '' };
   state.testFilters = { project: '', developer: '', status: '', assignedStatus: '' };
   state.releaseFilters = { status: '' };
   state.releasePtFilters = { project: '', releaseType: '', completion: '' };
@@ -3862,6 +3885,7 @@ const attachCardListeners = () => {
   });
 
   // Change delegation (filters)
+  let dateFilterTimer;
   content.addEventListener('change', e => {
     const calSortSelect = e.target.closest('[data-cal-sort]');
     if (calSortSelect) {
@@ -3872,6 +3896,32 @@ const attachCardListeners = () => {
     if (calSelect) {
       state.calendarFilters[calSelect.dataset.calfilter] = calSelect.value;
       render();
+    }
+    // Task date-range filters. Browsers fire "change" on a type="date" input
+    // once EVERY keystroke of the year segment (each digit produces a new
+    // zero-padded-but-technically-complete value: 2 -> 0002, 0 -> 0020, 2 ->
+    // 0202, 6 -> 2026), not just once at the end. Re-rendering (which
+    // recreates the input) on each of those resets which segment is
+    // highlighted back to the first one, kicking the user back to editing
+    // the day. Debouncing so we only react once typing actually pauses
+    // avoids re-rendering out from under an in-progress edit.
+    const dateFromInput = e.target.closest('#filterDateFrom');
+    if (dateFromInput) {
+      clearTimeout(dateFilterTimer);
+      dateFilterTimer = setTimeout(() => {
+        state.filters.dateFrom = dateFromInput.value;
+        rerenderPreservingFocus(dateFromInput);
+      }, 600);
+      return;
+    }
+    const dateToInput = e.target.closest('#filterDateTo');
+    if (dateToInput) {
+      clearTimeout(dateFilterTimer);
+      dateFilterTimer = setTimeout(() => {
+        state.filters.dateTo = dateToInput.value;
+        rerenderPreservingFocus(dateToInput);
+      }, 600);
+      return;
     }
     const select = e.target.closest('[data-filter]');
     if (select) {
@@ -3958,7 +4008,9 @@ const attachCardListeners = () => {
     const el = document.getElementById(id);
     if (el) {
       el.focus();
-      el.setSelectionRange(selectionStart, selectionEnd);
+      // Some input types (e.g. type="date") don't support selection ranges
+      // and throw if you try — harmless to skip restoring the caret there.
+      try { el.setSelectionRange(selectionStart, selectionEnd); } catch (e) { /* not supported for this input type */ }
     }
   };
 
@@ -4031,14 +4083,23 @@ const attachCardListeners = () => {
     if (projectCard) {
       e.dataTransfer.setData('text/plain', projectCard.dataset.id);
       projectCard.classList.add('dragging');
+      return;
+    }
+    const projectListCard = e.target.closest('.project-list .project-card');
+    if (projectListCard) {
+      e.dataTransfer.setData('text/plain', projectListCard.dataset.id);
+      e.dataTransfer.effectAllowed = 'move';
+      projectListCard.classList.add('dragging');
     }
   });
 
   content.addEventListener('dragend', e => {
-    const card = e.target.closest('.task-card') || e.target.closest('.kanban-card');
+    const card = e.target.closest('.task-card') || e.target.closest('.kanban-card') || e.target.closest('.project-list .project-card');
     if (card) {
       card.classList.remove('dragging');
     }
+    document.querySelectorAll('.project-list .project-card.drag-over-top, .project-list .project-card.drag-over-bottom')
+      .forEach(el => el.classList.remove('drag-over-top', 'drag-over-bottom'));
   });
 
   content.addEventListener('dragover', e => {
@@ -4052,6 +4113,15 @@ const attachCardListeners = () => {
     if (projectColumn) {
       e.preventDefault();
       projectColumn.classList.add('drag-over');
+      return;
+    }
+    const projectListCard = e.target.closest('.project-list .project-card');
+    if (projectListCard) {
+      e.preventDefault();
+      const rect = projectListCard.getBoundingClientRect();
+      const before = (e.clientY - rect.top) < rect.height / 2;
+      projectListCard.classList.toggle('drag-over-top', before);
+      projectListCard.classList.toggle('drag-over-bottom', !before);
     }
   });
 
@@ -4064,6 +4134,11 @@ const attachCardListeners = () => {
     const projectColumn = e.target.closest('.projects-kanban-column');
     if (projectColumn) {
       projectColumn.classList.remove('drag-over');
+      return;
+    }
+    const projectListCard = e.target.closest('.project-list .project-card');
+    if (projectListCard) {
+      projectListCard.classList.remove('drag-over-top', 'drag-over-bottom');
     }
   });
 
@@ -4076,6 +4151,19 @@ const attachCardListeners = () => {
       const taskId = e.dataTransfer.getData('text/plain');
       const newStatus = column.dataset.status;
       dropTask(taskId, newStatus);
+      return;
+    }
+    const projectListCard = e.target.closest('.project-list .project-card');
+    if (projectListCard) {
+      e.preventDefault();
+      const before = projectListCard.classList.contains('drag-over-top');
+      projectListCard.classList.remove('drag-over-top', 'drag-over-bottom');
+
+      const draggedId = e.dataTransfer.getData('text/plain');
+      const targetId = projectListCard.dataset.id;
+      if (draggedId && targetId && draggedId !== targetId) {
+        await reorderProjects(draggedId, targetId, before);
+      }
       return;
     }
     const projectColumn = e.target.closest('.projects-kanban-column');
@@ -4116,7 +4204,7 @@ window.applyFilter = (key, val) => {
 };
 
 window.clearFilters = () => {
-  state.filters = { status: '', previousVersion: '', upcomingVersion: '', date: '', taskProject: '', taskPriority: '', taskDeadline: '' };
+  state.filters = { status: '', previousVersion: '', upcomingVersion: '', dateFrom: '', dateTo: '', taskProject: '', taskPriority: '', taskDeadline: '' };
   render();
 };
 
@@ -4431,6 +4519,21 @@ const deleteProject = async (id) => {
   render();
   updateStorageInfo();
   showToast('Project deleted');
+};
+
+// Manual drag-to-reorder for the Projects list view — moves draggedId to sit
+// just before/after targetId in state.projects, which is the array order the
+// list view renders in (new projects otherwise always land on top via unshift).
+const reorderProjects = async (draggedId, targetId, insertBefore) => {
+  const fromIdx = state.projects.findIndex(p => p.id === draggedId);
+  if (fromIdx === -1) return;
+  const [moved] = state.projects.splice(fromIdx, 1);
+  let toIdx = state.projects.findIndex(p => p.id === targetId);
+  if (toIdx === -1) { state.projects.splice(fromIdx, 0, moved); return; }
+  if (!insertBefore) toIdx += 1;
+  state.projects.splice(toIdx, 0, moved);
+  await storage.save();
+  render();
 };
 
 const confirmClearReleaseHistory = (projectId) => {
@@ -6743,10 +6846,10 @@ const renderTestCaseManagement = () => {
           <span class="tc-project-overview-total">${pCases.length} ${pCases.length === 1 ? 'case' : 'cases'}</span>
         </div>
         <div class="tc-project-overview-stats">
-          <div class="tc-project-overview-stat"><span class="dot passed"></span>Passed <strong>${pPassed}</strong></div>
-          <div class="tc-project-overview-stat"><span class="dot failed"></span>Failed <strong>${pFailed}</strong></div>
-          <div class="tc-project-overview-stat"><span class="dot blocked"></span>Blocked <strong>${pBlocked}</strong></div>
-          <div class="tc-project-overview-stat"><span class="dot untested"></span>Untested <strong>${pUntested}</strong></div>
+          <div class="tc-project-overview-stat"><span class="status-dot passed"></span>Passed <strong>${pPassed}</strong></div>
+          <div class="tc-project-overview-stat"><span class="status-dot failed"></span>Failed <strong>${pFailed}</strong></div>
+          <div class="tc-project-overview-stat"><span class="status-dot blocked"></span>Blocked <strong>${pBlocked}</strong></div>
+          <div class="tc-project-overview-stat"><span class="status-dot untested"></span>Untested <strong>${pUntested}</strong></div>
         </div>
         <div class="tc-project-overview-passrate">
           <div class="tc-project-overview-bar"><div style="width:${pPassRate}%"></div></div>
@@ -6798,23 +6901,23 @@ const renderTestCaseManagement = () => {
         <div class="tc-bar-chart">
           <div class="tc-bar-col">
             <span class="tc-bar-value">${passed}</span>
-            <div class="tc-bar-track"><div class="tc-bar-fill passed" style="height:${barPct(passed)}%"></div></div>
-            <span class="tc-bar-label">Passed</span>
+            <div class="tc-bar-track"><div class="tc-bar-fill passed" style="height:${barPct(passed)}%" title="Passed: ${passed}"></div></div>
+            <span class="tc-bar-label"><span class="status-dot passed"></span>Passed</span>
           </div>
           <div class="tc-bar-col">
             <span class="tc-bar-value">${failed}</span>
-            <div class="tc-bar-track"><div class="tc-bar-fill failed" style="height:${barPct(failed)}%"></div></div>
-            <span class="tc-bar-label">Failed</span>
+            <div class="tc-bar-track"><div class="tc-bar-fill failed" style="height:${barPct(failed)}%" title="Failed: ${failed}"></div></div>
+            <span class="tc-bar-label"><span class="status-dot failed"></span>Failed</span>
           </div>
           <div class="tc-bar-col">
             <span class="tc-bar-value">${blocked}</span>
-            <div class="tc-bar-track"><div class="tc-bar-fill blocked" style="height:${barPct(blocked)}%"></div></div>
-            <span class="tc-bar-label">Blocked</span>
+            <div class="tc-bar-track"><div class="tc-bar-fill blocked" style="height:${barPct(blocked)}%" title="Blocked: ${blocked}"></div></div>
+            <span class="tc-bar-label"><span class="status-dot blocked"></span>Blocked</span>
           </div>
           <div class="tc-bar-col">
             <span class="tc-bar-value">${untested}</span>
-            <div class="tc-bar-track"><div class="tc-bar-fill untested" style="height:${barPct(untested)}%"></div></div>
-            <span class="tc-bar-label">Untested</span>
+            <div class="tc-bar-track"><div class="tc-bar-fill untested" style="height:${barPct(untested)}%" title="Untested: ${untested}"></div></div>
+            <span class="tc-bar-label"><span class="status-dot untested"></span>Untested</span>
           </div>
         </div>
       </div>
@@ -6917,29 +7020,28 @@ const renderTestCaseManagement = () => {
     ${paginationBarHtml}
   `;
 
-  const modulesPanelHtml = activeProjId ? `
-    <aside class="tc-modules-panel">
-      <div class="tc-modules-panel-header">
-        <span class="tc-modules-panel-title">Modules</span>
-        <button class="tc-modules-panel-add" id="openAddModuleModalBtn" aria-label="Add Module" title="Add Module">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
-        </button>
-      </div>
-      <div class="tc-modules-panel-list" id="testCaseModulesList">
+  const modulesInlineHtml = activeProjId ? `
+    <div class="tc-modules-inline">
+      <span class="tc-modules-inline-label">Modules</span>
+      <div class="modules-horizontal-list" id="testCaseModulesList">
         ${modulesHtml}
       </div>
-    </aside>
+      <button class="add-module-pill-btn" id="openAddModuleModalBtn" aria-label="New Module" title="New Module">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:12px; height:12px; margin-right:4px;"><path d="M12 5v14M5 12h14"/></svg>
+        Add Module
+      </button>
+    </div>
   ` : '';
 
   // Return full workspace markup
   return `
     ${tcHero}
     <div class="tc-toolbar-row">
+      ${modulesInlineHtml}
       ${projectDropdownHtml}
     </div>
 
     <div class="testcases-workspace">
-      ${modulesPanelHtml}
       <section class="testcases-main-panel">
         ${activeProjId ? `
           ${selectionBarHtml}
@@ -8958,13 +9060,26 @@ const init = async () => {
   state.modules = data.modules || [];
   state.releasePoints = data.releasePoints || [];
   state.projectsViewMode = await ClairDB.getPref('projects_view_mode', 'list');
-  state.theme = await ClairDB.getPref('theme', 'system');
+  state.theme = await ClairDB.getPref('theme', 'light');
   applyTheme(state.theme);
 
   // Persist the "task completed" backfill immediately so existing tasks have
   // it in SQLite right away, not only after the next edit to each one.
   if (hadLegacyTasksWithoutWorkDone) {
     await storage.save();
+  }
+
+  // One-time cleanup: wipe all existing test-case modules (requested cleanup
+  // of pre-existing module data). Guarded by a meta flag so it only ever
+  // runs once — modules created afterward are left alone.
+  const modulesWiped = (await ClairDB.getPref('modules_wiped_v1')) === 'true';
+  if (!modulesWiped) {
+    if (state.modules.length > 0) {
+      state.modules = [];
+      state.testCases.forEach(tc => { tc.moduleId = ''; });
+      await storage.save();
+    }
+    await ClairDB.setPref('modules_wiped_v1', 'true');
   }
 
   // Initialize mock data on first load only
