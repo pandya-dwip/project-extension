@@ -53,25 +53,50 @@ The current app version is displayed in the sidebar footer and is always read di
 
 ## What's New
 
-### Storage migration to SQLite & full visual redesign (latest, unreleased)
+### Latest (unreleased)
 
 > The `manifest.json` version has not been bumped for this round of changes — the sidebar badge still reads 2.3.5. Bump it when these changes ship.
+>
+> An earlier pass of this work included a full visual redesign (indigo/violet accent, a design-token system, a grouped "+ New" topbar dropdown). Those changes never made it into the committed codebase and are **not** present today — the UI is still the original green-accented theme with a flat row of topbar buttons. Everything below this note reflects what's actually in the code.
 
 #### Persistence: chrome.storage.local → SQLite
 
 - **SQLite is now the only persistence layer.** [db.js](db.js) embeds [sql.js](https://github.com/sql-js/sql.js) (SQLite → WebAssembly) and exposes a small `ClairDB` API (`load`, `save`, `getPref`, `setPref`) that the rest of the app talks to — `app.js`'s own `storage.load()` / `storage.save()` now just delegate to it, so no business logic changed.
 - **Schema**: one table per collection (`projects`, `tasks`, `tests`, `activity`, `developers`, `releases`, `testCases`, `modules`, `releasePoints`), each `(seq, id, data, updated_at)` with the full record kept as a JSON blob (so no existing field was ever at risk of being dropped or reshaped) plus an index on `id`. A `meta` table holds schema version, migration status, and user preferences (theme, projects view mode).
-- **Automatic one-time migration**: on first load after updating, legacy `chrome.storage.local` (or `localStorage` in standalone mode) data is read, inserted transactionally, row counts are verified against the source, and only then is the legacy data cleared and a `migrated_v1` flag set. Re-running it (e.g. a second reload) is a no-op — verified with automated tests that seed legacy data, migrate, and reload repeatedly with no duplication.
+- **Automatic one-time migration**: on first load after updating, legacy `chrome.storage.local` (or `localStorage` in standalone mode) data is read, inserted transactionally, row counts are verified against the source, and only then is the legacy data cleared and a `migrated_v1` flag set. Re-running it (e.g. a second reload) is a no-op.
 - **Durability**: the live sql.js database is exported to bytes and written to **IndexedDB** after every save, so data survives reloads and browser restarts without depending on `chrome.storage`'s size limits.
 - `chrome.storage.local` is now only touched for the one-time legacy read/cleanup — see [Chrome APIs Used](#chrome-apis-used).
+- Manifest CSP updated to `script-src 'self' 'wasm-unsafe-eval'` — required for Chrome to compile the sql.js WebAssembly module under Manifest V3.
 
-#### Design: complete visual redesign
+#### Appearance: light/dark theme
 
-- **New design system** — full replacement of the color palette (an indigo/violet brand accent replacing the old flat green, with green reserved for "success" status only), a real typographic scale, a 4px spacing scale, a multi-level elevation/shadow system, and a tightened radius scale — all as CSS custom properties in [style.css](style.css).
-- **Light & dark themes** — every token has a dark-mode value, switchable via `prefers-color-scheme` or an explicit toggle in **Settings → Appearance**, persisted through `ClairDB.setPref`.
-- **Topbar decluttered** — the five separate "Add Task / Add Insight / Add Test Case / Add Release Point / Add Release" buttons are now grouped into a single animated **"+ New" dropdown menu**; "Add Project" remains the one standalone primary action. Import/Export became icon-only buttons.
-- **Every screen restyled** — dashboard, projects (list & Kanban), tasks, calendar, project insights, test case management, release management, release points, activity, and settings all redrawn against the new system; shared components (buttons, inputs, badges/pills, cards, tables, tabs, modals, toasts, empty states) unified into one visual language with hover-elevation and consistent motion.
-- **Accessibility pass** — ARIA labels on icon-only buttons, `role="dialog"`/`aria-modal` on all modals, a visible `:focus-visible` ring everywhere, and `prefers-reduced-motion` support.
+- Light and dark tokens for every color in [style.css](style.css); switchable via **Settings → Appearance** (System / Light / Dark), persisted through `ClairDB.setPref`.
+- "System" is resolved in JavaScript (`window.matchMedia`), not via a CSS `prefers-color-scheme` media query — an OS-driven media query would apply dark mode at first paint, before the saved preference has loaded from SQLite, causing a dark-then-light flash. The app now always paints light first and only switches to dark once JS has resolved the real preference.
+
+#### Task tracking improvements
+
+- **Work Done field** — a new free-text field on tasks for logging what was actually done, shown on the Kanban card and in the task detail modal. Existing tasks were backfilled with a placeholder ("task completed") so the field doesn't read as empty; new tasks are left blank until filled in.
+- **Date filter reworked twice**, ending on: a **Start Date** range (From/To, both inclusive) replacing the old single-date picker. It intentionally does *not* filter on `createdAt` — a task bulk-logged today for an earlier day is found by the day you're logging *for*, not the day you happened to enter it.
+- Typing into the From/To date fields no longer fights you: Chrome fires a `change` event on **every keystroke** of the year segment of a `type="date"` input (each digit briefly forms a zero-padded "complete" date), and reacting to each one by re-rendering was resetting which segment had focus. The filter now debounces those changes (600ms) so a normal typing burst collapses into one update.
+- **Weekly task-completion double-counting fixed** — the Dashboard's "Tasks Completed by Week" stat and its Chart.js bar chart both counted a week's tasks using the full Mon–Sun range instead of clamping to the displayed month, so a week straddling two months (e.g. Jul 27–Aug 2) counted the same completed tasks in *both* months' totals. Counting is now clamped identically to the label.
+- **Projects can be manually reordered** — drag and drop in the Projects List view moves a project to sit before/after any other project; order persists to SQLite. Previously the display order was just insertion order, so the most recently added project always appeared first with no way to change it.
+
+#### Test Case Management: redesigned
+
+- The horizontal-scrolling project tabs are gone, replaced by a searchable dropdown (top-right) with **"All Projects"** as the first option.
+- **Default view is "All Projects"**, showing a card per project (case count, Passed/Failed/Blocked/Untested breakdown, pass-rate bar) instead of a flat table. Selecting a project (via the dropdown or a card) switches to the detailed table view.
+- The **Modules** row now sits inline with the project dropdown (same toolbar row) as horizontal pills, and is only shown once a specific project is selected — it no longer takes up space in "All Projects" mode.
+- **"Test Pass Rate" split into two cards**: the pass-rate donut/percentage on its own, plus a new **Status Breakdown bar chart** (Passed/Failed/Blocked/Untested, gradient-filled bars with value labels). The old "Automation & Run Status" card was removed to make room.
+- **Real pagination** replaces the old "load more on scroll" behavior — a rows-per-page selector (5 / 10 / 25 / 50 / 100 / 150 / All, default 25) plus Prev/Next.
+- Hero stats (Total Cases, Passed, Failed, Blocked, Untested, Pass Rate) are now scoped to whatever's selected (a project, a module within it, or everything in "All Projects" mode) instead of always showing global totals.
+- **All pre-existing modules were wiped** in a guarded, one-time migration (per an explicit request to reset existing module data) — modules created afterward are unaffected.
+- Fixed the Excel/CSV import silently dropping the "Simplified Scenario" column: the column-header matcher checked for the generic substring `"scenario"` before the more specific `"simplified scenario"`, so a "Simplified Scenario" header was always caught by the generic rule first and its data ended up overwriting the main Scenario field instead of populating its own column.
+
+#### Other fixes
+
+- **Search inputs no longer lose focus while typing.** Every debounced page search (Tasks, Project Insights, Release Management, Release Points, Test Case Management, plus the Test Case project-dropdown search) re-renders `#mainContent` on each keystroke, which was destroying and recreating the input element mid-type. A shared `rerenderPreservingFocus()` helper now restores focus (and cursor position, where the input type supports it) immediately after each re-render.
+- Release Points grid changed from 3 cards per row to 2, giving the checklist column more room instead of truncating item text/links.
+- Release Point checklist ticket links now show the meaningful part of the URL (e.g. the Jira ticket key `CIMTRACK-482`) instead of a fixed 20-character slice of "hostname + path" that usually cut off mid-domain before reaching anything useful.
 
 ### v2.3.5
 
@@ -121,19 +146,18 @@ The current app version is displayed in the sidebar footer and is always read di
 | Area | What you can do |
 |---|---|
 | **Dashboard** | Live counts for projects, tasks, and insights; weekly task completion bar chart; released projects by month; recent projects, tasks, and insights. |
-| **Projects** | Create web and mobile app projects with platform-specific version fields; support custom metadata (Client, Team, Due Date, Priority); toggle between classic 3-column List view and 5-column lifecycle Kanban board view with HTML5 drag-and-drop; search, filter, edit, delete. |
-| **Tasks** | 4-column Kanban board (To-Do, In Progress, Done, On Hold); drag cards between columns; visual date alerts for overdue, due-today, and due-tomorrow tasks; assign tasks to developers. |
+| **Projects** | Create web and mobile app projects with platform-specific version fields; support custom metadata (Client, Team, Due Date, Priority); toggle between classic 3-column List view and 5-column lifecycle Kanban board view with HTML5 drag-and-drop; manually reorder projects in List view by dragging; search, filter, edit, delete. |
+| **Tasks** | 4-column Kanban board (To-Do, In Progress, Done, On Hold); drag cards between columns; visual date alerts for overdue, due-today, and due-tomorrow tasks; assign tasks to developers; log a free-text "Work Done" note per task; filter by a Start Date range (From/To). |
 | **Project Insights** | Capture issues, enhancements, and notes per project; track each item through a Dev → QA → Done workflow; filter by developer, status, and assignment state. |
 | **Release Management** | Log releases sorted by release date; advance through a seven-stage status workflow (Draft → Released); generate email-style release announcements; copy notes to clipboard. |
-| **Release Points** | Compact horizontal cards in a two-column grid; slim progress bar per card; inline delete for checklist items; bulk add with a count picker; scroll-preserving checklist toggle. |
-| **Test Case Management** | Enter structured test cases with priority, severity, module, and status; import cases from CSV; group by module. |
+| **Release Points** | Compact horizontal cards in a two-column grid; slim progress bar per card; inline delete for checklist items; bulk add with a count picker; scroll-preserving checklist toggle; checklist ticket links show the ticket key, not a truncated URL. |
+| **Test Case Management** | Enter structured test cases with priority, severity, module, and status; import cases from Excel/CSV; a searchable project dropdown ("All Projects" first, showing per-project summary cards) replaces per-project tabs; inline modules row; pass-rate donut + status-breakdown bar chart; paginated table (configurable rows per page). |
 | **Developers** | Maintain a developer registry; link developers to projects so they appear in context-sensitive dropdowns on tasks and insights. |
 | **Activity Feed** | Timestamped audit trail of every create, update, delete, move, and copy action (capped at 200 entries). |
 | **Data Portability** | Export all collections to a single JSON file; restore from any previous export; clear all data after a mandatory backup prompt. Underlying storage is SQLite, but the export/import file shape is unchanged. |
 | **Responsive UI** | Sidebar collapses to a hamburger menu on small screens; card grids and Kanban boards reflow for mobile and tablet. |
-| **Appearance** | Light and dark themes, either following the OS (`prefers-color-scheme`) or pinned explicitly from Settings → Appearance; choice persists across reloads. |
+| **Appearance** | Light and dark themes, resolved in JS (System follows the OS setting, or pin Light/Dark explicitly) from Settings → Appearance; choice persists across reloads. |
 | **Global Search** | `Ctrl+K` / `Cmd+K` opens instant search across projects, tasks, and developers from any screen. |
-| **"+ New" menu** | The topbar groups Task / Insight / Test Case / Release Point (and Release, on the Release Management screen) into one dropdown, keeping "Add Project" as the single standalone primary action. |
 | **Version Badge** | App version shown in the sidebar footer; auto-read from `manifest.json` — always stays in sync. |
 
 ---
@@ -211,8 +235,9 @@ Four columns: **To-Do** · **In Progress** · **Done** · **On Hold**
 - **Task modal search & dynamic developer filter**:
   - **Checklist Search**: Adding or editing a task features built-in search boxes above the **Project** and **Developer** checklists to quickly filter items without scrolling the checklist container.
   - **Dynamic Developer Filtering**: Selecting a project dynamically filters the developer checklist, displaying only developers who are linked to the selected project(s). If no projects are checked, all developers are displayed.
+- **Work Done**: a free-text field for logging what was actually done on a task, shown on the card and in the detail modal.
 
-Filters: project, date range. Search matches title, description, and developer name.
+Filters: project, priority, deadline (overdue / within 3 days / within a week / within 15 days), and a **Start Date range** (From/To, both inclusive — matches `task.startDate`, not when the task was created). Search matches title, description, and developer name.
 
 ### Project Insights
 
@@ -248,6 +273,15 @@ Cards use a horizontal two-column layout (info + slim progress bar on the left, 
 - **Add Item** — inserts one empty row.
 - **Bulk Add** — opens a count picker; set how many empty rows you want (`−` / number / `+`) and click **Add Items**.
 
+### Test Case Management
+
+- **Project selector**: a searchable dropdown (top-right, "All Projects" listed first) replaces the old horizontal-scrolling project tabs.
+- **"All Projects" (default)**: shows a card per project — case count and a Passed/Failed/Blocked/Untested breakdown with a pass-rate bar. Clicking a card (or picking it from the dropdown) drills into that project.
+- **A specific project selected**: shows the Modules row (inline, next to the project dropdown, horizontal pills — only present in this mode), two chart cards (pass-rate donut + a Status Breakdown bar chart of Passed/Failed/Blocked/Untested), the filter toolbar (search, run status, priority, type, Import Excel, Bulk Update, Select Cases), and the full test case table.
+- **Pagination**: rows-per-page selector (5 / 10 / 25 / 50 / 100 / 150 / All, default 25) with Prev/Next and a "Showing X–Y of Z" indicator, replacing the previous "load 100 more on scroll" behavior.
+- **Bulk selection**: "Select Cases" enables checkboxes for multi-select, bulk field updates, and bulk delete.
+- **Excel/CSV import**: drag-and-drop or file picker, with column auto-mapping (editable before import) and duplicate detection.
+
 ### Settings
 
 - **Appearance** — choose System / Light / Dark theme; persists across reloads.
@@ -282,7 +316,7 @@ background.js  (MV3 service worker)
         ▼
 index.html  (static shell)
   ├─ Sidebar navigation + version badge
-  ├─ Top bar (search, "+ New" dropdown, action buttons)
+  ├─ Top bar (search, Import/Export, one button per create action)
   ├─ #mainContent  ◄── all view HTML is rendered here
   └─ Modal layer (forms, detail views, confirmations)
         │
@@ -363,13 +397,15 @@ chrome.storage.local / localStorage   (legacy data source, cleared after migrati
   "id": "string",
   "title": "string",
   "description": "string",
+  "workDone": "string",
   "tags": ["string"],
   "startDate": "YYYY-MM-DD",
   "endDate": "YYYY-MM-DD",
   "status": "To-Do | In Progress | Done | On Hold",
   "priority": "Urgent | High | Medium | Low",
-  "projectId": "string",
-  "developer": "developer id",
+  "projectIds": ["project id"],
+  "developerIds": ["developer id"],
+  "completedDate": "ISO 8601 | null",
   "createdAt": "ISO 8601",
   "updatedAt": "ISO 8601"
 }
@@ -436,13 +472,13 @@ chrome.storage.local / localStorage   (legacy data source, cleared after migrati
 ### Relationships
 
 ```
-PROJECT ──┬── TASK           (task.projectId)
+PROJECT ──┬── TASK           (task.projectIds[])
           ├── INSIGHT         (insight.projectId)
           ├── RELEASE         (release.projectId)
           └── RELEASE POINT   (releasePoint.projectIds[])
 
 DEVELOPER ─┬── PROJECT       (developer.projectIds[])
-            ├── TASK          (task.developer)
+            ├── TASK          (task.developerIds[])
             ├── INSIGHT       (insight.developer)
             └── RELEASE       (release.developerIds[])
 ```
@@ -456,9 +492,9 @@ project-extension/
 ├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 2.3.5)
 ├── background.js            Service worker — tab lifecycle management
 ├── index.html               Static shell: sidebar, top bar, modals, form controls
-├── app.js                   Single-page controller (~9 100 lines)
+├── app.js                   Single-page controller (~9 400 lines)
 ├── db.js                    ClairDB — SQLite persistence layer, schema, migration (~220 lines)
-├── style.css                Complete stylesheet with CSS custom properties (~7 300 lines)
+├── style.css                Complete stylesheet with CSS custom properties (~7 750 lines)
 ├── sql-wasm.js              sql.js (SQLite → WebAssembly) loader, vendored
 ├── sql-wasm.wasm            SQLite compiled to WebAssembly
 ├── chart.umd.min.js         Bundled Chart.js v4.4.4 (local, no CDN)
@@ -581,8 +617,11 @@ Clair follows a no-build, no-framework approach. Keep contributions consistent w
 - [ ] Fresh install (empty IndexedDB, no legacy data): app boots, schema is created, mock/backup data loads without errors.
 - [ ] Upgrade path: seed legacy `chrome.storage.local` data, load the app, confirm it migrates into SQLite with matching record counts and the legacy keys are cleared.
 - [ ] Reloading after migration does not duplicate rows (`migrated_v1` guard) — check via `await ClairDB.load()` in the console.
-- [ ] Theme: toggling System / Light / Dark in Settings → Appearance updates the UI immediately and persists across a reload.
-- [ ] The "+ New" topbar dropdown opens/closes on trigger click, outside click, and `Escape`, and each item still opens its correct modal.
+- [ ] Theme: toggling System / Light / Dark in Settings → Appearance updates the UI immediately and persists across a reload; no dark-then-light flash on launch regardless of OS theme.
+- [ ] Task Work Done: new tasks start blank; existing (pre-update) tasks show the "task completed" backfill; editing and saving persists it to SQLite and shows on the card and detail modal.
+- [ ] Task date range filter: matches `startDate` (not `createdAt`), inclusive on both ends; typing a full date into From/To doesn't jump segments or lose focus.
+- [ ] Test Case Management: defaults to "All Projects" cards; selecting a project shows the modules row, both chart cards, and a paginated table; changing rows-per-page and Prev/Next behave correctly; Excel import correctly populates the Simplified Scenario column.
+- [ ] Projects List view: dragging a project card reorders the list and persists across reload.
 
 ---
 
