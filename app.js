@@ -5590,10 +5590,15 @@ const renderReleasePtCard = (rp, q = '') => {
       let display = ticket.trim();
       try {
         const url = new URL(href);
-        if (url.pathname && url.pathname !== '/') {
-          display = url.hostname.replace('www.', '') + url.pathname;
-          if (display.length > 20) display = display.substring(0, 17) + '...';
-        }
+        // Show the last path segment (e.g. the ticket key "CIMTRACK-123" out
+        // of a Jira "/browse/CIMTRACK-123" link) rather than a fixed-length
+        // slice of "hostname + path", which just chopped off mid-domain
+        // before ever reaching the actually useful part. The full URL is
+        // still shown on hover via the title attribute and is what's opened.
+        const segments = url.pathname.split('/').filter(Boolean);
+        display = segments.length
+          ? decodeURIComponent(segments[segments.length - 1])
+          : url.hostname.replace('www.', '');
       } catch (e) { }
       return `
         <a href="${href}" target="_blank" class="rp-item-ticket link" title="View Ticket: ${ticket}" onclick="event.stopPropagation();">

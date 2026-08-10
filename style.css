@@ -5035,7 +5035,7 @@ textarea:focus-visible,
 /* ─── Release Point Cards ─── */
 .rp-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -6012,6 +6012,13 @@ textarea:focus-visible,
   padding: 1px 5px;
   border-radius: 3px;
   text-decoration: none;
+  max-width: 200px;
+}
+
+.rp-item-ticket span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .rp-item-ticket.text {
