@@ -62,7 +62,7 @@ The current app version is displayed in the sidebar footer and is always read di
 #### Persistence: chrome.storage.local → SQLite
 
 - **SQLite is now the only persistence layer.** [db.js](db.js) embeds [sql.js](https://github.com/sql-js/sql.js) (SQLite → WebAssembly) and exposes a small `ClairDB` API (`load`, `save`, `getPref`, `setPref`) that the rest of the app talks to — `app.js`'s own `storage.load()` / `storage.save()` now just delegate to it, so no business logic changed.
-- **Schema**: one table per collection (`projects`, `tasks`, `tests`, `activity`, `developers`, `releases`, `testCases`, `modules`, `releasePoints`), each `(seq, id, data, updated_at)` with the full record kept as a JSON blob (so no existing field was ever at risk of being dropped or reshaped) plus an index on `id`. A `meta` table holds schema version, migration status, and user preferences (theme, projects view mode).
+- **Schema**: one table per collection (`projects`, `tasks`, `tests`, `activity`, `developers`, `releases`, `testCases`, `modules`, `releasePoints`, `noteFolders`, `notes`), each `(seq, id, data, updated_at)` with the full record kept as a JSON blob (so no existing field was ever at risk of being dropped or reshaped) plus an index on `id`. A `meta` table holds schema version, migration status, and user preferences (theme, projects view mode).
 - **Automatic one-time migration**: on first load after updating, legacy `chrome.storage.local` (or `localStorage` in standalone mode) data is read, inserted transactionally, row counts are verified against the source, and only then is the legacy data cleared and a `migrated_v1` flag set. Re-running it (e.g. a second reload) is a no-op.
 - **Durability**: the live sql.js database is exported to bytes and written to **IndexedDB** after every save, so data survives reloads and browser restarts without depending on `chrome.storage`'s size limits.
 - `chrome.storage.local` is now only touched for the one-time legacy read/cleanup — see [Chrome APIs Used](#chrome-apis-used).
@@ -91,6 +91,16 @@ The current app version is displayed in the sidebar footer and is always read di
 - Hero stats (Total Cases, Passed, Failed, Blocked, Untested, Pass Rate) are now scoped to whatever's selected (a project, a module within it, or everything in "All Projects" mode) instead of always showing global totals.
 - **All pre-existing modules were wiped** in a guarded, one-time migration (per an explicit request to reset existing module data) — modules created afterward are unaffected.
 - Fixed the Excel/CSV import silently dropping the "Simplified Scenario" column: the column-header matcher checked for the generic substring `"scenario"` before the more specific `"simplified scenario"`, so a "Simplified Scenario" header was always caught by the generic rule first and its data ended up overwriting the main Scenario field instead of populating its own column.
+
+#### Notes Module: Project-based hierarchy & Markdown workspace
+
+- **Project-based hierarchy**: Organize notes per Clair project with a strict **1-level subfolder limitation** (`Project -> Direct Notes` or `Project -> Main Folder -> Subfolder -> Notes`).
+- **3-panel UI workspace**: Clean 3-panel split view featuring a left Projects list with note count badges, a middle collapsible Folders & Notes tree with search input, sort dropdown, and `New` dropdown menu, and a right Editor & Preview workspace with breadcrumbs and time-ago timestamps.
+- **10-item Markdown toolbar**: Formats text with selection awareness — Bold, Italic, Heading 1, Heading 2, Bullet List, Numbered List, Checklist, Inline Code, Code Block, and Link.
+- **Edit / Preview mode switcher**: Switch between editing mode and live preview using a zero-dependency HTML-escaping Markdown parser (`parseMarkdown`).
+- **Debounced search & flexible sorting**: Real-time debounced search across note title, note content, project name, and folder name with location path breadcrumb tags. Sort notes by *Recently Updated* (default), *Recently Created*, or *Title A–Z*.
+- **Move note modal**: Move notes between project root, main folders, or subfolders via a dedicated dropdown modal.
+- **SQLite schema & JSON backup**: Data is stored in SQLite (`noteFolders` and `notes` tables), persisted to IndexedDB, and exported/imported via JSON backup files.
 
 #### Other fixes
 
@@ -151,6 +161,7 @@ The current app version is displayed in the sidebar footer and is always read di
 | **Project Insights** | Capture issues, enhancements, and notes per project; track each item through a Dev → QA → Done workflow; filter by developer, status, and assignment state. |
 | **Release Management** | Log releases sorted by release date; advance through a seven-stage status workflow (Draft → Released); generate email-style release announcements; copy notes to clipboard. |
 | **Release Points** | Compact horizontal cards in a two-column grid; slim progress bar per card; inline delete for checklist items; bulk add with a count picker; scroll-preserving checklist toggle; checklist ticket links show the ticket key, not a truncated URL. |
+| **Notes** | Organize notes by project; create main folders and 1-level subfolders; write notes with a 10-item Markdown toolbar & Edit/Preview mode toggle; move notes across project/folder tree; debounced search & sort by updated date, creation date, or title. |
 | **Test Case Management** | Enter structured test cases with priority, severity, module, and status; import cases from Excel/CSV; a searchable project dropdown ("All Projects" first, showing per-project summary cards) replaces per-project tabs; inline modules row; pass-rate donut + status-breakdown bar chart; paginated table (configurable rows per page). |
 | **Developers** | Maintain a developer registry; link developers to projects so they appear in context-sensitive dropdowns on tasks and insights. |
 | **Activity Feed** | Timestamped audit trail of every create, update, delete, move, and copy action (capped at 200 entries). |
@@ -196,6 +207,7 @@ Clair is a single-page application. Navigation switches the rendered view in pla
 | Project Insights | `tests` | Issue, enhancement, and note board per project |
 | Release Management | `releases` | Release lifecycle and note generation (sorted by release date) |
 | Release Points | `releasepoints` | Compact checklist cards with bulk add and inline delete |
+| Notes | `notes` | Project-based notes & Markdown workspace with 1-level subfolder hierarchy |
 | Test Cases | `testcases` | Structured test case entry and management |
 | Activity | `activity` | Chronological audit feed |
 | Settings | `settings` | Export, import, clear data, and developer management |
@@ -339,7 +351,7 @@ app.js  (single-page controller)
 db.js  (ClairDB — persistence layer)
   ├─ sql.js (SQLite compiled to WebAssembly, see sql-wasm.js/.wasm)
   ├─ schema: projects/tasks/tests/activity/developers/releases/
-  │          testCases/modules/releasePoints + meta (prefs, migration state)
+  │          testCases/modules/releasePoints/noteFolders/notes + meta (prefs, migration state)
   ├─ migrateFromLegacyStorage()  one-time, transactional, verified, idempotent
   └─ load()/save()/getPref()/setPref()  the only API the rest of the app uses
         │
@@ -469,13 +481,45 @@ chrome.storage.local / localStorage   (legacy data source, cleared after migrati
 }
 ```
 
+### Note Folder
+
+```json
+{
+  "id": "string",
+  "projectId": "string",
+  "parentId": "string | null",
+  "name": "string",
+  "createdAt": "ISO 8601",
+  "updatedAt": "ISO 8601"
+}
+```
+
+### Note
+
+```json
+{
+  "id": "string",
+  "projectId": "string",
+  "folderId": "string | null",
+  "title": "string",
+  "content": "string",
+  "createdAt": "ISO 8601",
+  "updatedAt": "ISO 8601"
+}
+```
+
 ### Relationships
 
 ```
 PROJECT ──┬── TASK           (task.projectIds[])
-          ├── INSIGHT         (insight.projectId)
-          ├── RELEASE         (release.projectId)
-          └── RELEASE POINT   (releasePoint.projectIds[])
+          ├── INSIGHT        (insight.projectId)
+          ├── RELEASE        (release.projectId)
+          ├── RELEASE POINT  (releasePoint.projectIds[])
+          ├── NOTE FOLDER    (noteFolder.projectId)
+          └── NOTE           (note.projectId)
+
+NOTE FOLDER ──┬── NOTE FOLDER  (subfolder parentId -> main folder id)
+              └── NOTE         (note.folderId)
 
 DEVELOPER ─┬── PROJECT       (developer.projectIds[])
             ├── TASK          (task.developerIds[])
@@ -540,7 +584,7 @@ In **Settings**, click **Export Data**. A timestamped JSON file is downloaded to
 clair-export-2026-06-20.json
 ```
 
-The export includes: `projects`, `tasks`, `tests` (insights), `developers`, `releases`, `testCases`, `modules`, `releasePoints`, and `activity`.
+The export includes: `projects`, `tasks`, `tests` (insights), `developers`, `releases`, `testCases`, `modules`, `releasePoints`, `noteFolders`, `notes`, and `activity`.
 
 ### Importing
 
@@ -558,6 +602,8 @@ In **Settings**, click **Import Data** and select a previously exported JSON fil
   "testCases": [...],
   "modules": [...],
   "releasePoints": [...],
+  "noteFolders": [...],
+  "notes": [...],
   "activity": [...]
 }
 ```
@@ -612,7 +658,8 @@ Clair follows a no-build, no-framework approach. Keep contributions consistent w
 - [ ] Inline checklist item delete removes the item without opening the modal.
 - [ ] Bulk Add count picker inserts the correct number of empty rows.
 - [ ] Export creates a valid JSON backup.
-- [ ] Import restores projects, tasks, insights, developers, releases, test cases, and release points.
+- [ ] Import restores projects, tasks, insights, developers, releases, test cases, release points, note folders, and notes.
+- [ ] Notes: project selection filters tree view; folder & 1-level subfolder creation works; subfolder limit is strictly enforced; Markdown toolbar formats text correctly; Edit/Preview mode toggle works; search & sorting filter correctly; Move Note updates location; deleting a project cascades to clean up associated notes/folders.
 - [ ] Calendar view correctly renders monthly grid, navigates months, filters tasks, and opens task edit/create modals.
 - [ ] Fresh install (empty IndexedDB, no legacy data): app boots, schema is created, mock/backup data loads without errors.
 - [ ] Upgrade path: seed legacy `chrome.storage.local` data, load the app, confirm it migrates into SQLite with matching record counts and the legacy keys are cleared.

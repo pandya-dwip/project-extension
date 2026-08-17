@@ -84,7 +84,16 @@ let state = {
   calendarFilters: { project: '', type: '' },
   selectedCalendarDate: '',
   calendarRightPanelFilter: 'all',
-  calendarRightPanelSort: 'priority'
+  calendarRightPanelSort: 'priority',
+  noteFolders: [],
+  notes: [],
+  activeNoteProjectId: null,
+  activeNoteFolderId: null,
+  activeNoteId: null,
+  noteEditorMode: 'edit',
+  noteSearchQuery: '',
+  noteSortBy: 'updatedAt',
+  expandedNoteFolderIds: new Set()
 };
 
 let confirmCallback = null;
@@ -109,7 +118,9 @@ const storage = {
       releases: state.releases,
       testCases: state.testCases,
       modules: state.modules,
-      releasePoints: state.releasePoints || []
+      releasePoints: state.releasePoints || [],
+      noteFolders: state.noteFolders || [],
+      notes: state.notes || []
     });
   }
 };
@@ -399,6 +410,8 @@ const exportData = () => {
     testCases: state.testCases || [],
     modules: state.modules || [],
     releasePoints: state.releasePoints || [],
+    noteFolders: state.noteFolders || [],
+    notes: state.notes || [],
     exportedAt: new Date().toISOString()
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -442,6 +455,8 @@ const importData = (file) => {
         state.testCases = data.testCases || [];
         state.modules = data.modules || [];
         state.releasePoints = data.releasePoints || [];
+        state.noteFolders = data.noteFolders || [];
+        state.notes = data.notes || [];
         await storage.save();
         render();
         updateStorageInfo();
@@ -1124,6 +1139,7 @@ const setView = (view) => {
     releases: 'Release Management',
     releasepoints: 'Release Points',
     testcases: 'Test Case Management',
+    notes: 'Notes',
     activity: 'Activity',
     settings: 'Settings'
   };
@@ -1169,6 +1185,7 @@ const render = () => {
     case 'releases': ct.innerHTML = renderReleases(); break;
     case 'releasepoints': ct.innerHTML = renderReleasePoints(); break;
     case 'testcases': ct.innerHTML = renderTestCaseManagement(); break;
+    case 'notes': ct.innerHTML = renderNotes(); break;
     case 'activity': ct.innerHTML = renderActivity(); break;
     case 'settings': ct.innerHTML = renderSettings(); break;
   }
@@ -1989,10 +2006,10 @@ const renderProjects = () => {
     ? renderKanbanBoard(projects, q)
     : (projects.length === 0 ? `
       ${emptyState(
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>',
-        q || state.filters.status ? 'No results found' : 'No projects yet',
-        q || state.filters.status ? 'Try a different search or filter.' : 'Click "Add Project" in the header to create your first project.'
-      )}
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>',
+      q || state.filters.status ? 'No results found' : 'No projects yet',
+      q || state.filters.status ? 'Try a different search or filter.' : 'Click "Add Project" in the header to create your first project.'
+    )}
     ` : `
       <div class="project-list">
         ${projects.map(p => renderProjectCard(p, q)).join('')}
@@ -3126,10 +3143,10 @@ const renderActivity = () => {
     ${hero}
     ${state.activity.length === 0 ? `
       ${emptyState(
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
-        'No activity yet',
-        'Start creating projects and tasks — every action will be tracked here.'
-      )}
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
+    'No activity yet',
+    'Start creating projects and tasks — every action will be tracked here.'
+  )}
     ` : `
       <div class="activity-list">
         ${state.activity.map(a => `
@@ -3398,6 +3415,12 @@ const clearAllData = async () => {
   state.releasePoints = [];
   state.testCases = [];
   state.modules = [];
+  state.noteFolders = [];
+  state.notes = [];
+  state.activeNoteProjectId = null;
+  state.activeNoteFolderId = null;
+  state.activeNoteId = null;
+  state.noteSearchQuery = '';
   state.filters = { status: '', previousVersion: '', upcomingVersion: '', dateFrom: '', dateTo: '', taskProject: '' };
   state.testFilters = { project: '', developer: '', status: '', assignedStatus: '' };
   state.releaseFilters = { status: '' };
@@ -4513,6 +4536,13 @@ const deleteProject = async (id) => {
   const p = state.projects.find(x => x.id === id);
   if (!p) return;
   state.projects = state.projects.filter(x => x.id !== id);
+  state.noteFolders = (state.noteFolders || []).filter(f => f.projectId !== id);
+  state.notes = (state.notes || []).filter(n => n.projectId !== id);
+  if (state.activeNoteProjectId === id) {
+    state.activeNoteProjectId = null;
+    state.activeNoteFolderId = null;
+    state.activeNoteId = null;
+  }
   logActivity(`Deleted project "${p.name}"`, 'delete');
   await storage.save();
   closeModals();
@@ -5228,10 +5258,10 @@ const renderReleases = () => {
 
     ${releases.length === 0 ? `
       ${emptyState(
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><polygon points="12 22.08 12 12 3 6.92 3 17.08 12 22.08"/><polygon points="12 22.08 21 17.08 21 6.92 12 12 12 22.08"/><polygon points="12 12 21 6.92 12 1.84 3 6.92 12 12"/></svg>',
-        q || state.releaseFilters.status ? 'No releases match search/filters' : 'No releases found',
-        q || state.releaseFilters.status ? 'Try adjustments or click Clear.' : 'Click "Add Release" in the header to manage your first project release!'
-      )}
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><polygon points="12 22.08 12 12 3 6.92 3 17.08 12 22.08"/><polygon points="12 22.08 21 17.08 21 6.92 12 12 12 22.08"/><polygon points="12 12 21 6.92 12 1.84 3 6.92 12 12"/></svg>',
+    q || state.releaseFilters.status ? 'No releases match search/filters' : 'No releases found',
+    q || state.releaseFilters.status ? 'Try adjustments or click Clear.' : 'Click "Add Release" in the header to manage your first project release!'
+  )}
     ` : `
       <div class="card-grid">
         ${releases.map(r => renderReleaseCard(r, q)).join('')}
@@ -6568,11 +6598,11 @@ const renderTestCaseManagement = () => {
   if (state.projects.length === 0) {
     return `
       ${emptyState(
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>',
-        'No projects found',
-        'You need to create a project first before creating modules or test cases.',
-        '<button class="btn-primary" onclick="openProjectModal()" style="margin-top: 12px;">Create Project</button>'
-      )}
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>',
+      'No projects found',
+      'You need to create a project first before creating modules or test cases.',
+      '<button class="btn-primary" onclick="openProjectModal()" style="margin-top: 12px;">Create Project</button>'
+    )}
     `;
   }
 
@@ -9051,6 +9081,835 @@ ${(r.managerName && r.managerName !== '— Select Manager —') ? r.managerName 
   });
 };
 
+// ─── Notes Module ─────────────────────────────────────────
+
+const parseMarkdown = (md) => {
+  if (!md) return '<p style="color:var(--text-muted);font-style:italic;">Empty note</p>';
+
+  const codeBlocks = [];
+  let html = md.replace(/```([\s\S]*?)```/g, (match, code) => {
+    const placeholder = `__CODE_BLOCK_${codeBlocks.length}__`;
+    const lines = code.split('\n');
+    let body = code;
+    if (lines.length > 0 && lines[0].trim() && !lines[0].includes(' ')) {
+      body = lines.slice(1).join('\n');
+    }
+    const escapedCode = escapeHtml(body.trim());
+    codeBlocks.push(`<pre><code>${escapedCode}</code></pre>`);
+    return placeholder;
+  });
+
+  const inlineCodes = [];
+  html = html.replace(/`([^`]+)`/g, (match, code) => {
+    const placeholder = `__INLINE_CODE_${inlineCodes.length}__`;
+    inlineCodes.push(`<code>${escapeHtml(code)}</code>`);
+    return placeholder;
+  });
+
+  html = escapeHtml(html);
+
+  const lines = html.split('\n');
+  const resultLines = [];
+  let inList = false;
+  let listType = null;
+
+  const closeList = () => {
+    if (inList) {
+      resultLines.push(listType === 'ul' ? '</ul>' : '</ol>');
+      inList = false;
+      listType = null;
+    }
+  };
+
+  lines.forEach(line => {
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith('__CODE_BLOCK_')) {
+      closeList();
+      resultLines.push(trimmed);
+      return;
+    }
+
+    if (trimmed.startsWith('# ')) {
+      closeList();
+      resultLines.push(`<h1>${parseInlineMarkdown(trimmed.slice(2))}</h1>`);
+      return;
+    }
+    if (trimmed.startsWith('## ')) {
+      closeList();
+      resultLines.push(`<h2>${parseInlineMarkdown(trimmed.slice(3))}</h2>`);
+      return;
+    }
+    if (trimmed.startsWith('### ')) {
+      closeList();
+      resultLines.push(`<h3>${parseInlineMarkdown(trimmed.slice(4))}</h3>`);
+      return;
+    }
+
+    const checkMatch = trimmed.match(/^- \[(x|X| )\] (.*)$/);
+    if (checkMatch) {
+      if (!inList || listType !== 'ul') {
+        closeList();
+        resultLines.push('<ul style="list-style:none;padding-left:0;">');
+        inList = true;
+        listType = 'ul';
+      }
+      const checked = checkMatch[1].toLowerCase() === 'x' ? 'checked' : '';
+      const text = parseInlineMarkdown(checkMatch[2]);
+      resultLines.push(`<li class="task-list-item"><input type="checkbox" ${checked} disabled /> <span>${text}</span></li>`);
+      return;
+    }
+
+    const bulletMatch = trimmed.match(/^[-*] (.*)$/);
+    if (bulletMatch) {
+      if (!inList || listType !== 'ul') {
+        closeList();
+        resultLines.push('<ul>');
+        inList = true;
+        listType = 'ul';
+      }
+      resultLines.push(`<li>${parseInlineMarkdown(bulletMatch[1])}</li>`);
+      return;
+    }
+
+    const numMatch = trimmed.match(/^(\d+)\. (.*)$/);
+    if (numMatch) {
+      if (!inList || listType !== 'ol') {
+        closeList();
+        resultLines.push('<ol>');
+        inList = true;
+        listType = 'ol';
+      }
+      resultLines.push(`<li>${parseInlineMarkdown(numMatch[2])}</li>`);
+      return;
+    }
+
+    if (!trimmed) {
+      closeList();
+      resultLines.push('<br>');
+      return;
+    }
+
+    closeList();
+    resultLines.push(`<p>${parseInlineMarkdown(trimmed)}</p>`);
+  });
+
+  closeList();
+
+  let finalHtml = resultLines.join('\n');
+
+  inlineCodes.forEach((codeHtml, i) => {
+    finalHtml = finalHtml.replace(`__INLINE_CODE_${i}__`, codeHtml);
+  });
+
+  codeBlocks.forEach((codeHtml, i) => {
+    finalHtml = finalHtml.replace(`__CODE_BLOCK_${i}__`, codeHtml);
+  });
+
+  return finalHtml;
+};
+
+const parseInlineMarkdown = (text) => {
+  if (!text) return '';
+  let str = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  str = str.replace(/\*(.*?)\*/g, '<em>$1</em>');
+  str = str.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  return str;
+};
+
+const insertMarkdownSyntax = (type) => {
+  const textarea = document.getElementById('noteContentInput');
+  if (!textarea) return;
+
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  const val = textarea.value;
+  const selectedText = val.substring(start, end);
+
+  let replacement = '';
+  let cursorOffset = 0;
+
+  switch (type) {
+    case 'bold':
+      replacement = `**${selectedText || 'bold text'}**`;
+      cursorOffset = selectedText ? replacement.length : 2;
+      break;
+    case 'italic':
+      replacement = `*${selectedText || 'italic text'}*`;
+      cursorOffset = selectedText ? replacement.length : 1;
+      break;
+    case 'h1':
+      replacement = `# ${selectedText || 'Heading 1'}`;
+      cursorOffset = replacement.length;
+      break;
+    case 'h2':
+      replacement = `## ${selectedText || 'Heading 2'}`;
+      cursorOffset = replacement.length;
+      break;
+    case 'bullet':
+      replacement = `- ${selectedText || 'List item'}`;
+      cursorOffset = replacement.length;
+      break;
+    case 'number':
+      replacement = `1. ${selectedText || 'List item'}`;
+      cursorOffset = replacement.length;
+      break;
+    case 'checklist':
+      replacement = `- [ ] ${selectedText || 'Task item'}`;
+      cursorOffset = replacement.length;
+      break;
+    case 'code':
+      replacement = `\`${selectedText || 'code'}\``;
+      cursorOffset = selectedText ? replacement.length : 1;
+      break;
+    case 'codeblock':
+      replacement = `\`\`\`\n${selectedText || 'code block'}\n\`\`\``;
+      cursorOffset = selectedText ? replacement.length : 4;
+      break;
+    case 'link':
+      replacement = `[${selectedText || 'Link Title'}](https://example.com)`;
+      cursorOffset = selectedText ? replacement.length : 1;
+      break;
+  }
+
+  textarea.value = val.substring(0, start) + replacement + val.substring(end);
+  textarea.focus();
+  textarea.setSelectionRange(start + cursorOffset, start + cursorOffset);
+
+  if (state.activeNoteId) {
+    const note = (state.notes || []).find(n => n.id === state.activeNoteId);
+    if (note) {
+      note.content = textarea.value;
+      note.updatedAt = new Date().toISOString();
+    }
+  }
+};
+
+const openFolderModal = (folderId = null, projectId = null, parentId = null) => {
+  const input = document.getElementById('folderNameInput');
+  const idEl = document.getElementById('folderId');
+  const projEl = document.getElementById('folderProjectId');
+  const parentEl = document.getElementById('folderParentId');
+  const titleEl = document.getElementById('folderModalTitle');
+
+  if (folderId) {
+    const f = (state.noteFolders || []).find(x => x.id === folderId);
+    if (!f) return;
+    titleEl.textContent = f.parentId ? 'Rename Subfolder' : 'Rename Folder';
+    idEl.value = f.id;
+    projEl.value = f.projectId;
+    parentEl.value = f.parentId || '';
+    input.value = f.name;
+  } else {
+    titleEl.textContent = parentId ? 'New Subfolder' : 'New Folder';
+    idEl.value = '';
+    projEl.value = projectId || state.activeNoteProjectId || '';
+    parentEl.value = parentId || '';
+    input.value = '';
+  }
+  showModal('folderModal');
+  setTimeout(() => input.focus(), 100);
+};
+
+const saveFolder = async () => {
+  const name = document.getElementById('folderNameInput').value.trim();
+  const id = document.getElementById('folderId').value;
+  const projectId = document.getElementById('folderProjectId').value;
+  const parentId = document.getElementById('folderParentId').value || null;
+
+  if (!name) {
+    showToast('Folder name is required', 'error');
+    return;
+  }
+  if (!projectId) {
+    showToast('Project is required', 'error');
+    return;
+  }
+
+  if (parentId) {
+    const parentFolder = (state.noteFolders || []).find(f => f.id === parentId);
+    if (parentFolder && parentFolder.parentId) {
+      showToast('Nested folders beyond one level are not allowed', 'error');
+      return;
+    }
+  }
+
+  const now = new Date().toISOString();
+  if (!state.noteFolders) state.noteFolders = [];
+
+  if (id) {
+    const f = state.noteFolders.find(x => x.id === id);
+    if (f) {
+      f.name = name;
+      f.updatedAt = now;
+      logActivity(`Renamed folder "${name}"`, 'project');
+      showToast('Folder renamed');
+    }
+  } else {
+    const newFolder = {
+      id: uid(),
+      projectId,
+      parentId,
+      name,
+      createdAt: now,
+      updatedAt: now
+    };
+    state.noteFolders.push(newFolder);
+    state.expandedNoteFolderIds.add(newFolder.id);
+    if (parentId) {
+      state.expandedNoteFolderIds.add(parentId);
+    }
+    logActivity(parentId ? `Created subfolder "${name}"` : `Created folder "${name}"`, 'project');
+    showToast(parentId ? 'Subfolder created' : 'Folder created');
+  }
+
+  await storage.save();
+  closeModals();
+  render();
+};
+
+const confirmDeleteFolder = (folderId) => {
+  const f = (state.noteFolders || []).find(x => x.id === folderId);
+  if (!f) return;
+  const isSub = !!f.parentId;
+  document.getElementById('confirmMessage').textContent = isSub
+    ? `Delete subfolder "${f.name}" and all notes inside it? This cannot be undone.`
+    : `Delete folder "${f.name}", its subfolders, and all notes inside them? This cannot be undone.`;
+  confirmCallback = () => deleteFolder(folderId);
+  showModal('confirmModal');
+};
+
+const deleteFolder = async (folderId) => {
+  const f = (state.noteFolders || []).find(x => x.id === folderId);
+  if (!f) return;
+
+  const isMain = !f.parentId;
+  let targetFolderIds = [folderId];
+
+  if (isMain) {
+    const subFolderIds = (state.noteFolders || []).filter(sub => sub.parentId === folderId).map(sub => sub.id);
+    targetFolderIds = targetFolderIds.concat(subFolderIds);
+  }
+
+  state.noteFolders = (state.noteFolders || []).filter(folder => !targetFolderIds.includes(folder.id));
+  state.notes = (state.notes || []).filter(n => !targetFolderIds.includes(n.folderId));
+
+  if (targetFolderIds.includes(state.activeNoteFolderId)) {
+    state.activeNoteFolderId = null;
+  }
+  const activeNote = (state.notes || []).find(n => n.id === state.activeNoteId);
+  if (!activeNote) {
+    state.activeNoteId = null;
+  }
+
+  logActivity(`Deleted folder "${f.name}"`, 'delete');
+  await storage.save();
+  closeModals();
+  render();
+  showToast('Folder deleted');
+};
+
+const createNote = async (projectId, folderId = null) => {
+  if (!projectId) {
+    showToast('Select a project first', 'error');
+    return;
+  }
+  const now = new Date().toISOString();
+  if (!state.notes) state.notes = [];
+
+  const newNote = {
+    id: uid(),
+    projectId,
+    folderId,
+    title: 'Untitled Note',
+    content: '',
+    createdAt: now,
+    updatedAt: now
+  };
+
+  state.notes.unshift(newNote);
+  state.activeNoteId = newNote.id;
+  state.activeNoteProjectId = projectId;
+  state.activeNoteFolderId = folderId;
+  state.noteEditorMode = 'edit';
+
+  logActivity(`Created note "${newNote.title}"`, 'task');
+  await storage.save();
+  render();
+  setTimeout(() => {
+    const titleInput = document.getElementById('noteTitleInput');
+    if (titleInput) { titleInput.focus(); titleInput.select(); }
+  }, 100);
+};
+
+const selectNote = (noteId) => {
+  const note = (state.notes || []).find(n => n.id === noteId);
+  if (!note) return;
+  state.activeNoteId = note.id;
+  state.activeNoteProjectId = note.projectId;
+  state.activeNoteFolderId = note.folderId;
+  render();
+};
+
+const saveActiveNote = async () => {
+  if (!state.activeNoteId) return;
+  const note = (state.notes || []).find(n => n.id === state.activeNoteId);
+  if (!note) return;
+
+  const titleInput = document.getElementById('noteTitleInput');
+  const contentInput = document.getElementById('noteContentInput');
+
+  if (titleInput) note.title = titleInput.value.trim() || 'Untitled Note';
+  if (contentInput) note.content = contentInput.value;
+  note.updatedAt = new Date().toISOString();
+
+  logActivity(`Updated note "${note.title}"`, 'task');
+  await storage.save();
+  showToast('Note saved');
+  render();
+};
+
+const confirmDeleteNote = (noteId) => {
+  const n = (state.notes || []).find(x => x.id === noteId);
+  if (!n) return;
+  document.getElementById('confirmMessage').textContent =
+    `Delete note "${n.title}"? This action cannot be undone.`;
+  confirmCallback = () => deleteNote(noteId);
+  showModal('confirmModal');
+};
+
+const deleteNote = async (noteId) => {
+  const n = (state.notes || []).find(x => x.id === noteId);
+  if (!n) return;
+  state.notes = (state.notes || []).filter(x => x.id !== noteId);
+  if (state.activeNoteId === noteId) {
+    state.activeNoteId = null;
+  }
+  logActivity(`Deleted note "${n.title}"`, 'delete');
+  await storage.save();
+  closeModals();
+  render();
+  showToast('Note deleted');
+};
+
+const openMoveNoteModal = (noteId) => {
+  const n = (state.notes || []).find(x => x.id === noteId);
+  if (!n) return;
+  document.getElementById('moveNoteId').value = noteId;
+
+  const projSelect = document.getElementById('moveNoteProjectSelect');
+  projSelect.innerHTML = (state.projects || []).map(p =>
+    `<option value="${p.id}" ${p.id === n.projectId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`
+  ).join('');
+
+  updateMoveNoteFolderDropdown(n.projectId, n.folderId);
+
+  projSelect.onchange = (e) => {
+    updateMoveNoteFolderDropdown(e.target.value, null);
+  };
+
+  showModal('moveNoteModal');
+};
+
+const updateMoveNoteFolderDropdown = (projectId, currentFolderId) => {
+  const folderSelect = document.getElementById('moveNoteFolderSelect');
+  const projFolders = (state.noteFolders || []).filter(f => f.projectId === projectId);
+  const mainFolders = projFolders.filter(f => !f.parentId);
+
+  let html = `<option value="">(Project Root - Direct Note)</option>`;
+  mainFolders.forEach(mf => {
+    html += `<option value="${mf.id}" ${mf.id === currentFolderId ? 'selected' : ''}>📁 ${escapeHtml(mf.name)}</option>`;
+    const subFolders = projFolders.filter(sf => sf.parentId === mf.id);
+    subFolders.forEach(sf => {
+      html += `<option value="${sf.id}" ${sf.id === currentFolderId ? 'selected' : ''}>&nbsp;&nbsp;&nbsp;&nbsp;📂 ${escapeHtml(sf.name)}</option>`;
+    });
+  });
+
+  folderSelect.innerHTML = html;
+};
+
+const saveMoveNote = async () => {
+  const noteId = document.getElementById('moveNoteId').value;
+  const targetProjectId = document.getElementById('moveNoteProjectSelect').value;
+  const targetFolderId = document.getElementById('moveNoteFolderSelect').value || null;
+
+  const note = (state.notes || []).find(n => n.id === noteId);
+  if (!note) return;
+
+  note.projectId = targetProjectId;
+  note.folderId = targetFolderId;
+  note.updatedAt = new Date().toISOString();
+
+  state.activeNoteProjectId = targetProjectId;
+  state.activeNoteFolderId = targetFolderId;
+  state.activeNoteId = note.id;
+
+  let destName = 'Project root';
+  if (targetFolderId) {
+    const f = (state.noteFolders || []).find(x => x.id === targetFolderId);
+    if (f) destName = f.name;
+  }
+
+  logActivity(`Moved note "${note.title}" to "${destName}"`, 'task');
+  await storage.save();
+  closeModals();
+  render();
+  showToast('Note moved successfully');
+};
+
+const sortNotes = (notesList, sortBy) => {
+  if (!notesList) return;
+  notesList.sort((a, b) => {
+    if (sortBy === 'title') {
+      return (a.title || '').localeCompare(b.title || '');
+    } else if (sortBy === 'createdAt') {
+      return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+    } else {
+      return new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0);
+    }
+  });
+};
+
+const renderNotes = () => {
+  if (!state.activeNoteProjectId && state.projects.length > 0) {
+    state.activeNoteProjectId = state.projects[0].id;
+  }
+
+  const activeProject = state.projects.find(p => p.id === state.activeNoteProjectId);
+
+  const projectsHtml = state.projects.length === 0
+    ? `<div style="color:var(--text-muted);font-size:12.5px;padding:16px;text-align:center;">No projects created yet</div>`
+    : state.projects.map(p => {
+      const noteCount = (state.notes || []).filter(n => n.projectId === p.id).length;
+      const isActive = p.id === state.activeNoteProjectId;
+      return `
+          <button class="notes-proj-item ${isActive ? 'active' : ''}" data-action="select-note-project" data-id="${p.id}">
+            <svg class="notes-proj-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+            </svg>
+            <span class="notes-proj-name">${escapeHtml(p.name)}</span>
+            <span class="notes-proj-badge">${noteCount}</span>
+          </button>
+        `;
+    }).join('');
+
+  let treeHtml = '';
+  const searchQ = (state.noteSearchQuery || '').toLowerCase().trim();
+
+  let selectedFolderIsSubfolder = false;
+  if (state.activeNoteFolderId) {
+    const selFolder = (state.noteFolders || []).find(f => f.id === state.activeNoteFolderId);
+    if (selFolder && selFolder.parentId) {
+      selectedFolderIsSubfolder = true;
+    }
+  }
+
+  if (!activeProject) {
+    treeHtml = emptyState(
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/></svg>`,
+      'No Project Selected',
+      'Select a project from the left panel to view its notes and folders.'
+    );
+  } else if (searchQ) {
+    const matchingNotes = (state.notes || []).filter(n => {
+      const proj = state.projects.find(p => p.id === n.projectId);
+      const folder = (state.noteFolders || []).find(f => f.id === n.folderId);
+      const projName = proj ? proj.name : '';
+      const folderName = folder ? folder.name : '';
+
+      return n.title.toLowerCase().includes(searchQ) ||
+        n.content.toLowerCase().includes(searchQ) ||
+        projName.toLowerCase().includes(searchQ) ||
+        folderName.toLowerCase().includes(searchQ);
+    });
+
+    sortNotes(matchingNotes, state.noteSortBy);
+
+    if (matchingNotes.length === 0) {
+      treeHtml = `<div style="color:var(--text-muted);font-size:12.5px;padding:32px 16px;text-align:center;font-style:italic;">No notes found matching "${escapeHtml(searchQ)}"</div>`;
+    } else {
+      treeHtml = matchingNotes.map(n => renderNoteItem(n, searchQ, true)).join('');
+    }
+  } else {
+    const projFolders = (state.noteFolders || []).filter(f => f.projectId === activeProject.id);
+    const mainFolders = projFolders.filter(f => !f.parentId);
+    const directNotes = (state.notes || []).filter(n => n.projectId === activeProject.id && !n.folderId);
+    sortNotes(directNotes, state.noteSortBy);
+
+    let html = '';
+
+    if (directNotes.length > 0) {
+      html += `<div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin:8px 8px 4px 8px;">Direct Notes</div>`;
+      html += directNotes.map(n => renderNoteItem(n)).join('');
+    }
+
+    if (mainFolders.length > 0) {
+      html += `<div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin:12px 8px 4px 8px;">Folders</div>`;
+
+      mainFolders.forEach(mf => {
+        const subFolders = projFolders.filter(sf => sf.parentId === mf.id);
+        const folderNotes = (state.notes || []).filter(n => n.folderId === mf.id);
+        sortNotes(folderNotes, state.noteSortBy);
+
+        const isExpanded = state.expandedNoteFolderIds.has(mf.id);
+        const isFolderActive = state.activeNoteFolderId === mf.id;
+
+        html += `
+          <div class="notes-tree-node">
+            <div class="notes-folder-row ${isFolderActive ? 'active' : ''}" data-action="select-note-folder" data-id="${mf.id}">
+              <svg class="notes-folder-toggle ${isExpanded ? '' : 'collapsed'}" data-action="toggle-note-folder" data-id="${mf.id}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+              <svg class="notes-folder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+              <span class="notes-folder-name">${escapeHtml(mf.name)}</span>
+              <div class="notes-folder-actions">
+                <button class="icon-btn" data-action="add-subfolder" data-id="${mf.id}" title="New Subfolder" style="padding:2px;width:20px;height:20px;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:11px;height:11px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </button>
+                <button class="icon-btn" data-action="rename-folder" data-id="${mf.id}" title="Rename Folder" style="padding:2px;width:20px;height:20px;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:11px;height:11px;"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                </button>
+                <button class="icon-btn danger" data-action="delete-folder" data-id="${mf.id}" title="Delete Folder" style="padding:2px;width:20px;height:20px;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:11px;height:11px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+                </button>
+              </div>
+            </div>
+
+            ${isExpanded ? `
+              <div class="notes-sub-tree">
+                ${folderNotes.map(n => renderNoteItem(n)).join('')}
+                ${subFolders.map(sf => {
+          const subNotes = (state.notes || []).filter(n => n.folderId === sf.id);
+          sortNotes(subNotes, state.noteSortBy);
+          const isSubExpanded = state.expandedNoteFolderIds.has(sf.id);
+          const isSubActive = state.activeNoteFolderId === sf.id;
+
+          return `
+                    <div class="notes-tree-node">
+                      <div class="notes-folder-row ${isSubActive ? 'active' : ''}" data-action="select-note-folder" data-id="${sf.id}">
+                        <svg class="notes-folder-toggle ${isSubExpanded ? '' : 'collapsed'}" data-action="toggle-note-folder" data-id="${sf.id}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <svg class="notes-subfolder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+                        <span class="notes-folder-name">${escapeHtml(sf.name)}</span>
+                        <div class="notes-folder-actions">
+                          <button class="icon-btn" data-action="rename-folder" data-id="${sf.id}" title="Rename Subfolder" style="padding:2px;width:20px;height:20px;">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:11px;height:11px;"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                          </button>
+                          <button class="icon-btn danger" data-action="delete-folder" data-id="${sf.id}" title="Delete Subfolder" style="padding:2px;width:20px;height:20px;">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:11px;height:11px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+                          </button>
+                        </div>
+                      </div>
+                      ${isSubExpanded ? `
+                        <div class="notes-sub-tree">
+                          ${subNotes.map(n => renderNoteItem(n)).join('')}
+                        </div>
+                      ` : ''}
+                    </div>
+                  `;
+        }).join('')}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      });
+    }
+
+    if (directNotes.length === 0 && mainFolders.length === 0) {
+      html = `<div style="color:var(--text-muted);font-size:12.5px;padding:32px 16px;text-align:center;font-style:italic;">No notes or folders in this project yet</div>`;
+    }
+
+    treeHtml = html;
+  }
+
+  const activeNote = (state.notes || []).find(n => n.id === state.activeNoteId);
+  let editorHtml = '';
+
+  if (!activeNote) {
+    editorHtml = emptyState(
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`,
+      'No Note Selected',
+      'Select a note to view or edit, or click "+ New Note" to create one.'
+    );
+  } else {
+    const noteProj = state.projects.find(p => p.id === activeNote.projectId);
+    const noteFolder = (state.noteFolders || []).find(f => f.id === activeNote.folderId);
+    let breadcrumbPath = noteProj ? escapeHtml(noteProj.name) : 'Project';
+
+    if (noteFolder) {
+      if (noteFolder.parentId) {
+        const parentFolder = (state.noteFolders || []).find(f => f.id === noteFolder.parentId);
+        if (parentFolder) {
+          breadcrumbPath += ` / ${escapeHtml(parentFolder.name)}`;
+        }
+      }
+      breadcrumbPath += ` / ${escapeHtml(noteFolder.name)}`;
+    }
+
+    const isEditMode = state.noteEditorMode === 'edit';
+
+    editorHtml = `
+      <div class="notes-editor-header">
+        <div class="notes-editor-top-row">
+          <div class="notes-location-breadcrumb">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+            <span>${breadcrumbPath}</span>
+            <span style="margin: 0 4px;">·</span>
+            <span>Updated ${timeAgo(activeNote.updatedAt || activeNote.createdAt)}</span>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:6px;">
+            <button class="btn-ghost" data-action="move-active-note" style="padding: 4px 8px; font-size: 11.5px;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;margin-right:4px;"><path d="M5 9l4-4 4 4"/><path d="M9 5v14"/><path d="M19 15l-4 4-4-4"/><path d="M15 19V5"/></svg>
+              Move
+            </button>
+            <button class="btn-ghost danger" data-action="delete-active-note" style="padding: 4px 8px; font-size: 11.5px;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+              Delete
+            </button>
+            <button class="btn-primary" data-action="save-active-note" style="padding: 4px 12px; font-size: 11.5px;">Save</button>
+          </div>
+        </div>
+
+        <input type="text" id="noteTitleInput" class="notes-editor-title-input" value="${escapeHtml(activeNote.title)}" placeholder="Note Title..." />
+      </div>
+
+      <div class="notes-toolbar-bar">
+        <div class="notes-toolbar-group">
+          <button class="notes-tb-btn" data-syntax="bold" title="Bold (**text**)"><b>B</b></button>
+          <button class="notes-tb-btn" data-syntax="italic" title="Italic (*text*)"><i>I</i></button>
+          <div class="notes-tb-divider"></div>
+          <button class="notes-tb-btn" data-syntax="h1" title="Heading 1 (# Heading)">H1</button>
+          <button class="notes-tb-btn" data-syntax="h2" title="Heading 2 (## Heading)">H2</button>
+          <div class="notes-tb-divider"></div>
+          <button class="notes-tb-btn" data-syntax="bullet" title="Bullet List (- item)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          </button>
+          <button class="notes-tb-btn" data-syntax="number" title="Numbered List (1. item)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg>
+          </button>
+          <button class="notes-tb-btn" data-syntax="checklist" title="Checklist (- [ ] Task)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+          </button>
+          <div class="notes-tb-divider"></div>
+          <button class="notes-tb-btn" data-syntax="code" title="Inline Code (\`code\`)">&lt;/&gt;</button>
+          <button class="notes-tb-btn" data-syntax="codeblock" title="Code Block (\`\`\` code \`\`\`)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          </button>
+          <button class="notes-tb-btn" data-syntax="link" title="Link ([title](url))">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+          </button>
+        </div>
+
+        <div class="notes-mode-toggle">
+          <button class="notes-mode-btn ${isEditMode ? 'active' : ''}" data-action="set-note-mode" data-mode="edit">Edit</button>
+          <button class="notes-mode-btn ${!isEditMode ? 'active' : ''}" data-action="set-note-mode" data-mode="preview">Preview</button>
+        </div>
+      </div>
+
+      <div class="notes-editor-body">
+        ${isEditMode ? `
+          <textarea id="noteContentInput" class="notes-textarea" placeholder="Write markdown note here...">${escapeHtml(activeNote.content)}</textarea>
+        ` : `
+          <div class="notes-preview">${parseMarkdown(activeNote.content)}</div>
+        `}
+      </div>
+    `;
+  }
+
+  return `
+    <div class="notes-container">
+      <div class="notes-panel-projects">
+        <div class="notes-projects-header">
+          <span>Projects</span>
+          <span style="font-size:11px;color:var(--text-muted);">${state.projects.length}</span>
+        </div>
+        <div class="notes-projects-list">
+          ${projectsHtml}
+        </div>
+      </div>
+
+      <div class="notes-panel-tree">
+        <div class="notes-tree-top">
+          <div class="notes-tree-actions">
+            <div class="notes-new-dropdown-wrap">
+              <button class="notes-new-btn" id="notesNewBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span>New</span>
+              </button>
+              <div class="notes-dropdown-menu" id="notesNewDropdownMenu">
+                <button class="notes-dropdown-item" data-action="new-note-action">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;color:var(--accent);"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                  New Note
+                </button>
+
+                ${selectedFolderIsSubfolder ? '' : `
+                  <button class="notes-dropdown-item" data-action="new-folder-action">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;color:var(--warning);"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+                    ${state.activeNoteFolderId ? 'New Subfolder' : 'New Folder'}
+                  </button>
+                `}
+              </div>
+            </div>
+
+            <select class="notes-sort-select" id="notesSortSelect">
+              <option value="updatedAt" ${state.noteSortBy === 'updatedAt' ? 'selected' : ''}>Recently Updated</option>
+              <option value="createdAt" ${state.noteSortBy === 'createdAt' ? 'selected' : ''}>Recently Created</option>
+              <option value="title" ${state.noteSortBy === 'title' ? 'selected' : ''}>Title A–Z</option>
+            </select>
+          </div>
+
+          <div class="notes-search-wrap">
+            <svg class="notes-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+            <input type="text" id="notesSearchInput" class="notes-search-input" placeholder="Search notes & folders..." value="${escapeHtml(state.noteSearchQuery || '')}" />
+          </div>
+        </div>
+
+        <div class="notes-tree-content">
+          ${treeHtml}
+        </div>
+      </div>
+
+      <div class="notes-panel-editor">
+        ${editorHtml}
+      </div>
+    </div>
+  `;
+};
+
+const renderNoteItem = (note, query = '', showLocation = false) => {
+  const isActive = note.id === state.activeNoteId;
+  const snippet = note.content ? trimText(note.content.replace(/[#*`\-[\]]/g, ''), 60) : 'No content';
+
+  let locationStr = '';
+  if (showLocation) {
+    const proj = state.projects.find(p => p.id === note.projectId);
+    const folder = (state.noteFolders || []).find(f => f.id === note.folderId);
+    let path = proj ? proj.name : '';
+    if (folder) {
+      if (folder.parentId) {
+        const parentFolder = (state.noteFolders || []).find(f => f.id === folder.parentId);
+        if (parentFolder) path += ` / ${parentFolder.name}`;
+      }
+      path += ` / ${folder.name}`;
+    }
+    locationStr = `<div class="notes-note-meta">${escapeHtml(path)} · ${timeAgo(note.updatedAt)}</div>`;
+  }
+
+  return `
+    <button class="notes-note-item ${isActive ? 'active' : ''}" data-action="select-note" data-id="${note.id}">
+      <svg class="notes-note-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+        <line x1="16" y1="13" x2="8" y2="13" />
+        <line x1="16" y1="17" x2="8" y2="17" />
+      </svg>
+      <div class="notes-note-info">
+        <div class="notes-note-title">${highlight(escapeHtml(note.title), query)}</div>
+        <div class="notes-note-snippet">${highlight(escapeHtml(snippet), query)}</div>
+        ${locationStr}
+      </div>
+    </button>
+  `;
+};
+
 // ─── Boot ────────────────────────────────────────────────
 const init = async () => {
   const data = await storage.load();
@@ -9064,6 +9923,8 @@ const init = async () => {
   state.testCases = data.testCases || [];
   state.modules = data.modules || [];
   state.releasePoints = data.releasePoints || [];
+  state.noteFolders = data.noteFolders || [];
+  state.notes = data.notes || [];
   state.projectsViewMode = await ClairDB.getPref('projects_view_mode', 'list');
   state.theme = await ClairDB.getPref('theme', 'light');
   applyTheme(state.theme);
@@ -9104,6 +9965,8 @@ const init = async () => {
         state.testCases = backupData.testCases || [];
         state.modules = backupData.modules || [];
         state.releasePoints = backupData.releasePoints || [];
+        state.noteFolders = backupData.noteFolders || [];
+        state.notes = backupData.notes || [];
         await storage.save();
         console.log('Restored data from local backup file.');
       } else {
@@ -9144,6 +10007,8 @@ const init = async () => {
   document.getElementById('saveBulkUpdate').addEventListener('click', saveBulkUpdate);
   document.getElementById('bulkUpdateField').addEventListener('change', handleBulkUpdateFieldChange);
   document.getElementById('generateMailNotesBtn').addEventListener('click', triggerNotesMailGeneration);
+  document.getElementById('saveFolderBtn').addEventListener('click', saveFolder);
+  document.getElementById('confirmMoveNoteBtn').addEventListener('click', saveMoveNote);
 
   // Handle bulk action checkboxes
   document.addEventListener('change', (e) => {
@@ -9201,6 +10066,10 @@ const init = async () => {
   document.getElementById('cancelReleasePtModal').addEventListener('click', closeModals);
   document.getElementById('closeExportReportModal').addEventListener('click', closeModals);
   document.getElementById('cancelExportReportModal').addEventListener('click', closeModals);
+  document.getElementById('closeFolderModal').addEventListener('click', closeModals);
+  document.getElementById('cancelFolderModal').addEventListener('click', closeModals);
+  document.getElementById('closeMoveNoteModal').addEventListener('click', closeModals);
+  document.getElementById('cancelMoveNoteModal').addEventListener('click', closeModals);
   document.getElementById('generateReportBtn').addEventListener('click', async () => {
     const btn = document.getElementById('generateReportBtn');
     const originalHTML = btn.innerHTML;
@@ -9374,6 +10243,8 @@ const init = async () => {
       const msm = document.getElementById('moduleModal');
       const eism = document.getElementById('excelImportModal');
       const rpsm = document.getElementById('releasePtModal');
+      const fsm = document.getElementById('folderModal');
+      const mnm = document.getElementById('moveNoteModal');
       if (pm.classList.contains('show')) saveProject();
       else if (tm.classList.contains('show')) saveTask();
       else if (tsm.classList.contains('show')) saveTest();
@@ -9382,6 +10253,174 @@ const init = async () => {
       else if (msm.classList.contains('show')) saveModule();
       else if (eism.classList.contains('show')) handleExcelImport();
       else if (rpsm.classList.contains('show')) saveReleasePoint();
+      else if (fsm.classList.contains('show')) saveFolder();
+      else if (mnm.classList.contains('show')) saveMoveNote();
+    }
+  });
+
+  // Notes module event delegation
+  document.addEventListener('click', e => {
+    const newBtn = e.target.closest('#notesNewBtn');
+    if (newBtn) {
+      e.stopPropagation();
+      const menu = document.getElementById('notesNewDropdownMenu');
+      if (menu) menu.classList.toggle('show');
+      return;
+    } else {
+      const menu = document.getElementById('notesNewDropdownMenu');
+      if (menu && menu.classList.contains('show') && !e.target.closest('#notesNewDropdownMenu')) {
+        menu.classList.remove('show');
+      }
+    }
+
+    const newNoteBtn = e.target.closest('[data-action="new-note-action"]');
+    if (newNoteBtn) {
+      createNote(state.activeNoteProjectId, state.activeNoteFolderId);
+      return;
+    }
+
+    const newFolderBtn = e.target.closest('[data-action="new-folder-action"]');
+    if (newFolderBtn) {
+      openFolderModal(null, state.activeNoteProjectId, state.activeNoteFolderId);
+      return;
+    }
+
+    const projItem = e.target.closest('[data-action="select-note-project"]');
+    if (projItem) {
+      state.activeNoteProjectId = projItem.dataset.id;
+      state.activeNoteFolderId = null;
+      state.activeNoteId = null;
+      render();
+      return;
+    }
+
+    const folderRow = e.target.closest('[data-action="select-note-folder"]');
+    const folderToggle = e.target.closest('[data-action="toggle-note-folder"]');
+    if (folderToggle) {
+      e.stopPropagation();
+      const fId = folderToggle.dataset.id;
+      if (state.expandedNoteFolderIds.has(fId)) {
+        state.expandedNoteFolderIds.delete(fId);
+      } else {
+        state.expandedNoteFolderIds.add(fId);
+      }
+      render();
+      return;
+    } else if (folderRow) {
+      const fId = folderRow.dataset.id;
+      state.activeNoteFolderId = fId;
+      if (!state.expandedNoteFolderIds.has(fId)) {
+        state.expandedNoteFolderIds.add(fId);
+      }
+      render();
+      return;
+    }
+
+    const addSub = e.target.closest('[data-action="add-subfolder"]');
+    if (addSub) {
+      e.stopPropagation();
+      openFolderModal(null, state.activeNoteProjectId, addSub.dataset.id);
+      return;
+    }
+
+    const renameF = e.target.closest('[data-action="rename-folder"]');
+    if (renameF) {
+      e.stopPropagation();
+      openFolderModal(renameF.dataset.id);
+      return;
+    }
+
+    const deleteF = e.target.closest('[data-action="delete-folder"]');
+    if (deleteF) {
+      e.stopPropagation();
+      confirmDeleteFolder(deleteF.dataset.id);
+      return;
+    }
+
+    const noteItem = e.target.closest('[data-action="select-note"]');
+    if (noteItem) {
+      selectNote(noteItem.dataset.id);
+      return;
+    }
+
+    const saveNoteBtn = e.target.closest('[data-action="save-active-note"]');
+    if (saveNoteBtn) {
+      saveActiveNote();
+      return;
+    }
+
+    const deleteNoteBtn = e.target.closest('[data-action="delete-active-note"]');
+    if (deleteNoteBtn) {
+      confirmDeleteNote(state.activeNoteId);
+      return;
+    }
+
+    const moveNoteBtn = e.target.closest('[data-action="move-active-note"]');
+    if (moveNoteBtn) {
+      openMoveNoteModal(state.activeNoteId);
+      return;
+    }
+
+    const syntaxBtn = e.target.closest('[data-syntax]');
+    if (syntaxBtn) {
+      insertMarkdownSyntax(syntaxBtn.dataset.syntax);
+      return;
+    }
+
+    const modeBtn = e.target.closest('[data-action="set-note-mode"]');
+    if (modeBtn) {
+      state.noteEditorMode = modeBtn.dataset.mode;
+      render();
+      return;
+    }
+  });
+
+  let noteSearchTimer;
+  document.addEventListener('input', e => {
+    if (e.target.id === 'notesSearchInput') {
+      clearTimeout(noteSearchTimer);
+      noteSearchTimer = setTimeout(() => {
+        state.noteSearchQuery = e.target.value;
+        const curInput = document.getElementById('notesSearchInput');
+        const pos = curInput ? curInput.selectionStart : 0;
+        render();
+        const newInput = document.getElementById('notesSearchInput');
+        if (newInput) {
+          newInput.focus();
+          newInput.setSelectionRange(pos, pos);
+        }
+      }, 200);
+      return;
+    }
+
+    if (e.target.id === 'noteTitleInput' && state.activeNoteId) {
+      const activeNote = (state.notes || []).find(n => n.id === state.activeNoteId);
+      if (activeNote) {
+        activeNote.title = e.target.value;
+        activeNote.updatedAt = new Date().toISOString();
+        const noteEl = document.querySelector(`.notes-note-item[data-id="${activeNote.id}"] .notes-note-title`);
+        if (noteEl) noteEl.textContent = activeNote.title || 'Untitled Note';
+      }
+      return;
+    }
+
+    if (e.target.id === 'noteContentInput' && state.activeNoteId) {
+      const activeNote = (state.notes || []).find(n => n.id === state.activeNoteId);
+      if (activeNote) {
+        activeNote.content = e.target.value;
+        activeNote.updatedAt = new Date().toISOString();
+        const snippetEl = document.querySelector(`.notes-note-item[data-id="${activeNote.id}"] .notes-note-snippet`);
+        if (snippetEl) snippetEl.textContent = trimText(activeNote.content.replace(/[#*`\-[\]]/g, ''), 60) || 'No content';
+      }
+      return;
+    }
+  });
+
+  document.addEventListener('change', e => {
+    if (e.target.id === 'notesSortSelect') {
+      state.noteSortBy = e.target.value;
+      render();
+      return;
     }
   });
 

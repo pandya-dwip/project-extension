@@ -1,0 +1,10 @@
+# Flutter Migration Folder
+flutter_migration/
+
+# Environment / OS files
+.DS_Store
+Thumbs.db
+
+# IDE / Editor settings
+.vscode/
+.claude/

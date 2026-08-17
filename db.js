@@ -2,7 +2,7 @@
 // Replaces chrome.storage.local / localStorage as the app's persistence mechanism.
 // All other code talks to storage exclusively through window.ClairDB.
 const ClairDB = (() => {
-  const TABLES = ['projects', 'tasks', 'tests', 'activity', 'developers', 'releases', 'testCases', 'modules', 'releasePoints'];
+  const TABLES = ['projects', 'tasks', 'tests', 'activity', 'developers', 'releases', 'testCases', 'modules', 'releasePoints', 'noteFolders', 'notes'];
   const SCHEMA_VERSION = 1;
   const IDB_NAME = 'clair_sqlite';
   const IDB_STORE = 'files';

@@ -56,6 +56,16 @@
             </svg>
             <span>Tasks</span>
           </button>
+          <button class="nav-item" data-view="notes">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+              <polyline points="10 9 9 9 8 9" />
+            </svg>
+            <span>Notes</span>
+          </button>
           <button class="nav-item" data-view="calendar">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
               <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
@@ -1278,6 +1288,62 @@
         </svg>
         Generate Report
       </button>
+    </div>
+  </div>
+
+  <!-- Folder Modal -->
+  <div class="modal" id="folderModal" role="dialog" aria-modal="true">
+    <div class="modal-header">
+      <h2 class="modal-title" id="folderModalTitle">New Folder</h2>
+      <button class="modal-close" id="closeFolderModal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 6 6 18M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="folderId" />
+      <input type="hidden" id="folderProjectId" />
+      <input type="hidden" id="folderParentId" />
+      <div class="form-group">
+        <label>Folder Name <span class="req">*</span></label>
+        <input type="text" id="folderNameInput" placeholder="e.g. Development, QA, Release Notes" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-ghost" id="cancelFolderModal">Cancel</button>
+      <button class="btn-primary" id="saveFolderBtn">Save Folder</button>
+    </div>
+  </div>
+
+  <!-- Move Note Modal -->
+  <div class="modal" id="moveNoteModal" role="dialog" aria-modal="true">
+    <div class="modal-header">
+      <h2 class="modal-title">Move Note</h2>
+      <button class="modal-close" id="closeMoveNoteModal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 6 6 18M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="moveNoteId" />
+      <div class="form-group">
+        <label>Destination Project <span class="req">*</span></label>
+        <select id="moveNoteProjectSelect">
+          <!-- Loaded by JS -->
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Destination Folder</label>
+        <select id="moveNoteFolderSelect">
+          <!-- Loaded by JS -->
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-ghost" id="cancelMoveNoteModal">Cancel</button>
+      <button class="btn-primary" id="confirmMoveNoteBtn">Move Note</button>
     </div>
   </div>
 

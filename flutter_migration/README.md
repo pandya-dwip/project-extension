@@ -15,7 +15,7 @@
 
 ---
 
-> **This README documents the planned Flutter application.** No implementation exists yet — see [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md) in this same folder for the full phase-by-phase build plan, feature-parity matrix, data compatibility specification, and architecture reasoning this README summarizes. This file will be updated to reflect actual implementation state as phases complete.
+> **This README documents the planned Flutter application.** No implementation exists yet — see [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md) in this same folder for the full phase-by-phase build plan, feature-parity matrix, data compatibility specification, and architecture reasoning this README summarizes, and [`DESIGN_SYSTEM.md`](DESIGN_SYSTEM.md) for the exact color tokens and icon mapping. This file will be updated to reflect actual implementation state as phases complete.
 
 ## Table of Contents
 

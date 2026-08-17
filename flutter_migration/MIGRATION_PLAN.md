@@ -3,7 +3,7 @@
 **Status: Planning only. No Flutter code has been written.**
 Source of truth analyzed: `app.js` (9,393 lines), `db.js` (219 lines), `index.html` (1,291 lines), `style.css` (7,751 lines), `manifest.json`, `README.md`, and five real production exports in `Backup/*.json` (largest: 1,934 test cases, 150 tasks, 15 projects, 200 activity entries).
 
-This document is the complete planning package requested: implementation inventory, feature-parity matrix, data compatibility specification, architecture proposal, mobile navigation proposal, phase-wise roadmap, testing strategy, migration strategy, and a final gap/risk report. The companion file `README.md` in this folder is the README for the future Flutter project.
+This document is the complete planning package requested: implementation inventory, feature-parity matrix, data compatibility specification, architecture proposal, mobile navigation proposal, phase-wise roadmap, testing strategy, migration strategy, and a final gap/risk report. The companion file `README.md` in this folder is the README for the future Flutter project; `DESIGN_SYSTEM.md` has the exact color tokens and icon mapping referenced by Phase 9.
 
 ---
 
