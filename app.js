@@ -1112,6 +1112,9 @@ const updateStorageInfo = () => { };
 
 // ─── Navigation ──────────────────────────────────────────
 const setView = (view) => {
+  if (state.view === 'notes' && state.activeNoteId) {
+    saveActiveNote(true);
+  }
   state.view = view;
   if (view === 'testcases') {
     state.testCasePage = 1;
@@ -9414,6 +9417,9 @@ const createNote = async (projectId, folderId = null) => {
     showToast('Select a project first', 'error');
     return;
   }
+  if (state.activeNoteId) {
+    await saveActiveNote(true);
+  }
   const now = new Date().toISOString();
   if (!state.notes) state.notes = [];
 
@@ -9442,7 +9448,10 @@ const createNote = async (projectId, folderId = null) => {
   }, 100);
 };
 
-const selectNote = (noteId) => {
+const selectNote = async (noteId) => {
+  if (state.activeNoteId && state.activeNoteId !== noteId) {
+    await saveActiveNote(true);
+  }
   const note = (state.notes || []).find(n => n.id === noteId);
   if (!note) return;
   state.activeNoteId = note.id;
@@ -9451,7 +9460,7 @@ const selectNote = (noteId) => {
   render();
 };
 
-const saveActiveNote = async () => {
+const saveActiveNote = async (silent = false) => {
   if (!state.activeNoteId) return;
   const note = (state.notes || []).find(n => n.id === state.activeNoteId);
   if (!note) return;
@@ -9463,10 +9472,12 @@ const saveActiveNote = async () => {
   if (contentInput) note.content = contentInput.value;
   note.updatedAt = new Date().toISOString();
 
-  logActivity(`Updated note "${note.title}"`, 'task');
   await storage.save();
-  showToast('Note saved');
-  render();
+  if (!silent) {
+    logActivity(`Updated note "${note.title}"`, 'task');
+    showToast('Note saved');
+    render();
+  }
 };
 
 const confirmDeleteNote = (noteId) => {
@@ -10287,6 +10298,7 @@ const init = async () => {
 
     const projItem = e.target.closest('[data-action="select-note-project"]');
     if (projItem) {
+      if (state.activeNoteId) saveActiveNote(true);
       state.activeNoteProjectId = projItem.dataset.id;
       state.activeNoteFolderId = null;
       state.activeNoteId = null;
@@ -10307,6 +10319,7 @@ const init = async () => {
       render();
       return;
     } else if (folderRow) {
+      if (state.activeNoteId) saveActiveNote(true);
       const fId = folderRow.dataset.id;
       state.activeNoteFolderId = fId;
       if (!state.expandedNoteFolderIds.has(fId)) {
@@ -10369,6 +10382,7 @@ const init = async () => {
 
     const modeBtn = e.target.closest('[data-action="set-note-mode"]');
     if (modeBtn) {
+      if (state.activeNoteId) saveActiveNote(true);
       state.noteEditorMode = modeBtn.dataset.mode;
       render();
       return;
@@ -10376,6 +10390,7 @@ const init = async () => {
   });
 
   let noteSearchTimer;
+  let noteAutoSaveTimer;
   document.addEventListener('input', e => {
     if (e.target.id === 'notesSearchInput') {
       clearTimeout(noteSearchTimer);
@@ -10400,6 +10415,8 @@ const init = async () => {
         activeNote.updatedAt = new Date().toISOString();
         const noteEl = document.querySelector(`.notes-note-item[data-id="${activeNote.id}"] .notes-note-title`);
         if (noteEl) noteEl.textContent = activeNote.title || 'Untitled Note';
+        clearTimeout(noteAutoSaveTimer);
+        noteAutoSaveTimer = setTimeout(() => storage.save(), 400);
       }
       return;
     }
@@ -10411,8 +10428,30 @@ const init = async () => {
         activeNote.updatedAt = new Date().toISOString();
         const snippetEl = document.querySelector(`.notes-note-item[data-id="${activeNote.id}"] .notes-note-snippet`);
         if (snippetEl) snippetEl.textContent = trimText(activeNote.content.replace(/[#*`\-[\]]/g, ''), 60) || 'No content';
+        clearTimeout(noteAutoSaveTimer);
+        noteAutoSaveTimer = setTimeout(() => storage.save(), 400);
       }
       return;
+    }
+  });
+
+  document.addEventListener('focusout', e => {
+    if ((e.target.id === 'noteTitleInput' || e.target.id === 'noteContentInput') && state.activeNoteId) {
+      saveActiveNote(true);
+    }
+  });
+
+  window.addEventListener('beforeunload', () => {
+    if (state.activeNoteId) {
+      const note = (state.notes || []).find(n => n.id === state.activeNoteId);
+      if (note) {
+        const titleInput = document.getElementById('noteTitleInput');
+        const contentInput = document.getElementById('noteContentInput');
+        if (titleInput) note.title = titleInput.value.trim() || 'Untitled Note';
+        if (contentInput) note.content = contentInput.value;
+        note.updatedAt = new Date().toISOString();
+        storage.save();
+      }
     }
   });
 
@@ -10423,6 +10462,28 @@ const init = async () => {
       return;
     }
   });
+
+  // Multi-tab real-time database synchronization listener
+  if (typeof BroadcastChannel !== 'undefined') {
+    const tabSyncChannel = new BroadcastChannel('clair_db_sync');
+    tabSyncChannel.onmessage = async (e) => {
+      if (e.data && e.data.type === 'DB_SAVED') {
+        const data = await storage.load();
+        state.projects = data.projects;
+        state.tasks = migrateTasks(data.tasks);
+        state.tests = data.tests || [];
+        state.activity = data.activity;
+        state.developers = data.developers || [];
+        state.releases = data.releases || [];
+        state.testCases = data.testCases || [];
+        state.modules = data.modules || [];
+        state.releasePoints = data.releasePoints || [];
+        state.noteFolders = data.noteFolders || [];
+        state.notes = data.notes || [];
+        render();
+      }
+    };
+  }
 
   attachCardListeners();
   setView('dashboard');

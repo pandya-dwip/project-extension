@@ -179,6 +179,8 @@ const ClairDB = (() => {
     return out;
   }
 
+  const syncChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('clair_db_sync') : null;
+
   // Whole-state save, matching the app's existing "flush entire arrays" behavior.
   async function save(payload) {
     await init();
@@ -201,6 +203,9 @@ const ClairDB = (() => {
       throw new Error('Save failed, transaction rolled back: ' + e.message);
     }
     await persist();
+    if (syncChannel) {
+      try { syncChannel.postMessage({ type: 'DB_SAVED', timestamp: Date.now() }); } catch (e) { }
+    }
   }
 
   async function getPref(key, fallback = null) {
