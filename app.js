@@ -10467,7 +10467,14 @@ const init = async () => {
   if (typeof BroadcastChannel !== 'undefined') {
     const tabSyncChannel = new BroadcastChannel('clair_db_sync');
     tabSyncChannel.onmessage = async (e) => {
-      if (e.data && e.data.type === 'DB_SAVED') {
+      // Ignore self-sent messages so auto-save in this tab never destroys focus or cursor position
+      if (e.data && e.data.type === 'DB_SAVED' && e.data.senderId !== ClairDB.getTabId()) {
+        const active = document.activeElement;
+        const isEditing = active && (active.id === 'noteTitleInput' || active.id === 'noteContentInput' || active.id === 'notesSearchInput');
+        const start = isEditing ? active.selectionStart : 0;
+        const end = isEditing ? active.selectionEnd : 0;
+        const activeId = isEditing ? active.id : null;
+
         const data = await storage.load();
         state.projects = data.projects;
         state.tasks = migrateTasks(data.tasks);
@@ -10480,7 +10487,16 @@ const init = async () => {
         state.releasePoints = data.releasePoints || [];
         state.noteFolders = data.noteFolders || [];
         state.notes = data.notes || [];
+
         render();
+
+        if (activeId) {
+          const el = document.getElementById(activeId);
+          if (el) {
+            el.focus();
+            try { el.setSelectionRange(start, end); } catch (err) { }
+          }
+        }
       }
     };
   }

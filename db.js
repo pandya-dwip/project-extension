@@ -179,6 +179,7 @@ const ClairDB = (() => {
     return out;
   }
 
+  const tabId = Math.random().toString(36).substring(2);
   const syncChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('clair_db_sync') : null;
 
   // Whole-state save, matching the app's existing "flush entire arrays" behavior.
@@ -204,7 +205,7 @@ const ClairDB = (() => {
     }
     await persist();
     if (syncChannel) {
-      try { syncChannel.postMessage({ type: 'DB_SAVED', timestamp: Date.now() }); } catch (e) { }
+      try { syncChannel.postMessage({ type: 'DB_SAVED', senderId: tabId, timestamp: Date.now() }); } catch (e) { }
     }
   }
 
@@ -220,5 +221,12 @@ const ClairDB = (() => {
     await persist();
   }
 
-  return { init, load, save, getPref, setPref };
+  return {
+    init,
+    load,
+    save,
+    getPref,
+    setPref,
+    getTabId: () => tabId
+  };
 })();
