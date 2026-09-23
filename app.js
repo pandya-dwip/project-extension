@@ -93,7 +93,9 @@ let state = {
   noteEditorMode: 'edit',
   noteSearchQuery: '',
   noteSortBy: 'updatedAt',
-  expandedNoteFolderIds: new Set()
+  expandedNoteFolderIds: new Set(),
+  hiddenModules: [],
+  defaultView: 'dashboard'
 };
 
 let confirmCallback = null;
@@ -1143,6 +1145,7 @@ const setView = (view) => {
     releasepoints: 'Release Points',
     testcases: 'Test Case Management',
     notes: 'Notes',
+    developers: 'Developer Management',
     activity: 'Activity',
     settings: 'Settings'
   };
@@ -1189,6 +1192,7 @@ const render = () => {
     case 'releasepoints': ct.innerHTML = renderReleasePoints(); break;
     case 'testcases': ct.innerHTML = renderTestCaseManagement(); break;
     case 'notes': ct.innerHTML = renderNotes(); break;
+    case 'developers': ct.innerHTML = renderDevelopers(); break;
     case 'activity': ct.innerHTML = renderActivity(); break;
     case 'settings': ct.innerHTML = renderSettings(); break;
   }
@@ -3167,19 +3171,359 @@ const renderActivity = () => {
 };
 
 // ─── Settings ────────────────────────────────────────────
+// ─── Module Visibility Manager ────────────────────────────
+const applyModuleVisibility = () => {
+  const hidden = new Set(state.hiddenModules || []);
+  document.querySelectorAll('.nav-item').forEach(el => {
+    const view = el.dataset.view;
+    if (view === 'settings') {
+      el.style.display = ''; // Settings is ALWAYS visible
+      return;
+    }
+    if (hidden.has(view)) {
+      el.style.display = 'none';
+    } else {
+      el.style.display = '';
+    }
+  });
+
+  // Hide nav-section wrappers if all nav-items inside it are hidden
+  document.querySelectorAll('.nav-section').forEach(sec => {
+    const items = sec.querySelectorAll('.nav-item');
+    const visibleItems = Array.from(items).filter(i => i.style.display !== 'none');
+    if (visibleItems.length === 0) {
+      sec.style.display = 'none';
+    } else {
+      sec.style.display = '';
+    }
+  });
+};
+
+// ─── Universal Developer Management UI (Clair Theme) ───
+const getProjectStatusPillClass = (proj) => {
+  if (!proj) return 'na';
+
+  // 1. Check if the project has statuses assigned to it
+  if (Array.isArray(proj.statuses) && proj.statuses.length > 0) {
+    const primary = pickPrimaryStatus(proj.statuses) || proj.statuses[0];
+    if (primary && STATUS_CLASS[primary]) {
+      return STATUS_CLASS[primary];
+    }
+  }
+
+  // 2. Check if overallProjectStatus is defined
+  if (proj.overallProjectStatus) {
+    const overallMap = {
+      'ON_GOING': 'in-progress',
+      'COMPLETED': 'completed',
+      'MONITORING': 'stable',
+      'ON_HOLD': 'on-hold',
+      'YET_TO_START': 'yet-to-start'
+    };
+    if (overallMap[proj.overallProjectStatus]) {
+      return overallMap[proj.overallProjectStatus];
+    }
+  }
+
+  // 3. Fallback to status palette from project status selection
+  const statusPalette = [
+    'started',
+    'stable',
+    'testing',
+    'automation',
+    'in-progress',
+    'completed',
+    'new-development',
+    'developer',
+    'issue-assigned',
+    'yet-to-start'
+  ];
+  let hash = 0;
+  const str = (proj ? (proj.id || proj.name) : '') || '';
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return statusPalette[Math.abs(hash) % statusPalette.length];
+};
+
+const getProjectPillClass = (projId, name = '') => {
+  const proj = (state.projects || []).find(p => p.id === projId || p.name === name) || { id: projId, name };
+  return getProjectStatusPillClass(proj);
+};
+
+const getAvatarGradient = (name = '') => {
+  const gradients = [
+    'linear-gradient(135deg, #059669, #047857)',
+    'linear-gradient(135deg, #475569, #334155)',
+    'linear-gradient(135deg, #2563eb, #1d4ed8)',
+    'linear-gradient(135deg, #4f46e5, #3730a3)',
+    'linear-gradient(135deg, #d97706, #b45309)',
+    'linear-gradient(135deg, #0d9488, #0f766e)'
+  ];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return gradients[Math.abs(hash) % gradients.length];
+};
+
+const renderDevelopers = () => {
+  const totalDevs = (state.developers || []).length;
+  const linkedDevs = (state.developers || []).filter(d => (d.projectIds || []).length > 0).length;
+  const unassignedDevs = totalDevs - linkedDevs;
+
+  const query = (state.devSearch || '').toLowerCase().trim();
+  const filter = state.devFilter || 'all';
+
+  const filteredDevs = (state.developers || []).filter(d => {
+    const assignedProjs = (d.projectIds || []).map(pid => (state.projects || []).find(p => p.id === pid)).filter(Boolean);
+    const projNames = assignedProjs.map(p => p.name.toLowerCase()).join(' ');
+
+    const matchesSearch = !query ||
+      d.name.toLowerCase().includes(query) ||
+      projNames.includes(query);
+
+    let matchesFilter = true;
+    if (filter === 'assigned') {
+      matchesFilter = assignedProjs.length > 0;
+    } else if (filter === 'unassigned') {
+      matchesFilter = assignedProjs.length === 0;
+    } else if (filter.startsWith('proj:')) {
+      const targetProjId = filter.replace('proj:', '');
+      matchesFilter = (d.projectIds || []).includes(targetProjId);
+    }
+
+    return matchesSearch && matchesFilter;
+  });
+
+  const selectedIds = state.devSelectedIds || [];
+  const allFilteredIds = filteredDevs.map(d => d.id);
+  const isAllSelected = allFilteredIds.length > 0 && allFilteredIds.every(id => selectedIds.includes(id));
+
+  // Determine active filter label
+  let activeFilterLabel = 'Filters';
+  if (filter === 'assigned') activeFilterLabel = 'Assigned';
+  else if (filter === 'unassigned') activeFilterLabel = 'Unassigned';
+  else if (filter.startsWith('proj:')) {
+    const p = (state.projects || []).find(pr => pr.id === filter.replace('proj:', ''));
+    if (p) activeFilterLabel = p.name;
+  }
+
+  return `
+    <div class="dev-mgmt-view">
+      <!-- Universal Header matching reference UI & Clair Theme -->
+      <div class="dev-mgmt-header">
+        <div class="dev-mgmt-heading">
+          <h1 class="dev-mgmt-title">All developers</h1>
+          <span class="dev-mgmt-count-badge">${totalDevs}</span>
+        </div>
+
+        <div class="dev-mgmt-controls">
+          <div class="dev-mgmt-search-box">
+            <svg class="dev-mgmt-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input type="text" id="devSearchInput" class="dev-mgmt-search-input" placeholder="Search" value="${escapeHtml(state.devSearch || '')}" />
+          </div>
+
+          <div class="dev-filter-container">
+            <button class="dev-mgmt-filter-btn ${filter !== 'all' ? 'active-filter' : ''}" id="devFilterTriggerBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                <path d="M4 6h16M6 12h12M8 18h8"/>
+              </svg>
+              <span>${escapeHtml(activeFilterLabel)}</span>
+              ${filter !== 'all' ? '<span class="dev-mgmt-filter-dot"></span>' : ''}
+            </button>
+            <div class="dev-filter-menu" id="devFilterMenu" style="display: none;">
+              <div class="dev-filter-opt ${filter === 'all' ? 'selected' : ''}" data-dev-filter="all">
+                <span>All developers</span>
+                <span style="font-size: 11px; opacity: 0.7;">${totalDevs}</span>
+              </div>
+              <div class="dev-filter-opt ${filter === 'assigned' ? 'selected' : ''}" data-dev-filter="assigned">
+                <span>Assigned</span>
+                <span style="font-size: 11px; opacity: 0.7;">${linkedDevs}</span>
+              </div>
+              <div class="dev-filter-opt ${filter === 'unassigned' ? 'selected' : ''}" data-dev-filter="unassigned">
+                <span>Unassigned</span>
+                <span style="font-size: 11px; opacity: 0.7;">${unassignedDevs}</span>
+              </div>
+              ${(state.projects || []).length > 0 ? `
+                <div class="dev-filter-divider"></div>
+                <div class="dev-filter-section-title">By Project</div>
+                ${(state.projects || []).map(p => `
+                  <div class="dev-filter-opt ${filter === 'proj:' + p.id ? 'selected' : ''}" data-dev-filter="proj:${p.id}">
+                    <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px;">${escapeHtml(p.name)}</span>
+                  </div>
+                `).join('')}
+              ` : ''}
+            </div>
+          </div>
+
+          <button class="dev-mgmt-add-btn" id="openAddDevModalBtn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width: 14px; height: 14px;">
+              <line x1="12" y1="5" x2="12" y2="19"/>
+              <line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            Add developer
+          </button>
+        </div>
+      </div>
+
+      <!-- Bulk Selection Banner (when 1+ rows selected) -->
+      ${selectedIds.length > 0 ? `
+        <div class="dev-bulk-banner">
+          <span><strong>${selectedIds.length}</strong> developer${selectedIds.length > 1 ? 's' : ''} selected</span>
+          <div class="dev-bulk-actions">
+            <button class="btn-ghost sm" id="devDeselectAllBtn" style="padding: 5px 12px; font-size: 12px;">Deselect all</button>
+            <button class="btn-danger sm" id="devBulkDeleteBtn" style="padding: 5px 12px; font-size: 12px; gap: 5px;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 12px; height: 12px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+              Delete selected
+            </button>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Clean Universal Admin Table -->
+      <div class="dev-table-card">
+        <div class="dev-table-wrap">
+          <table class="dev-table">
+            <thead>
+              <tr>
+                <th class="dev-checkbox-cell">
+                  <input type="checkbox" class="dev-checkbox" id="devSelectAllCheckbox" ${isAllSelected ? 'checked' : ''} title="Select all" />
+                </th>
+                <th style="min-width: 220px;">Developer</th>
+                <th>Projects</th>
+                <th style="width: 140px;">Status</th>
+                <th class="dev-actions-cell" style="width: 88px;"></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filteredDevs.map(d => {
+    const assignedProjs = (d.projectIds || []).map(pid => (state.projects || []).find(p => p.id === pid)).filter(Boolean);
+    const totalAssigned = assignedProjs.length;
+    const isSelected = selectedIds.includes(d.id);
+
+    const MAX_VISIBLE = 4;
+    const visibleProjs = assignedProjs.slice(0, MAX_VISIBLE);
+    const hiddenProjs = assignedProjs.slice(MAX_VISIBLE);
+    const hiddenNames = hiddenProjs.map(p => p.name).join(', ');
+
+    const projectPills = visibleProjs.map(proj => {
+      const statusClass = getProjectStatusPillClass(proj);
+      const statusLabel = (Array.isArray(proj.statuses) && proj.statuses.length > 0)
+        ? proj.statuses.join(', ')
+        : (proj.overallProjectStatus ? proj.overallProjectStatus.replace(/_/g, ' ') : '');
+      const tooltip = statusLabel ? `${proj.name} • ${statusLabel}` : proj.name;
+
+      return `
+                    <span class="dev-pill status-pill ${statusClass}" title="${escapeHtml(tooltip)}">
+                      ${escapeHtml(proj.name)}
+                    </span>
+                  `;
+    }).join('');
+
+    const morePill = hiddenProjs.length > 0 ? `
+                  <span class="dev-pill dev-pill-more" title="${escapeHtml(hiddenNames)}">
+                    +${hiddenProjs.length} more
+                  </span>
+                ` : '';
+
+    const initials = d.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'DV';
+    const isAssigned = totalAssigned > 0;
+    const avatarBg = getAvatarGradient(d.name);
+
+    return `
+                  <tr class="${isSelected ? 'row-selected' : ''}" data-dev-id="${d.id}">
+                    <td class="dev-checkbox-cell">
+                      <input type="checkbox" class="dev-checkbox dev-row-checkbox" data-dev-id="${d.id}" ${isSelected ? 'checked' : ''} />
+                    </td>
+                    <td>
+                      <div class="dev-user-cell" data-action="edit-dev" data-dev-id="${d.id}" style="cursor: pointer;" title="Edit developer">
+                        <div class="dev-avatar-circle" style="background: ${avatarBg};">${initials}</div>
+                        <span class="dev-user-name">${escapeHtml(d.name)}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <div class="dev-pills-wrap">
+                        ${projectPills}${morePill}
+                        ${totalAssigned === 0 ? '<span class="dev-pill-empty">No projects assigned</span>' : ''}
+                      </div>
+                    </td>
+                    <td>
+                      <span class="dev-status-tag">
+                        <span class="dev-status-dot ${isAssigned ? 'active' : 'unassigned'}"></span>
+                        <span>${isAssigned ? 'Assigned' : 'Unassigned'}</span>
+                      </span>
+                    </td>
+                    <td class="dev-actions-cell">
+                      <div class="dev-action-btns-group">
+                        <button class="dev-action-dot-btn" data-action="edit-dev" data-dev-id="${d.id}" aria-label="Edit Developer" title="Edit Developer">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width: 15px; height: 15px;"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        </button>
+                        <button class="dev-action-dot-btn danger" data-action="delete-dev" data-dev-id="${d.id}" aria-label="Delete Developer" title="Delete Developer">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width: 15px; height: 15px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                `;
+  }).join('') || `
+                <tr>
+                  <td colspan="5" style="text-align: center; padding: 48px 16px;">
+                    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width: 36px; height: 36px; color: var(--text-muted);"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+                      <div style="font-size: 14px; font-weight: 600; color: var(--text);">No developers found</div>
+                      <div style="font-size: 12.5px; color: var(--text-muted);">Try adjusting your search query or clear the active filter.</div>
+                    </div>
+                  </td>
+                </tr>
+              `}
+            </tbody>
+          </table>
+        </div>
+        
+        <!-- Table Footer -->
+        <div class="dev-table-footer">
+          <span>Showing <strong>${filteredDevs.length}</strong> of <strong>${totalDevs}</strong> developer${totalDevs === 1 ? '' : 's'}</span>
+          ${(query || filter !== 'all') ? `
+            <button class="btn-ghost sm" id="devClearAllFiltersBtn" style="font-size: 11.5px; padding: 3px 8px;">Clear filters</button>
+          ` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+};
+
+// ─── Restructured Settings Module ─────────────────────────
 const renderSettings = () => {
   const dbSizeKb = ((JSON.stringify(state).length) / 1024).toFixed(1);
+  const hiddenSet = new Set(state.hiddenModules || []);
+
+  const MODULE_LIST = [
+    { key: 'dashboard', label: 'Dashboard', desc: 'Main overview & project metrics', icon: `<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>` },
+    { key: 'projects', label: 'Projects', desc: 'Project list & Kanban board', icon: `<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>` },
+    { key: 'tasks', label: 'Tasks', desc: 'Task tracking & assignments', icon: `<path d="M9 12l2 2 4-4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 9h18"/>` },
+    { key: 'notes', label: 'Notes', desc: 'Markdown note workspace', icon: `<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>` },
+    { key: 'calendar', label: 'Calendar', desc: 'Deadline & release calendar', icon: `<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>` },
+    { key: 'tests', label: 'Project Insights', desc: 'Analytics & test execution stats', icon: `<path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/>` },
+    { key: 'testcases', label: 'Test Case Management', desc: 'Test scenarios & execution', icon: `<path d="M9 3v7.2a4 4 0 01-1.3 2.9l-3.4 3.1A2 2 0 005.7 20h12.6a2 2 0 001.4-3.8l-3.4-3.1A4 4 0 0115 10.2V3"/>` },
+    { key: 'releases', label: 'Release Management', desc: 'Release versions & changelogs', icon: `<line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><polygon points="12 22.08 12 12 3 6.92 3 17.08 12 22.08"/>` },
+    { key: 'releasepoints', label: 'Release Points', desc: 'Detailed release checklist items', icon: `<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>` },
+    { key: 'developers', label: 'Developers', desc: 'Developer project mapping', icon: `<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/>` },
+    { key: 'activity', label: 'Activity', desc: 'System activity & change logs', icon: `<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>` },
+    { key: 'settings', label: 'Settings', desc: 'System preferences & database', locked: true, icon: `<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>` }
+  ];
+
   const settingsHero = buildPageHero({
     icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>`,
     gradient: 'linear-gradient(135deg, #0f2027 0%, #203a43 40%, #2c5364 100%)',
     title: 'System Settings',
-    subtitle: 'Manage developers, data storage, and application configuration.',
+    subtitle: 'Configure module visibility, appearance, system backups, and storage health.',
     stats: [
-      { label: 'Projects', value: state.projects.length },
-      { label: 'Tasks', value: state.tasks.length },
-      { label: 'Developers', value: (state.developers || []).length, color: '#60a5fa' },
+      { label: 'Visible Modules', value: MODULE_LIST.length - hiddenSet.size, color: '#4ade80' },
+      { label: 'Hidden Modules', value: hiddenSet.size, color: '#f87171' },
       { label: 'DB Size', value: `${dbSizeKb} KB`, color: '#a78bfa' },
-      { label: 'Activities', value: state.activity.length },
+      { label: 'Developers', value: (state.developers || []).length, color: '#60a5fa' }
     ],
     progressBar: {
       pct: Math.min(100, Math.round((parseFloat(dbSizeKb) / 5120) * 100)),
@@ -3187,221 +3531,191 @@ const renderSettings = () => {
       color: 'linear-gradient(90deg, #4ade80, #22c55e)'
     }
   });
+
   return `
     ${settingsHero}
 
+    <div class="settings-container settings-full-width" style="margin-top: 20px;">
 
-  <div class="settings-container">
-    <!-- Left Pane: General Info & Actions -->
-    <div class="settings-left-col">
-
-      <!-- Appearance -->
-      <div class="settings-card">
+      <!-- 1. Module Management -->
+      <div class="settings-card" style="margin-bottom: 20px;">
         <div class="settings-info">
           <div class="settings-header-wrap">
             <h3>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-              Appearance
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+              Module Management
             </h3>
-            <p>Choose how Clair looks on this device.</p>
-          </div>
-          <div class="project-type-toggle" id="themeToggle" role="radiogroup" aria-label="Theme">
-            <button type="button" class="type-btn${state.theme === 'system' ? ' active' : ''}" data-theme-choice="system" role="radio" aria-checked="${state.theme === 'system'}">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-              System
-            </button>
-            <button type="button" class="type-btn${state.theme === 'light' ? ' active' : ''}" data-theme-choice="light" role="radio" aria-checked="${state.theme === 'light'}">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-              Light
-            </button>
-            <button type="button" class="type-btn${state.theme === 'dark' ? ' active' : ''}" data-theme-choice="dark" role="radio" aria-checked="${state.theme === 'dark'}">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
-              Dark
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- General Information -->
-      <div class="settings-card">
-        <div class="settings-info">
-          <div class="settings-header-wrap">
-            <h3>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-              System Overview
-            </h3>
-            <p>General database metrics and statistics.</p>
-          </div>
-          
-          <div class="settings-stats-grid">
-            <div class="settings-stat-box">
-              <span class="stat-num num-projects">${state.projects.length}</span>
-              <span class="stat-lbl">Projects</span>
-            </div>
-            <div class="settings-stat-box">
-              <span class="stat-num num-tasks">${state.tasks.length}</span>
-              <span class="stat-lbl">Tasks</span>
-            </div>
-            <div class="settings-stat-box">
-              <span class="stat-num num-tests">${state.tests.length}</span>
-              <span class="stat-lbl">Tests</span>
-            </div>
-            <div class="settings-stat-box">
-              <span class="stat-num num-db">${((JSON.stringify(state).length) / 1024).toFixed(1)} KB</span>
-              <span class="stat-lbl">DB Size</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Quick Actions (Backup / Restore) -->
-      <div class="settings-card">
-        <div class="settings-info">
-          <div class="settings-header-wrap">
-            <h3>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
-              Data Portability
-            </h3>
-            <p>Backup or restore your system settings.</p>
-          </div>
-          
-          <div class="portability-btn-group">
-            <button class="btn-ghost" id="settingsExportBtn">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 15px; height: 15px; margin-right: 8px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              Export System Backup
-            </button>
-            <button class="btn-ghost" id="settingsImportBtn">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 15px; height: 15px; margin-right: 8px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              Import System Backup
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Export Report -->
-      <div class="settings-card">
-        <div class="settings-info">
-          <div class="settings-header-wrap">
-            <h3>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-              Reports
-            </h3>
-            <p>Generate a multi-sheet Excel report of projects, tasks, releases, and test case counts.</p>
+            <p>Customize your sidebar navigation by showing or hiding specific modules. Settings cannot be hidden.</p>
           </div>
 
-          <div class="portability-btn-group">
-            <button class="btn-ghost" id="openExportReportBtn">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 15px; height: 15px; margin-right: 8px;"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-              Export Report (Excel)
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Danger Zone -->
-      <div class="settings-card danger-zone">
-        <div class="settings-info">
-          <div class="settings-header-wrap" style="border-bottom-color: rgba(192, 57, 43, 0.15);">
-            <h3 style="color: var(--danger);">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01"/></svg>
-              Danger Zone
-            </h3>
-            <p>Wipe all database records. A backup file is exported first.</p>
-          </div>
-          
-          <button class="btn-danger" id="clearDataBtn" style="width: 100%; justify-content: center;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px; margin-right: 8px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
-            Clear Database
-          </button>
-        </div>
-      </div>
-
-    </div>
-
-    <!-- Right Pane: Developer Management -->
-    <div class="settings-card">
-      <div class="settings-info" style="margin-bottom: 24px;">
-        <div class="settings-header-wrap">
-          <h3>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-            Developer Management
-          </h3>
-          <p>Link projects to developers for automated selection drop-downs.</p>
-        </div>
-      </div>
-
-      <div class="dev-manager-split">
-        
-        <!-- Add / Edit Form -->
-        <div class="dev-form-card">
-          <h4 class="dev-form-title" id="devFormTitle">Add New Developer</h4>
-          <input type="hidden" id="editDevId" value="" />
-          
-          <div class="form-group">
-            <label>Developer Name <span class="req">*</span></label>
-            <input type="text" id="devNameInput" placeholder="e.g. John Doe" />
-          </div>
-          
-          <div class="form-group">
-            <label>Link Projects</label>
-            <div class="dev-project-checklist">
-              ${state.projects.map(p => `
-                <label class="dev-project-label">
-                  <input type="checkbox" name="devProjectCheck" value="${p.id}" />
-                  <span>${p.name}</span>
-                </label>
-              `).join('') || emptyNote('No projects created yet.')}
-            </div>
-          </div>
-          
-          <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px;">
-            <button class="btn-ghost" id="cancelDevEditBtn" style="display: none; padding: 8px 14px; font-size: 12.5px;">Cancel</button>
-            <button class="btn-primary" id="saveDevBtn" style="padding: 8px 14px; font-size: 12.5px;">Save Developer</button>
-          </div>
-        </div>
-
-        <!-- Developers List Grid -->
-        <div class="dev-list-column">
-          <h4 class="dev-list-title">Configured Developers</h4>
-          
-          <div class="dev-list-grid">
-            ${state.developers.map(d => {
-    const projectPills = (d.projectIds || []).map(pid => {
-      const proj = state.projects.find(p => p.id === pid);
-      return proj ? `<span class="test-pill test-proj" style="font-size: 10px; padding: 2px 6px;">${proj.name}</span>` : null;
-    }).filter(Boolean).join('') || '<span style="font-size: 11.5px; color: var(--text-muted);">No linked projects</span>';
+          <div class="module-toggle-grid">
+            ${MODULE_LIST.map(mod => {
+    const isVisible = !hiddenSet.has(mod.key);
+    const isLocked = mod.locked === true;
 
     return `
-                <div class="developer-item-card">
-                  <div class="dev-card-header">
-                    <span class="dev-card-name">${d.name}</span>
-                    <div class="dev-card-actions">
-                      <button class="icon-btn" data-action="edit-dev" data-dev-id="${d.id}" aria-label="Edit Developer" title="Edit Developer">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width: 14px; height: 14px;"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                      </button>
-                      <button class="icon-btn danger" data-action="delete-dev" data-dev-id="${d.id}" aria-label="Delete Developer" title="Delete Developer">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width: 14px; height: 14px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
-                      </button>
+                <div class="module-toggle-card${isLocked ? ' locked' : ''}">
+                  <div class="module-toggle-left">
+                    <div class="module-toggle-icon">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">${mod.icon}</svg>
+                    </div>
+                    <div class="module-toggle-meta">
+                      <span class="module-toggle-title">${escapeHtml(mod.label)}</span>
+                      <span class="module-toggle-desc">${escapeHtml(mod.desc)}</span>
                     </div>
                   </div>
-                  <div class="dev-card-projects">
-                    ${projectPills}
+                  <div>
+                    ${isLocked ? `
+                      <span class="module-badge-locked">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 11px; height: 11px;"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                        System Core
+                      </span>
+                    ` : `
+                      <label class="switch-toggle" title="Toggle module visibility">
+                        <input type="checkbox" data-action="toggle-module-visibility" data-module="${mod.key}" ${isVisible ? 'checked' : ''} />
+                        <span class="switch-slider"></span>
+                      </label>
+                    `}
                   </div>
                 </div>
               `;
-  }).join('') || `
-              <div class="dev-empty-state">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-                <span style="font-size: 13px;">No developers added yet</span>
+  }).join('')}
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-grid-2col">
+        <!-- 2. Appearance & Startup Settings -->
+        <div class="settings-card">
+          <div class="settings-info">
+            <div class="settings-header-wrap">
+              <h3>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                Appearance &amp; Default View
+              </h3>
+              <p>Choose theme preferences and your default startup screen.</p>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 16px; margin-top: 10px;">
+              <div>
+                <label style="font-size: 12px; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 8px;">Color Theme</label>
+                <div class="project-type-toggle" id="themeToggle" role="radiogroup" aria-label="Theme">
+                  <button type="button" class="type-btn${state.theme === 'system' ? ' active' : ''}" data-theme-choice="system" role="radio" aria-checked="${state.theme === 'system'}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                    System
+                  </button>
+                  <button type="button" class="type-btn${state.theme === 'light' ? ' active' : ''}" data-theme-choice="light" role="radio" aria-checked="${state.theme === 'light'}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                    Light
+                  </button>
+                  <button type="button" class="type-btn${state.theme === 'dark' ? ' active' : ''}" data-theme-choice="dark" role="radio" aria-checked="${state.theme === 'dark'}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+                    Dark
+                  </button>
+                </div>
               </div>
-            `}
+
+              <div>
+                <label style="font-size: 12px; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 6px;">Default Startup Module</label>
+                <select id="defaultViewSelect" class="form-select">
+                  <option value="dashboard" ${state.defaultView === 'dashboard' ? 'selected' : ''}>Dashboard</option>
+                  <option value="projects" ${state.defaultView === 'projects' ? 'selected' : ''}>Projects</option>
+                  <option value="tasks" ${state.defaultView === 'tasks' ? 'selected' : ''}>Tasks</option>
+                  <option value="notes" ${state.defaultView === 'notes' ? 'selected' : ''}>Notes</option>
+                  <option value="calendar" ${state.defaultView === 'calendar' ? 'selected' : ''}>Calendar</option>
+                  <option value="tests" ${state.defaultView === 'tests' ? 'selected' : ''}>Project Insights</option>
+                  <option value="testcases" ${state.defaultView === 'testcases' ? 'selected' : ''}>Test Case Management</option>
+                  <option value="releases" ${state.defaultView === 'releases' ? 'selected' : ''}>Release Management</option>
+                  <option value="releasepoints" ${state.defaultView === 'releasepoints' ? 'selected' : ''}>Release Points</option>
+                  <option value="developers" ${state.defaultView === 'developers' ? 'selected' : ''}>Developer Management</option>
+                  <option value="activity" ${state.defaultView === 'activity' ? 'selected' : ''}>Activity</option>
+                </select>
+              </div>
+            </div>
           </div>
         </div>
 
+        <!-- 3. Data Portability & Reports -->
+        <div class="settings-card">
+          <div class="settings-info">
+            <div class="settings-header-wrap">
+              <h3>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+                Data Portability &amp; Reports
+              </h3>
+              <p>Export backups, restore data JSON, or export Excel reports.</p>
+            </div>
+            
+            <div class="portability-btn-group" style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
+              <button class="btn-ghost" id="settingsExportBtn" style="justify-content: flex-start;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 15px; height: 15px; margin-right: 8px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Export System Backup (JSON)
+              </button>
+              <button class="btn-ghost" id="settingsImportBtn" style="justify-content: flex-start;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 15px; height: 15px; margin-right: 8px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Import System Backup (JSON)
+              </button>
+              <button class="btn-ghost" id="openExportReportBtn" style="justify-content: flex-start;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 15px; height: 15px; margin-right: 8px;"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                Export Full Report (Excel)
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. Database Overview Metrics -->
+        <div class="settings-card">
+          <div class="settings-info">
+            <div class="settings-header-wrap">
+              <h3>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+                System Database Metrics
+              </h3>
+              <p>Record counters &amp; local storage statistics.</p>
+            </div>
+            
+            <div class="settings-stats-grid">
+              <div class="settings-stat-box">
+                <span class="stat-num num-projects">${(state.projects || []).length}</span>
+                <span class="stat-lbl">Projects</span>
+              </div>
+              <div class="settings-stat-box">
+                <span class="stat-num num-tasks">${(state.tasks || []).length}</span>
+                <span class="stat-lbl">Tasks</span>
+              </div>
+              <div class="settings-stat-box">
+                <span class="stat-num num-tests">${(state.tests || []).length}</span>
+                <span class="stat-lbl">Tests</span>
+              </div>
+              <div class="settings-stat-box">
+                <span class="stat-num num-db">${dbSizeKb} KB</span>
+                <span class="stat-lbl">DB Size</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 5. Danger Zone -->
+        <div class="settings-card danger-zone">
+          <div class="settings-info">
+            <div class="settings-header-wrap" style="border-bottom-color: rgba(192, 57, 43, 0.15);">
+              <h3 style="color: var(--danger);">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01"/></svg>
+                Danger Zone
+              </h3>
+              <p>Wipe all database records. A backup file is automatically exported first.</p>
+            </div>
+            
+            <button class="btn-danger" id="clearDataBtn" style="width: 100%; justify-content: center; margin-top: 10px;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px; margin-right: 8px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+              Clear Database
+            </button>
+          </div>
+        </div>
       </div>
+
     </div>
-  </div>
-`;
+  `;
 };
 
 const clearAllData = async () => {
@@ -3496,6 +3810,45 @@ const attachCardListeners = () => {
     const themeBtn = e.target.closest('#themeToggle .type-btn');
     if (themeBtn) {
       await setTheme(themeBtn.dataset.themeChoice);
+      return;
+    }
+
+    if (e.target.closest('#openAddDevModalBtn')) {
+      openDevModal();
+      return;
+    }
+
+    const devFilterBtn = e.target.closest('#devFilterTriggerBtn');
+    if (devFilterBtn) {
+      const menu = document.getElementById('devFilterMenu');
+      if (menu) menu.style.display = (menu.style.display === 'none' || !menu.style.display) ? 'block' : 'none';
+      return;
+    }
+
+    const devFilterOpt = e.target.closest('[data-dev-filter]');
+    if (devFilterOpt) {
+      state.devFilter = devFilterOpt.dataset.devFilter;
+      const menu = document.getElementById('devFilterMenu');
+      if (menu) menu.style.display = 'none';
+      render();
+      return;
+    }
+
+    if (e.target.closest('#devDeselectAllBtn')) {
+      state.devSelectedIds = [];
+      render();
+      return;
+    }
+
+    if (e.target.closest('#devBulkDeleteBtn')) {
+      confirmBulkDeleteDevelopers();
+      return;
+    }
+
+    if (e.target.closest('#devClearAllFiltersBtn')) {
+      state.devSearch = '';
+      state.devFilter = 'all';
+      render();
       return;
     }
 
@@ -4234,11 +4587,61 @@ window.clearFilters = () => {
   render();
 };
 
-// ─── Developer Management ────────────────────────────────
+// ─── Developer Management (Admin Panel Modal & CRUD) ────────────
+const openDevModal = (devId = null) => {
+  const titleEl = document.getElementById('devModalTitle');
+  const nameInput = document.getElementById('devNameInput');
+  const idInput = document.getElementById('editDevId');
+  const checklist = document.getElementById('devModalProjectChecklist');
+  const searchInput = document.getElementById('devModalProjectSearch');
+
+  const dev = devId ? (state.developers || []).find(d => d.id === devId) : null;
+
+  const saveBtn = document.getElementById('saveDevModalBtn');
+  if (titleEl) titleEl.textContent = dev ? 'Edit Developer' : 'Add New Developer';
+  if (saveBtn) saveBtn.textContent = dev ? 'Update Developer' : 'Save Developer';
+  if (nameInput) nameInput.value = dev ? dev.name : '';
+  if (idInput) idInput.value = dev ? dev.id : '';
+  if (searchInput) searchInput.value = '';
+
+  const assignedSet = new Set(dev ? (dev.projectIds || []) : []);
+
+  if (checklist) {
+    checklist.innerHTML = (state.projects || []).map(p => {
+      const isChecked = assignedSet.has(p.id);
+      const statusClass = getProjectStatusPillClass(p);
+      const statusLabel = (Array.isArray(p.statuses) && p.statuses.length > 0)
+        ? p.statuses[0]
+        : (p.overallProjectStatus ? p.overallProjectStatus.replace(/_/g, ' ') : '');
+
+      return `
+        <label class="dev-project-checkbox-row ${isChecked ? 'checked' : ''}" data-name="${escapeHtml(p.name.toLowerCase())}">
+          <div class="dev-project-checkbox-row-left">
+            <input type="checkbox" name="devProjectCheck" value="${p.id}" ${isChecked ? 'checked' : ''} />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px; color: var(--text-muted); flex-shrink: 0;"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+            <span class="dev-project-checkbox-row-name">${escapeHtml(p.name)}</span>
+          </div>
+          ${statusLabel ? `<span class="dev-pill status-pill ${statusClass}" style="font-size: 10px; padding: 2px 7px;">${escapeHtml(statusLabel)}</span>` : ''}
+        </label>
+      `;
+    }).join('') || '<div style="font-size: 12.5px; color: var(--text-muted); padding: 12px; text-align: center;">No projects created yet</div>';
+  }
+
+  showModal('developerModal');
+};
+
 const saveDeveloper = async () => {
-  const name = document.getElementById('devNameInput').value.trim();
-  const id = document.getElementById('editDevId').value;
-  if (!name) { showToast('Developer name is required', 'error'); return; }
+  const nameInput = document.getElementById('devNameInput');
+  const idInput = document.getElementById('editDevId');
+
+  const name = nameInput ? nameInput.value.trim() : '';
+  const id = idInput ? idInput.value : '';
+
+  if (!name) {
+    showToast('Developer name is required', 'error');
+    if (nameInput) nameInput.focus();
+    return;
+  }
 
   const checkboxes = document.querySelectorAll('input[name="devProjectCheck"]:checked');
   const projectIds = Array.from(checkboxes).map(cb => cb.value);
@@ -4248,42 +4651,26 @@ const saveDeveloper = async () => {
     if (dev) {
       dev.name = name;
       dev.projectIds = projectIds;
+      dev.updatedAt = new Date().toISOString();
       showToast('Developer updated');
     }
   } else {
     state.developers.push({
       id: 'dev-' + uid(),
       name,
-      projectIds
+      projectIds,
+      createdAt: new Date().toISOString()
     });
     showToast('Developer added');
   }
 
   await storage.save();
-  cancelDevEdit();
+  closeModals();
   render();
 };
 
-const cancelDevEdit = () => {
-  document.getElementById('devNameInput').value = '';
-  document.getElementById('editDevId').value = '';
-  document.querySelectorAll('input[name="devProjectCheck"]').forEach(cb => cb.checked = false);
-  document.getElementById('devFormTitle').textContent = 'Add New Developer';
-  document.getElementById('cancelDevEditBtn').style.display = 'none';
-};
-
 const editDeveloper = (devId) => {
-  const dev = state.developers.find(d => d.id === devId);
-  if (!dev) return;
-
-  document.getElementById('devNameInput').value = dev.name;
-  document.getElementById('editDevId').value = dev.id;
-  document.getElementById('devFormTitle').textContent = 'Edit Developer';
-  document.getElementById('cancelDevEditBtn').style.display = 'inline-block';
-
-  document.querySelectorAll('input[name="devProjectCheck"]').forEach(cb => {
-    cb.checked = (dev.projectIds || []).includes(cb.value);
-  });
+  openDevModal(devId);
 };
 
 const confirmDeleteDeveloper = (devId) => {
@@ -4303,10 +4690,39 @@ const deleteDeveloper = async (devId) => {
     if (t.developer === devId) t.developer = '';
   });
 
+  if (state.devSelectedIds) {
+    state.devSelectedIds = state.devSelectedIds.filter(id => id !== devId);
+  }
+
   await storage.save();
   closeModals();
   render();
   showToast('Developer deleted');
+};
+
+const confirmBulkDeleteDevelopers = () => {
+  const count = (state.devSelectedIds || []).length;
+  if (count === 0) return;
+  document.getElementById('confirmMessage').textContent = `Delete ${count} selected developer${count > 1 ? 's' : ''}? This action cannot be undone.`;
+  confirmCallback = () => bulkDeleteDevelopers();
+  showModal('confirmModal');
+};
+
+const bulkDeleteDevelopers = async () => {
+  const toDelete = new Set(state.devSelectedIds || []);
+  state.developers = state.developers.filter(d => !toDelete.has(d.id));
+  state.tasks.forEach(t => {
+    t.developerIds = (t.developerIds || []).filter(id => !toDelete.has(id));
+  });
+  state.tests.forEach(t => {
+    if (toDelete.has(t.developer)) t.developer = '';
+  });
+
+  state.devSelectedIds = [];
+  await storage.save();
+  closeModals();
+  render();
+  showToast(`Deleted ${toDelete.size} developers`);
 };
 
 // ─── Project Modal ───────────────────────────────────────
@@ -4792,6 +5208,10 @@ const showModal = (id) => {
 const closeModals = () => {
   document.getElementById('modalBackdrop').classList.remove('show');
   document.querySelectorAll('.modal').forEach(m => m.classList.remove('show'));
+};
+
+const hideModal = (id) => {
+  closeModals();
 };
 
 const openDetailModal = (type, id) => {
@@ -9940,6 +10360,15 @@ const init = async () => {
   state.theme = await ClairDB.getPref('theme', 'light');
   applyTheme(state.theme);
 
+  const hiddenPref = await ClairDB.getPref('hidden_modules', '[]');
+  try {
+    state.hiddenModules = JSON.parse(hiddenPref) || [];
+  } catch (e) {
+    state.hiddenModules = [];
+  }
+  state.defaultView = await ClairDB.getPref('default_view', 'dashboard');
+  applyModuleVisibility();
+
   // Persist the "task completed" backfill immediately so existing tasks have
   // it in SQLite right away, not only after the next edit to each one.
   if (hadLegacyTasksWithoutWorkDone) {
@@ -10020,18 +10449,94 @@ const init = async () => {
   document.getElementById('generateMailNotesBtn').addEventListener('click', triggerNotesMailGeneration);
   document.getElementById('saveFolderBtn').addEventListener('click', saveFolder);
   document.getElementById('confirmMoveNoteBtn').addEventListener('click', saveMoveNote);
+  document.getElementById('saveDevModalBtn')?.addEventListener('click', saveDeveloper);
+  document.getElementById('closeDeveloperModal')?.addEventListener('click', closeModals);
+  document.getElementById('cancelDevModal')?.addEventListener('click', closeModals);
+  document.getElementById('devModalSelectAll')?.addEventListener('click', () => {
+    document.querySelectorAll('#devModalProjectChecklist input[name="devProjectCheck"]').forEach(cb => {
+      cb.checked = true;
+      cb.closest('.dev-project-checkbox-row')?.classList.add('checked');
+    });
+  });
+  document.getElementById('devModalDeselectAll')?.addEventListener('click', () => {
+    document.querySelectorAll('#devModalProjectChecklist input[name="devProjectCheck"]').forEach(cb => {
+      cb.checked = false;
+      cb.closest('.dev-project-checkbox-row')?.classList.remove('checked');
+    });
+  });
 
-  // Handle bulk action checkboxes
-  document.addEventListener('change', (e) => {
-    const modCb = e.target.closest('.module-select-checkbox');
-    if (modCb) {
-      handleModuleCheckboxChange(modCb);
+  // Event delegation for Module Visibility Toggles & Settings controls
+  document.addEventListener('change', async (e) => {
+    const modToggle = e.target.closest('[data-action="toggle-module-visibility"]');
+    if (modToggle) {
+      const moduleKey = modToggle.dataset.module;
+      if (moduleKey === 'settings') return; // Cannot toggle settings
+      const hiddenSet = new Set(state.hiddenModules || []);
+      if (modToggle.checked) {
+        hiddenSet.delete(moduleKey);
+      } else {
+        hiddenSet.add(moduleKey);
+      }
+      state.hiddenModules = Array.from(hiddenSet);
+      await ClairDB.setPref('hidden_modules', JSON.stringify(state.hiddenModules));
+      applyModuleVisibility();
+      showToast(modToggle.checked ? `Module enabled` : `Module hidden from sidebar`);
+      render();
+      return;
+    }
+
+    if (e.target.id === 'defaultViewSelect') {
+      state.defaultView = e.target.value;
+      await ClairDB.setPref('default_view', state.defaultView);
+      showToast(`Default startup module updated to ${e.target.options[e.target.selectedIndex].text}`);
       return;
     }
 
     const tcCb = e.target.closest('.testcase-select-checkbox');
     if (tcCb) {
       handleTestCaseCheckboxChange(tcCb);
+      return;
+    }
+
+    if (e.target.id === 'devSelectAllCheckbox') {
+      const isChecked = e.target.checked;
+      const query = (state.devSearch || '').toLowerCase().trim();
+      const filter = state.devFilter || 'all';
+      const visibleIds = (state.developers || []).filter(d => {
+        const assignedProjs = (d.projectIds || []).map(pid => (state.projects || []).find(p => p.id === pid)).filter(Boolean);
+        const projNames = assignedProjs.map(p => p.name.toLowerCase()).join(' ');
+        const email = (d.email || '').toLowerCase();
+        const role = (d.role || '').toLowerCase();
+        const matchesSearch = !query || d.name.toLowerCase().includes(query) || email.includes(query) || role.includes(query) || projNames.includes(query);
+        let matchesFilter = true;
+        if (filter === 'assigned') matchesFilter = assignedProjs.length > 0;
+        else if (filter === 'unassigned') matchesFilter = assignedProjs.length === 0;
+        else if (filter.startsWith('proj:')) matchesFilter = (d.projectIds || []).includes(filter.replace('proj:', ''));
+        return matchesSearch && matchesFilter;
+      }).map(d => d.id);
+
+      state.devSelectedIds = isChecked ? visibleIds : [];
+      render();
+      return;
+    }
+
+    const devCb = e.target.closest('.dev-row-checkbox');
+    if (devCb) {
+      const devId = devCb.dataset.devId;
+      const selected = new Set(state.devSelectedIds || []);
+      if (devCb.checked) selected.add(devId);
+      else selected.delete(devId);
+      state.devSelectedIds = Array.from(selected);
+      render();
+      return;
+    }
+
+    if (e.target.name === 'devProjectCheck') {
+      const row = e.target.closest('.dev-project-checkbox-row');
+      if (row) {
+        if (e.target.checked) row.classList.add('checked');
+        else row.classList.remove('checked');
+      }
       return;
     }
   });
@@ -10391,7 +10896,33 @@ const init = async () => {
 
   let noteSearchTimer;
   let noteAutoSaveTimer;
+  let devSearchTimer;
   document.addEventListener('input', e => {
+    if (e.target.id === 'devSearchInput') {
+      clearTimeout(devSearchTimer);
+      devSearchTimer = setTimeout(() => {
+        state.devSearch = e.target.value;
+        const curInput = document.getElementById('devSearchInput');
+        const pos = curInput ? curInput.selectionStart : 0;
+        render();
+        const newInput = document.getElementById('devSearchInput');
+        if (newInput) {
+          newInput.focus();
+          try { newInput.setSelectionRange(pos, pos); } catch (err) { }
+        }
+      }, 150);
+      return;
+    }
+
+    if (e.target.id === 'devModalProjectSearch') {
+      const q = e.target.value.toLowerCase().trim();
+      document.querySelectorAll('#devModalProjectChecklist .dev-project-checkbox-row').forEach(row => {
+        const name = row.dataset.name || '';
+        row.style.display = (!q || name.includes(q)) ? 'flex' : 'none';
+      });
+      return;
+    }
+
     if (e.target.id === 'notesSearchInput') {
       clearTimeout(noteSearchTimer);
       noteSearchTimer = setTimeout(() => {
@@ -10463,6 +10994,39 @@ const init = async () => {
     }
   });
 
+  document.addEventListener('click', e => {
+    const menu = document.getElementById('devFilterMenu');
+    if (menu && menu.style.display !== 'none' && !e.target.closest('#devFilterTriggerBtn') && !e.target.closest('#devFilterMenu')) {
+      menu.style.display = 'none';
+    }
+
+    if (e.target.closest('#closeDeveloperModal') || e.target.closest('#cancelDevModal')) {
+      closeModals();
+      return;
+    }
+
+    if (e.target.closest('#saveDevModalBtn')) {
+      saveDeveloper();
+      return;
+    }
+
+    if (e.target.closest('#devModalSelectAll')) {
+      document.querySelectorAll('#devModalProjectChecklist input[name="devProjectCheck"]').forEach(cb => {
+        cb.checked = true;
+        cb.closest('.dev-project-checkbox-row')?.classList.add('checked');
+      });
+      return;
+    }
+
+    if (e.target.closest('#devModalDeselectAll')) {
+      document.querySelectorAll('#devModalProjectChecklist input[name="devProjectCheck"]').forEach(cb => {
+        cb.checked = false;
+        cb.closest('.dev-project-checkbox-row')?.classList.remove('checked');
+      });
+      return;
+    }
+  });
+
   // Multi-tab real-time database synchronization listener
   if (typeof BroadcastChannel !== 'undefined') {
     const tabSyncChannel = new BroadcastChannel('clair_db_sync');
@@ -10502,7 +11066,8 @@ const init = async () => {
   }
 
   attachCardListeners();
-  setView('dashboard');
+  const startView = (state.defaultView && document.querySelector(`.nav-item[data-view="${state.defaultView}"]`)) ? state.defaultView : 'dashboard';
+  setView(startView);
   updateStorageInfo();
 };
 
