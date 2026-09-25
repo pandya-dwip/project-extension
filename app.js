@@ -70,6 +70,7 @@ let state = {
   projectsKanbanBoardScrollLeft: 0,
   projectsKanbanColumnScrollTops: {},
   searchQuery: '',
+  projectSearch: '',
   taskSearch: '',
   testSearch: '',
   releaseSearch: '',
@@ -237,6 +238,20 @@ const escapeHtml = (str) => {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+};
+
+const getAvatarGradient = (name = '') => {
+  const gradients = [
+    'linear-gradient(135deg, #059669, #047857)',
+    'linear-gradient(135deg, #475569, #334155)',
+    'linear-gradient(135deg, #2563eb, #1d4ed8)',
+    'linear-gradient(135deg, #4f46e5, #3730a3)',
+    'linear-gradient(135deg, #d97706, #b45309)',
+    'linear-gradient(135deg, #0d9488, #0f766e)'
+  ];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return gradients[Math.abs(hash) % gradients.length];
 };
 
 const incrementVersion = (ver) => {
@@ -494,12 +509,21 @@ const isWithinDateRange = (dateStr, from, to) => {
 
 const openExportReportModal = () => {
   const projContainer = document.getElementById('reportProjectChecklist');
-  projContainer.innerHTML = state.projects.map(p => `
-    <label class="dev-project-label">
-      <input type="checkbox" name="reportProjectCheck" value="${p.id}" checked />
-      <span>${p.name}</span>
-    </label>
-  `).join('') || emptyNote('No projects added yet.');
+  projContainer.innerHTML = state.projects.map(p => {
+    const statusClass = getProjectStatusPillClass(p);
+    const statusLabel = (Array.isArray(p.statuses) && p.statuses.length > 0)
+      ? p.statuses[0]
+      : (p.overallProjectStatus ? p.overallProjectStatus.replace(/_/g, ' ') : '');
+    return `
+      <label class="dev-project-label" style="display:flex; align-items:center; justify-content:space-between; padding:5px 8px;">
+        <span style="display:flex; align-items:center; gap:8px;">
+          <input type="checkbox" name="reportProjectCheck" value="${p.id}" checked />
+          <span>${escapeHtml(p.name)}</span>
+        </span>
+        ${statusLabel ? `<span class="dev-pill status-pill ${statusClass}" style="font-size:10px; padding:2px 7px;">${escapeHtml(statusLabel)}</span>` : ''}
+      </label>
+    `;
+  }).join('') || emptyNote('No projects added yet.');
 
   const devContainer = document.getElementById('reportDeveloperChecklist');
   devContainer.innerHTML = state.developers.map(d => `
@@ -598,6 +622,25 @@ const PRIORITY_XL = {
   'Low': { fill: 'FFE8F5E9', font: 'FF2E7D32' }
 };
 
+const OVERALL_STATUS_XL = {
+  'ON_GOING': { fill: 'FFE1F5FE', font: 'FF01579B', label: 'On Going' },
+  'On Going': { fill: 'FFE1F5FE', font: 'FF01579B', label: 'On Going' },
+  'COMPLETED': { fill: 'FFE8F5E9', font: 'FF1B5E20', label: 'Completed' },
+  'Completed': { fill: 'FFE8F5E9', font: 'FF1B5E20', label: 'Completed' },
+  'MONITORING': { fill: 'FFE8F5EE', font: 'FF059669', label: 'Monitoring' },
+  'Monitoring': { fill: 'FFE8F5EE', font: 'FF059669', label: 'Monitoring' },
+  'ON_HOLD': { fill: 'FFFBE9E7', font: 'FFBF360C', label: 'On Hold' },
+  'On Hold': { fill: 'FFFBE9E7', font: 'FFBF360C', label: 'On Hold' },
+  'YET_TO_START': { fill: 'FFE8EAF6', font: 'FF283593', label: 'Yet to Start' },
+  'Yet to Start': { fill: 'FFE8EAF6', font: 'FF283593', label: 'Yet to Start' }
+};
+
+const formatOverallStatus = (status) => {
+  if (!status) return '—';
+  if (OVERALL_STATUS_XL[status]) return OVERALL_STATUS_XL[status].label;
+  return status.replace(/_/g, ' ');
+};
+
 const thinBorder = (color = XL.border) => ({
   top: { style: 'thin', color: { argb: color } },
   bottom: { style: 'thin', color: { argb: color } },
@@ -606,9 +649,9 @@ const thinBorder = (color = XL.border) => ({
 });
 
 const styleHeaderRow = (row, fillColor = XL.accent) => {
-  row.height = 22;
+  row.height = 26;
   row.eachCell({ includeEmpty: true }, cell => {
-    cell.font = { bold: true, color: { argb: XL.white }, size: 11 };
+    cell.font = { name: 'Segoe UI', bold: true, color: { argb: XL.white }, size: 10.5 };
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillColor } };
     cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
     cell.border = thinBorder(fillColor);
@@ -616,28 +659,32 @@ const styleHeaderRow = (row, fillColor = XL.accent) => {
 };
 
 const zebraRow = (row, isEven) => {
+  row.height = Math.max(row.height || 0, 24);
   row.eachCell({ includeEmpty: true }, cell => {
+    cell.font = { name: 'Segoe UI', size: 10, ...(cell.font || {}) };
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isEven ? XL.zebra : XL.white } };
     cell.border = thinBorder();
-    cell.alignment = { vertical: 'middle' };
+    cell.alignment = { vertical: 'middle', ...(cell.alignment || {}) };
   });
 };
 
 const colorCell = (cell, colorMap, value) => {
-  const c = colorMap[value];
+  if (!value || !colorMap) return;
+  const valStr = String(value).trim();
+  const c = colorMap[valStr] || colorMap[valStr.toUpperCase()] || colorMap[valStr.replace(/ /g, '_').toUpperCase()];
   if (!c) return;
   cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: c.fill } };
-  cell.font = { color: { argb: c.font }, bold: true };
+  cell.font = { name: 'Segoe UI', color: { argb: c.font }, bold: true, size: 9.5 };
 };
 
 const sectionBanner = (ws, rowNum, text, span, fillColor = XL.accentDark) => {
   ws.mergeCells(rowNum, 1, rowNum, span);
   const cell = ws.getCell(rowNum, 1);
   cell.value = text;
-  cell.font = { bold: true, color: { argb: XL.white }, size: 12 };
+  cell.font = { name: 'Segoe UI', bold: true, color: { argb: XL.white }, size: 11.5 };
   cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillColor } };
   cell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-  ws.getRow(rowNum).height = 24;
+  ws.getRow(rowNum).height = 26;
 };
 
 const pickPrimaryStatus = (statuses) => {
@@ -688,43 +735,44 @@ const generateExcelReport = async () => {
   if (devFilterActive) releasePoints = releasePoints.filter(rp => (rp.developerIds || []).some(id => checkedDevIds.includes(id)));
   releasePoints = releasePoints.filter(rp => isWithinDateRange(rp.updatedAt || rp.createdAt, dateFrom, dateTo));
 
-  // ── Test Cases (numeric only) ──
+  // ── Test Cases ──
   let testCases = (state.testCases || []).filter(tc => projectIdSet.has(tc.projectId));
   if (tcStatusFilter) testCases = testCases.filter(tc => (tc.status || 'Not executed') === tcStatusFilter);
 
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'Clair';
+  wb.creator = 'Clair Task & Project Tracker';
   wb.created = new Date();
 
   // ══════════════════ Overview ══════════════════
-  const ov = wb.addWorksheet('Overview', { properties: { tabColor: { argb: XL.accent } }, views: [{ showGridLines: false }] });
+  const ov = wb.addWorksheet('Overview', { properties: { tabColor: { argb: XL.accent } }, views: [{ showGridLines: true }] });
   ov.columns = Array.from({ length: 10 }, () => ({ width: 16 }));
 
   ov.mergeCells('A1:J2');
   const titleCell = ov.getCell('A1');
-  titleCell.value = 'Clair — Project & Task Report';
-  titleCell.font = { bold: true, size: 20, color: { argb: XL.white } };
+  titleCell.value = 'Clair — Project & Executive Task Report';
+  titleCell.font = { name: 'Segoe UI', bold: true, size: 18, color: { argb: XL.white } };
   titleCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
   for (let c = 1; c <= 10; c++) {
     ov.getCell(1, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.bannerFrom } };
     ov.getCell(2, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.bannerFrom } };
   }
-  ov.getRow(1).height = 22;
-  ov.getRow(2).height = 22;
+  ov.getRow(1).height = 24;
+  ov.getRow(2).height = 24;
 
   ov.mergeCells('A3:J3');
   const subCell = ov.getCell('A3');
-  subCell.value = `Generated ${new Date().toLocaleString('en-IN')}`;
-  subCell.font = { italic: true, size: 10, color: { argb: XL.textMuted } };
-  ov.getRow(3).height = 18;
+  subCell.value = `Generated on ${new Date().toLocaleString('en-IN', { dateStyle: 'full', timeStyle: 'short' })}`;
+  subCell.font = { name: 'Segoe UI', italic: true, size: 10, color: { argb: XL.textMuted } };
+  subCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+  ov.getRow(3).height = 20;
 
-  // KPI cards
+  // KPI cards (Row 5 & 6)
   const kpis = [
-    { label: 'Projects', value: projects.length, color: CAT_XL.projects },
-    { label: 'Tasks', value: tasks.length, color: CAT_XL.tasks },
-    { label: 'Releases', value: releases.length, color: CAT_XL.releases },
-    { label: 'Release Points', value: releasePoints.length, color: CAT_XL.releasePoints },
-    { label: 'Test Cases', value: testCases.length, color: CAT_XL.testCases }
+    { label: 'PROJECTS', value: projects.length, color: CAT_XL.projects },
+    { label: 'TASKS', value: tasks.length, color: CAT_XL.tasks },
+    { label: 'RELEASES', value: releases.length, color: CAT_XL.releases },
+    { label: 'RELEASE POINTS', value: releasePoints.length, color: CAT_XL.releasePoints },
+    { label: 'TEST CASES', value: testCases.length, color: CAT_XL.testCases }
   ];
   const cardRow = 5, labelRow = 6;
   kpis.forEach((k, i) => {
@@ -734,55 +782,105 @@ const generateExcelReport = async () => {
     ov.mergeCells(labelRow, startCol, labelRow, endCol);
     const numCell = ov.getCell(cardRow, startCol);
     numCell.value = k.value;
-    numCell.font = { bold: true, size: 20, color: { argb: k.color } };
+    numCell.font = { name: 'Segoe UI', bold: true, size: 22, color: { argb: k.color } };
     numCell.alignment = { horizontal: 'center', vertical: 'middle' };
     const labelCell = ov.getCell(labelRow, startCol);
     labelCell.value = k.label;
-    labelCell.font = { size: 10, bold: true, color: { argb: XL.textMuted } };
+    labelCell.font = { name: 'Segoe UI', size: 9.5, bold: true, color: { argb: XL.textMuted } };
     labelCell.alignment = { horizontal: 'center', vertical: 'middle' };
     for (let c = startCol; c <= endCol; c++) {
-      ov.getCell(cardRow, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.zebra } };
-      ov.getCell(labelRow, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.zebra } };
-      ov.getCell(cardRow, c).border = { top: { style: 'medium', color: { argb: k.color } } };
+      ov.getCell(cardRow, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+      ov.getCell(labelRow, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+      ov.getCell(cardRow, c).border = { top: { style: 'medium', color: { argb: k.color } }, left: thinBorder().left, right: thinBorder().right };
+      ov.getCell(labelRow, c).border = { bottom: thinBorder().bottom, left: thinBorder().left, right: thinBorder().right };
     }
   });
-  ov.getRow(cardRow).height = 34;
-  ov.getRow(labelRow).height = 18;
+  ov.getRow(cardRow).height = 36;
+  ov.getRow(labelRow).height = 20;
+
+  // Executive Highlights (Row 8-11)
+  sectionBanner(ov, 8, 'Executive Highlights', 10, XL.accentDark);
+  const doneTasksCount = tasks.filter(t => t.status === 'Done').length;
+  const inProgressTasksCount = tasks.filter(t => t.status === 'In Progress').length;
+  const taskCompletionRate = tasks.length > 0 ? `${Math.round((doneTasksCount / tasks.length) * 100)}%` : '0%';
+  const activeProjectsCount = projects.filter(p => (p.statuses || []).length > 0 || p.overallProjectStatus === 'ON_GOING').length;
+
+  const highlightMetrics = [
+    ['Task Completion Rate', taskCompletionRate, 'Tasks Completed', `${doneTasksCount} of ${tasks.length}`],
+    ['Tasks In Progress', `${inProgressTasksCount}`, 'Active Projects', `${activeProjectsCount} of ${projects.length}`],
+    ['Releases Logged', `${releases.length}`, 'Test Cases In Scope', `${testCases.length}`]
+  ];
+
+  highlightMetrics.forEach((hm, idx) => {
+    const r = 9 + idx;
+    ov.mergeCells(r, 1, r, 3);
+    ov.mergeCells(r, 4, r, 5);
+    ov.mergeCells(r, 6, r, 8);
+    ov.mergeCells(r, 9, r, 10);
+
+    const c1 = ov.getCell(r, 1);
+    c1.value = hm[0];
+    c1.font = { name: 'Segoe UI', bold: true, size: 10 };
+    c1.alignment = { vertical: 'middle', indent: 1 };
+
+    const c2 = ov.getCell(r, 4);
+    c2.value = hm[1];
+    c2.font = { name: 'Segoe UI', bold: true, size: 10.5, color: { argb: XL.accent } };
+    c2.alignment = { vertical: 'middle', horizontal: 'center' };
+
+    const c3 = ov.getCell(r, 6);
+    c3.value = hm[2];
+    c3.font = { name: 'Segoe UI', bold: true, size: 10 };
+    c3.alignment = { vertical: 'middle', indent: 1 };
+
+    const c4 = ov.getCell(r, 9);
+    c4.value = hm[3];
+    c4.font = { name: 'Segoe UI', bold: true, size: 10.5, color: { argb: 'FF1F2937' } };
+    c4.alignment = { vertical: 'middle', horizontal: 'center' };
+
+    for (let c = 1; c <= 10; c++) {
+      ov.getCell(r, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: idx % 2 === 0 ? XL.white : XL.zebra } };
+      ov.getCell(r, c).border = thinBorder();
+    }
+    ov.getRow(r).height = 24;
+  });
 
   // Applied Filters section
-  sectionBanner(ov, 8, 'Applied Filters', 10);
+  const filterStartRow = 9 + highlightMetrics.length + 1;
+  sectionBanner(ov, filterStartRow, 'Applied Filters & Scope', 10, 'FF334155');
   const filterPairs = [
-    ['Projects', projectFilterActive ? projects.map(p => p.name).join(', ') || 'None' : 'All Projects'],
-    ['Developers', devFilterActive ? checkedDevIds.map(getDevName).join(', ') || 'None' : 'All Developers'],
-    ['Date Range', (dateFrom || dateTo) ? `${dateFrom || '—'} to ${dateTo || '—'}` : 'All Time'],
-    ['Task Status', taskStatusFilter === 'all' ? 'All Statuses' : 'Completed Only'],
-    ['Release Status', releaseStatusFilter || 'All Statuses'],
-    ['Test Case Status', tcStatusFilter || 'All Statuses']
+    ['Projects Scope', projectFilterActive ? projects.map(p => p.name).join(', ') || 'None' : 'All Projects'],
+    ['Developers Scope', devFilterActive ? checkedDevIds.map(getDevName).join(', ') || 'None' : 'All Developers'],
+    ['Date Window', (dateFrom || dateTo) ? `${dateFrom || 'Start'} to ${dateTo || 'Today'}` : 'All Time'],
+    ['Task Status Scope', taskStatusFilter === 'all' ? 'All Statuses' : 'Completed Only'],
+    ['Release Status Scope', releaseStatusFilter || 'All Statuses'],
+    ['Test Case Scope', tcStatusFilter || 'All Statuses']
   ];
   filterPairs.forEach((pair, i) => {
-    const r = 9 + i;
+    const r = filterStartRow + 1 + i;
     ov.mergeCells(r, 1, r, 2);
     ov.mergeCells(r, 3, r, 10);
     const labelC = ov.getCell(r, 1);
     labelC.value = pair[0];
-    labelC.font = { bold: true, size: 10.5 };
+    labelC.font = { name: 'Segoe UI', bold: true, size: 10 };
     const valC = ov.getCell(r, 3);
     valC.value = pair[1];
-    valC.font = { size: 10.5 };
+    valC.font = { name: 'Segoe UI', size: 10 };
     [labelC, valC].forEach(c => {
       c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: i % 2 === 0 ? XL.white : XL.zebra } };
       c.border = thinBorder();
       c.alignment = { vertical: 'middle', indent: 1, wrapText: true };
     });
+    ov.getRow(r).height = 23;
   });
 
   // Category breakdown section
-  const breakdownStart = 9 + filterPairs.length + 1;
-  sectionBanner(ov, breakdownStart, 'Category Breakdown', 10);
+  const breakdownStart = filterStartRow + 1 + filterPairs.length + 1;
+  sectionBanner(ov, breakdownStart, 'Category Breakdown', 10, 'FF475569');
   const breakdownRows = [
-    ['Projects', projects.length, CAT_XL.projects],
-    ['Tasks (in scope)', tasks.length, CAT_XL.tasks],
-    ['Releases', releases.length, CAT_XL.releases],
+    ['Projects Portfolio', projects.length, CAT_XL.projects],
+    ['Tasks (In Scope)', tasks.length, CAT_XL.tasks],
+    ['Releases Logged', releases.length, CAT_XL.releases],
     ['Release Points', releasePoints.length, CAT_XL.releasePoints],
     ['Test Cases', testCases.length, CAT_XL.testCases]
   ];
@@ -792,89 +890,141 @@ const generateExcelReport = async () => {
     ov.mergeCells(r, 9, r, 10);
     const labelC = ov.getCell(r, 1);
     labelC.value = br[0];
-    labelC.font = { bold: true, size: 10.5 };
-    labelC.border = { left: { style: 'medium', color: { argb: br[2] } } };
+    labelC.font = { name: 'Segoe UI', bold: true, size: 10 };
+    labelC.border = { left: { style: 'medium', color: { argb: br[2] } }, top: thinBorder().top, bottom: thinBorder().bottom };
     const valC = ov.getCell(r, 9);
     valC.value = br[1];
-    valC.font = { bold: true, size: 10.5, color: { argb: br[2] } };
+    valC.font = { name: 'Segoe UI', bold: true, size: 10.5, color: { argb: br[2] } };
     valC.alignment = { horizontal: 'center' };
     [labelC, valC].forEach(c => {
       c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: i % 2 === 0 ? XL.white : XL.zebra } };
       c.alignment = { ...(c.alignment || {}), vertical: 'middle', indent: c === labelC ? 1 : 0 };
     });
+    ov.getRow(r).height = 24;
   });
 
   // ══════════════════ Projects ══════════════════
   const projSheet = wb.addWorksheet('Projects', {
     properties: { tabColor: { argb: CAT_XL.projects } },
-    views: [{ state: 'frozen', ySplit: 1, showGridLines: false }]
+    views: [{ state: 'frozen', ySplit: 1, showGridLines: true }]
   });
   projSheet.columns = [
     { header: '#', key: 'idx', width: 6 },
-    { header: 'Project Name', key: 'name', width: 24 },
-    { header: 'Type', key: 'type', width: 12 },
-    { header: 'Current Status', key: 'status', width: 22 },
-    { header: 'Version (Prev → Upcoming)', key: 'version', width: 34 },
-    { header: 'Past Released Versions', key: 'history', width: 40 },
-    { header: 'Completed Tasks', key: 'completed', width: 15 },
-    { header: 'Total Tasks', key: 'total', width: 12 }
+    { header: 'Project Name', key: 'name', width: 28 },
+    { header: 'Client', key: 'client', width: 20 },
+    { header: 'Type', key: 'type', width: 14 },
+    { header: 'Overall Status', key: 'overallStatus', width: 16 },
+    { header: 'Active Statuses', key: 'statuses', width: 28 },
+    { header: 'Assigned Developer(s)', key: 'developers', width: 28 },
+    { header: 'Current Version', key: 'currentVersion', width: 22 },
+    { header: 'Upcoming Version', key: 'upcomingVersion', width: 22 },
+    { header: 'Completed Tasks', key: 'completed', width: 16 },
+    { header: 'Total Tasks', key: 'total', width: 13 },
+    { header: 'Task Progress', key: 'progress', width: 14 },
+    { header: 'Last Release', key: 'lastRelease', width: 30 },
+    { header: 'Last Release Date', key: 'lastReleaseDate', width: 16 },
+    { header: 'Description', key: 'description', width: 40 }
   ];
   styleHeaderRow(projSheet.getRow(1), CAT_XL.projects);
 
   projects.forEach((p, i) => {
-    const completed = state.tasks.filter(t => projectIdsOf(t).includes(p.id) && t.status === 'Done').length;
-    const total = state.tasks.filter(t => projectIdsOf(t).includes(p.id)).length;
-    const pastVersions = (p.releaseHistory || [])
-      .map(h => `${h.platform ? h.platform + ' ' : ''}${h.version} (${fmtDate(h.releasedAt)})`)
-      .join('\n') || '—';
-    const versionInfo = p.projectType === 'app'
-      ? `Android: ${p.androidPreviousVersion || '—'} → ${p.androidUpcomingVersion || '—'}\niOS: ${p.iosPreviousVersion || '—'} → ${p.iosUpcomingVersion || '—'}`
-      : `${p.previousVersion || '—'} → ${p.upcomingVersion || '—'}`;
+    const projectTasks = state.tasks.filter(t => projectIdsOf(t).includes(p.id));
+    const completed = projectTasks.filter(t => t.status === 'Done').length;
+    const total = projectTasks.length;
+    const progressPercent = total > 0 ? `${Math.round((completed / total) * 100)}%` : '0%';
+
+    const assignedDevNames = (state.developers || [])
+      .filter(d => (d.projectIds || []).includes(p.id))
+      .map(d => d.name)
+      .join(', ') || '—';
+
+    const currentVer = p.projectType === 'app'
+      ? `Android: ${p.androidPreviousVersion || '—'}\niOS: ${p.iosPreviousVersion || '—'}`
+      : (p.previousVersion || '—');
+
+    const upcomingVer = p.projectType === 'app'
+      ? `Android: ${p.androidUpcomingVersion || '—'}\niOS: ${p.iosUpcomingVersion || '—'}`
+      : (p.upcomingVersion || '—');
+
+    const lastRel = p.lastReleaseLog || (p.releaseHistory && p.releaseHistory.length ? p.releaseHistory[0].log : '') || '—';
+    const lastRelDate = p.lastReleaseAt
+      ? new Date(p.lastReleaseAt)
+      : (p.releaseHistory && p.releaseHistory.length && p.releaseHistory[0].releasedAt ? new Date(p.releaseHistory[0].releasedAt) : null);
+
+    const overallLabel = formatOverallStatus(p.overallProjectStatus);
+
     const row = projSheet.addRow({
       idx: i + 1,
       name: p.name,
+      client: p.clientName || '—',
       type: p.projectType === 'app' ? 'Mobile App' : 'Web',
-      status: (p.statuses || []).join(', ') || '—',
-      version: versionInfo,
-      history: pastVersions,
+      overallStatus: overallLabel,
+      statuses: (p.statuses || []).join(', ') || '—',
+      developers: assignedDevNames,
+      currentVersion: currentVer,
+      upcomingVersion: upcomingVer,
       completed,
-      total
+      total,
+      progress: progressPercent,
+      lastRelease: lastRel,
+      lastReleaseDate: lastRelDate,
+      description: p.description || '—'
     });
+
     zebraRow(row, i % 2 === 0);
-    colorCell(row.getCell('status'), PROJECT_STATUS_XL, pickPrimaryStatus(p.statuses));
+
+    colorCell(row.getCell('overallStatus'), OVERALL_STATUS_XL, p.overallProjectStatus || overallLabel);
+
     row.getCell('idx').alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell('name').alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    row.getCell('name').font = { name: 'Segoe UI', bold: true, size: 10, color: { argb: 'FF0F172A' } };
+    row.getCell('client').alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    row.getCell('type').alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell('overallStatus').alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell('statuses').alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+    row.getCell('developers').alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+    row.getCell('currentVersion').alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    row.getCell('upcomingVersion').alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
     row.getCell('completed').alignment = { vertical: 'middle', horizontal: 'center' };
     row.getCell('total').alignment = { vertical: 'middle', horizontal: 'center' };
-    row.getCell('history').alignment = { vertical: 'middle', wrapText: true };
-    if (p.projectType === 'app') {
-      row.getCell('version').alignment = { vertical: 'middle', wrapText: true };
+    row.getCell('progress').alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell('progress').font = { name: 'Segoe UI', bold: true, size: 10, color: { argb: 'FF059669' } };
+    row.getCell('lastRelease').alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+    if (lastRelDate) {
+      row.getCell('lastReleaseDate').numFmt = 'dd mmm yyyy';
     }
+    row.getCell('lastReleaseDate').alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell('description').alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+
+    row.height = (p.projectType === 'app' || (p.statuses && p.statuses.length > 2)) ? 32 : 24;
   });
+
   if (!projects.length) {
-    projSheet.mergeCells(2, 1, 2, 8);
+    projSheet.mergeCells(2, 1, 2, 15);
     projSheet.getCell(2, 1).value = 'No projects match the selected filters';
     projSheet.getCell(2, 1).alignment = { horizontal: 'center' };
   } else {
-    projSheet.autoFilter = { from: 'A1', to: `H${projects.length + 1}` };
+    projSheet.autoFilter = { from: 'A1', to: `O${projects.length + 1}` };
   }
 
   // ══════════════════ Tasks ══════════════════
   const taskSheet = wb.addWorksheet('Tasks', {
     properties: { tabColor: { argb: CAT_XL.tasks } },
-    views: [{ state: 'frozen', ySplit: 1, showGridLines: false }]
+    views: [{ state: 'frozen', ySplit: 1, showGridLines: true }]
   });
   taskSheet.columns = [
     { header: '#', key: 'idx', width: 6 },
-    { header: 'Task Name', key: 'name', width: 26 },
+    { header: 'Task Name', key: 'name', width: 28 },
     { header: 'Project(s)', key: 'project', width: 24 },
-    { header: 'Status', key: 'status', width: 12 },
-    { header: 'Priority', key: 'priority', width: 10 },
-    { header: 'Developer(s)', key: 'developer', width: 20 },
-    { header: 'Start Date', key: 'start', width: 12 },
-    { header: 'End Date', key: 'end', width: 12 },
-    { header: 'Completed Date', key: 'completedDate', width: 14 },
-    { header: 'Tags', key: 'tags', width: 20 },
-    { header: 'Description', key: 'description', width: 40 }
+    { header: 'Status', key: 'status', width: 14 },
+    { header: 'Priority', key: 'priority', width: 12 },
+    { header: 'Developer(s)', key: 'developer', width: 22 },
+    { header: 'Start Date', key: 'start', width: 13 },
+    { header: 'End Date', key: 'end', width: 13 },
+    { header: 'Completed Date', key: 'completedDate', width: 15 },
+    { header: 'Work Done', key: 'workDone', width: 42 },
+    { header: 'Description', key: 'description', width: 38 },
+    { header: 'Tags', key: 'tags', width: 22 }
   ];
   styleHeaderRow(taskSheet.getRow(1), CAT_XL.tasks);
 
@@ -889,33 +1039,56 @@ const generateExcelReport = async () => {
       start: t.startDate ? new Date(t.startDate) : null,
       end: t.endDate ? new Date(t.endDate) : null,
       completedDate: t.completedDate ? new Date(t.completedDate) : null,
-      tags: (t.tags || []).join(', '),
-      description: t.description || ''
+      workDone: t.workDone || '—',
+      description: t.description || '—',
+      tags: (t.tags || []).join(', ') || '—'
     });
     zebraRow(row, i % 2 === 0);
     colorCell(row.getCell('status'), TASK_STATUS_XL, t.status);
     colorCell(row.getCell('priority'), PRIORITY_XL, t.priority);
-    ['start', 'end', 'completedDate'].forEach(k => { row.getCell(k).numFmt = 'dd mmm yyyy'; });
+    ['start', 'end', 'completedDate'].forEach(k => {
+      if (row.getCell(k).value) row.getCell(k).numFmt = 'dd mmm yyyy';
+    });
     row.getCell('idx').alignment = { vertical: 'middle', horizontal: 'center' };
-    row.getCell('description').alignment = { vertical: 'middle', wrapText: true };
+    row.getCell('name').alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+    row.getCell('name').font = { name: 'Segoe UI', bold: true, size: 10, color: { argb: 'FF0F172A' } };
+    row.getCell('project').alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+    row.getCell('status').alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell('priority').alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell('developer').alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+    row.getCell('start').alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell('end').alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell('completedDate').alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell('workDone').alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+    row.getCell('description').alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+    row.getCell('tags').alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+
+    const hasLongContent = (t.workDone && t.workDone.length > 50) || (t.description && t.description.length > 50);
+    row.height = hasLongContent ? 32 : 24;
   });
+
   if (!tasks.length) {
-    taskSheet.mergeCells(2, 1, 2, 11);
+    taskSheet.mergeCells(2, 1, 2, 12);
     taskSheet.getCell(2, 1).value = 'No tasks match the selected filters';
     taskSheet.getCell(2, 1).alignment = { horizontal: 'center' };
   } else {
-    taskSheet.autoFilter = { from: 'A1', to: `K${tasks.length + 1}` };
+    taskSheet.autoFilter = { from: 'A1', to: `L${tasks.length + 1}` };
   }
 
   // ══════════════════ Releases ══════════════════
   const relSheet = wb.addWorksheet('Releases', {
     properties: { tabColor: { argb: CAT_XL.releases } },
-    views: [{ showGridLines: false }]
+    views: [{ showGridLines: true }]
   });
   const relCols = [
     { header: '#', width: 6 },
-    { header: 'Release Name', width: 26 }, { header: 'Project(s)', width: 26 }, { header: 'Version(s)', width: 18 },
-    { header: 'Status', width: 14 }, { header: 'Release Date', width: 14 }, { header: 'Manager', width: 18 }, { header: 'Developers', width: 22 }
+    { header: 'Release Name', width: 28 },
+    { header: 'Project(s)', width: 26 },
+    { header: 'Version(s)', width: 20 },
+    { header: 'Status', width: 14 },
+    { header: 'Release Date', width: 16 },
+    { header: 'Manager', width: 20 },
+    { header: 'Developers', width: 26 }
   ];
   relSheet.columns = relCols.map(c => ({ width: c.width }));
 
@@ -938,8 +1111,19 @@ const generateExcelReport = async () => {
     const row = relSheet.getRow(rowNum);
     zebraRow(row, i % 2 === 0);
     row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(2).font = { name: 'Segoe UI', bold: true, size: 10, color: { argb: 'FF0F172A' } };
+    row.getCell(2).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    row.getCell(3).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+    row.getCell(4).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(5).alignment = { vertical: 'middle', horizontal: 'center' };
     colorCell(row.getCell(5), RELEASE_STATUS_XL, r.status || 'Draft');
-    row.getCell(6).numFmt = 'dd mmm yyyy';
+    if (r.releaseDate) {
+      row.getCell(6).numFmt = 'dd mmm yyyy';
+    }
+    row.getCell(6).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(7).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    row.getCell(8).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+    row.height = 24;
   });
   if (!releases.length) {
     relSheet.mergeCells(3, 1, 3, relCols.length);
@@ -949,8 +1133,12 @@ const generateExcelReport = async () => {
 
   const rpCols = [
     { header: '#', width: 6 },
-    { header: 'Release Point Title', width: 28 }, { header: 'Project(s)', width: 26 }, { header: 'Type', width: 12 },
-    { header: 'Version(s)', width: 18 }, { header: 'Checklist Progress', width: 18 }, { header: 'Completed', width: 12 }
+    { header: 'Release Point Title', width: 30 },
+    { header: 'Project(s)', width: 26 },
+    { header: 'Type', width: 14 },
+    { header: 'Version(s)', width: 20 },
+    { header: 'Checklist Progress', width: 22 },
+    { header: 'Completed', width: 14 }
   ];
   const rpStart = (releases.length ? 3 + releases.length : 4) + 1;
   sectionBanner(relSheet, rpStart, `Release Points — Total: ${releasePoints.length}`, relCols.length, CAT_XL.releasePoints);
@@ -960,20 +1148,34 @@ const generateExcelReport = async () => {
     const rowNum = rpStart + 2 + i;
     const done = (rp.checklistItems || []).filter(it => it.done).length;
     const totalItems = (rp.checklistItems || []).length;
+    const pct = totalItems > 0 ? ` (${Math.round((done / totalItems) * 100)}%)` : '';
+    const progressText = totalItems > 0 ? `${done} / ${totalItems} items${pct}` : '0 items';
+
     const values = [
       i + 1,
       rp.title,
       projectNamesOf(rp),
       rp.releaseType === 'upcoming' ? 'Upcoming' : 'Past',
       (rp.versions || []).join(', ') || '—',
-      `${done}/${totalItems}`,
+      progressText,
       rp.isCompleted ? 'Yes' : 'No'
     ];
     values.forEach((v, c) => { relSheet.getCell(rowNum, c + 1).value = v; });
     const row = relSheet.getRow(rowNum);
     zebraRow(row, i % 2 === 0);
     row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
-    colorCell(row.getCell(7), { 'Yes': PROJECT_STATUS_XL['Stable'], 'No': PROJECT_STATUS_XL['N/A'] }, rp.isCompleted ? 'Yes' : 'No');
+    row.getCell(2).font = { name: 'Segoe UI', bold: true, size: 10, color: { argb: 'FF0F172A' } };
+    row.getCell(2).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    row.getCell(3).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+    row.getCell(4).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(5).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(6).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(7).alignment = { vertical: 'middle', horizontal: 'center' };
+    colorCell(row.getCell(7), {
+      'Yes': { fill: 'FFE8F5EE', font: 'FF059669' },
+      'No': { fill: 'FFF5F5F5', font: 'FF757575' }
+    }, rp.isCompleted ? 'Yes' : 'No');
+    row.height = 24;
   });
   if (!releasePoints.length) {
     relSheet.mergeCells(rpStart + 2, 1, rpStart + 2, rpCols.length);
@@ -981,16 +1183,16 @@ const generateExcelReport = async () => {
     relSheet.getCell(rpStart + 2, 1).alignment = { horizontal: 'center' };
   }
 
-  // ══════════════════ Test Cases (numeric only) ══════════════════
+  // ══════════════════ Test Cases ══════════════════
   const tcSheet = wb.addWorksheet('Test Cases', {
     properties: { tabColor: { argb: CAT_XL.testCases } },
-    views: [{ showGridLines: false }]
+    views: [{ showGridLines: true }]
   });
   const tcStatuses = ['Not executed', 'Passed', 'Failed', 'Blocked'];
   const tcPriorities = ['Critical', 'High', 'Medium', 'Low'];
   const tcTypes = ['Manual', 'Automated', 'API', 'Security', 'Performance', 'Regression'];
   const tcColCount = 7;
-  tcSheet.columns = [{ width: 6 }, { width: 22 }, { width: 16 }, { width: 14 }, { width: 10 }, { width: 10 }, { width: 10 }];
+  tcSheet.columns = [{ width: 6 }, { width: 28 }, { width: 18 }, { width: 16 }, { width: 12 }, { width: 12 }, { width: 12 }];
 
   sectionBanner(tcSheet, 1, 'Test Case Counts by Project', tcColCount, CAT_XL.testCases);
   const tcHeader = ['#', 'Project', 'Total Test Cases', ...tcStatuses];
@@ -1005,19 +1207,26 @@ const generateExcelReport = async () => {
     const row = tcSheet.getRow(rowNum);
     zebraRow(row, i % 2 === 0);
     row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(2).font = { name: 'Segoe UI', bold: true, size: 10, color: { argb: 'FF0F172A' } };
+    row.getCell(2).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    row.getCell(3).alignment = { vertical: 'middle', horizontal: 'center' };
     tcStatuses.forEach((s, si) => {
       const cell = row.getCell(4 + si);
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
       if (cell.value > 0) colorCell(cell, TC_STATUS_XL, s);
     });
+    row.height = 24;
   });
   const totalRowNum = 3 + projects.length;
   const totalCounts = tcStatuses.map(s => testCases.filter(tc => (tc.status || 'Not executed') === s).length);
   ['', 'TOTAL', testCases.length, ...totalCounts].forEach((v, c) => { tcSheet.getCell(totalRowNum, c + 1).value = v; });
   const totalRow = tcSheet.getRow(totalRowNum);
-  totalRow.eachCell({ includeEmpty: true }, cell => {
-    cell.font = { bold: true };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XL.zebra } };
+  totalRow.height = 26;
+  totalRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+    cell.font = { name: 'Segoe UI', bold: true, size: 10 };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
     cell.border = { top: { style: 'medium', color: { argb: CAT_XL.testCases } }, bottom: thinBorder().bottom, left: thinBorder().left, right: thinBorder().right };
+    cell.alignment = { vertical: 'middle', horizontal: colNumber === 2 ? 'left' : 'center', indent: colNumber === 2 ? 1 : 0 };
   });
 
   const priStart = totalRowNum + 2;
@@ -1034,7 +1243,10 @@ const generateExcelReport = async () => {
     const row = tcSheet.getRow(rowNum);
     zebraRow(row, i % 2 === 0);
     row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(2).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(3).alignment = { vertical: 'middle', horizontal: 'center' };
     colorCell(row.getCell(2), PRIORITY_XL, pr);
+    row.height = 24;
   });
 
   const typeStart = priStart + 2 + tcPriorities.length + 1;
@@ -1051,6 +1263,9 @@ const generateExcelReport = async () => {
     const row = tcSheet.getRow(rowNum);
     zebraRow(row, i % 2 === 0);
     row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(2).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(3).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.height = 24;
   });
 
   const filename = `clair-report-${new Date().toISOString().split('T')[0]}.xlsx`;
@@ -1959,15 +2174,27 @@ const renderDashboard = () => {
 // ─── Projects ────────────────────────────────────────────
 const renderProjects = () => {
   let projects = state.projects;
-  const q = state.searchQuery.toLowerCase();
+  const q = (state.projectSearch || '').toLowerCase().trim();
 
   if (q) {
-    projects = projects.filter(p =>
-      p.name.toLowerCase().includes(q) ||
-      (p.description || '').toLowerCase().includes(q) ||
-      (p.previousVersion || '').toLowerCase().includes(q) ||
-      (p.upcomingVersion || '').toLowerCase().includes(q)
-    );
+    projects = projects.filter(p => {
+      const assignedDevs = (state.developers || []).filter(d => (d.projectIds || []).some(pid => String(pid) === String(p.id)));
+      const devMatch = assignedDevs.some(d => (d.name || '').toLowerCase().includes(q));
+      return (
+        p.name.toLowerCase().includes(q) ||
+        (p.description || '').toLowerCase().includes(q) ||
+        (p.clientName || '').toLowerCase().includes(q) ||
+        (p.assignedTeam || '').toLowerCase().includes(q) ||
+        (p.previousVersion || '').toLowerCase().includes(q) ||
+        (p.upcomingVersion || '').toLowerCase().includes(q) ||
+        (p.androidPreviousVersion || '').toLowerCase().includes(q) ||
+        (p.androidUpcomingVersion || '').toLowerCase().includes(q) ||
+        (p.iosPreviousVersion || '').toLowerCase().includes(q) ||
+        (p.iosUpcomingVersion || '').toLowerCase().includes(q) ||
+        (p.statuses || []).some(s => s.toLowerCase().includes(q)) ||
+        devMatch
+      );
+    });
   }
 
   if (state.filters.status) {
@@ -2027,6 +2254,11 @@ const renderProjects = () => {
     ${hero}
 
     <div class="filters-bar">
+      <div class="page-search-wrap">
+        <svg class="page-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        <input type="text" class="page-search-input" id="projectSearchInput" placeholder="Search projects, clients, versions, devs…" value="${state.projectSearch || ''}" />
+        ${state.projectSearch ? `<button class="page-search-clear" id="clearProjectSearch">✕</button>` : ''}
+      </div>
       <select class="filter-select" id="filterStatus" data-filter="status">
         <option value="">All Statuses</option>
         ${STATUS_OPTIONS.map(s => `<option value="${s}" ${state.filters.status === s ? 'selected' : ''}>${s}</option>`).join('')}
@@ -2039,7 +2271,7 @@ const renderProjects = () => {
         <option value="">All Upcoming Versions</option>
         ${upcomingVersions.map(v => `<option value="${v}" ${state.filters.upcomingVersion === v ? 'selected' : ''}>${v}</option>`).join('')}
       </select>
-      ${(state.filters.status || state.filters.previousVersion || state.filters.upcomingVersion) ? `
+      ${(state.filters.status || state.filters.previousVersion || state.filters.upcomingVersion || state.projectSearch) ? `
         <button class="btn-ghost" id="clearProjectsFilters" style="font-size:12px;padding:6px 10px">Clear filters</button>
       ` : ''}
       
@@ -2135,6 +2367,20 @@ const renderKanbanCard = (p, q = '') => {
     ? `<span class="project-type-badge app" style="font-size: 9px; padding: 1px 6px;">App</span>`
     : `<span class="project-type-badge web" style="font-size: 9px; padding: 1px 6px;">Web</span>`;
 
+  const assignedDevs = (state.developers || []).filter(d => (d.projectIds || []).some(pid => String(pid) === String(p.id)));
+  const devsLine = `
+    <div class="kanban-meta-item" title="Assigned Developers" style="align-items: center;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      <div class="kanban-devs-wrap">
+        ${assignedDevs.length > 0 ? assignedDevs.map(d => {
+    const initials = d.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'DV';
+    const avatarBg = getAvatarGradient(d.name);
+    return `<span class="kanban-dev-avatar" style="background: ${avatarBg};" title="${escapeHtml(d.name)}">${initials}</span><span class="kanban-dev-name-text">${highlight(d.name, q)}</span>`;
+  }).join('') : '<span style="font-size:11px;color:var(--text-muted);font-style:italic;">No developers</span>'}
+      </div>
+    </div>
+  `;
+
   return `
     <div class="kanban-card" data-id="${p.id}" draggable="true">
       <div class="kanban-card-header" style="display:flex; justify-content:space-between; align-items:flex-start; gap: 8px; margin-bottom: 6px;">
@@ -2147,6 +2393,7 @@ const renderKanbanCard = (p, q = '') => {
       <div class="kanban-card-meta">
         ${clientLine}
         ${teamLine}
+        ${devsLine}
         ${dueDateLine}
       </div>
 
@@ -2173,6 +2420,19 @@ const renderKanbanCard = (p, q = '') => {
 
 const renderProjectCard = (p, q = '') => {
   const isApp = p.projectType === 'app';
+  const assignedDevs = (state.developers || []).filter(d => (d.projectIds || []).some(pid => String(pid) === String(p.id)));
+  const assignedDevsHtml = `
+    <div class="project-assigned-devs-row">
+      <span class="project-assigned-devs-label">Developers:</span>
+      <div class="project-assigned-devs-list">
+        ${assignedDevs.length > 0 ? assignedDevs.map(d => {
+    const initials = d.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'DV';
+    const avatarBg = getAvatarGradient(d.name);
+    return `<span class="project-dev-badge" title="${escapeHtml(d.name)}"><span class="project-dev-badge-avatar" style="background:${avatarBg}">${initials}</span><span class="project-dev-badge-name">${highlight(d.name, q)}</span></span>`;
+  }).join('') : '<span class="project-dev-badge-empty">Unassigned</span>'}
+      </div>
+    </div>
+  `;
 
   // ── Version center panel ──
   const verVal = (v) => (!v || v === 'N/A' || v === 'n/a') ? '—' : v;
@@ -2271,6 +2531,7 @@ const renderProjectCard = (p, q = '') => {
         ${(p.statuses || []).map(s => statusPill(s)).join('')}
       </div>
       ${p.description ? `<div class="project-desc">${highlight(formatCardDescription(p.description), q)}</div>` : ''}
+      ${assignedDevsHtml}
       <div class="pc-footer">
         <div class="card-actions">
           <button class="icon-btn" data-action="edit-project" data-id="${p.id}" aria-label="Edit" title="Edit">
@@ -3251,20 +3512,6 @@ const getProjectPillClass = (projId, name = '') => {
   return getProjectStatusPillClass(proj);
 };
 
-const getAvatarGradient = (name = '') => {
-  const gradients = [
-    'linear-gradient(135deg, #059669, #047857)',
-    'linear-gradient(135deg, #475569, #334155)',
-    'linear-gradient(135deg, #2563eb, #1d4ed8)',
-    'linear-gradient(135deg, #4f46e5, #3730a3)',
-    'linear-gradient(135deg, #d97706, #b45309)',
-    'linear-gradient(135deg, #0d9488, #0f766e)'
-  ];
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  return gradients[Math.abs(hash) % gradients.length];
-};
-
 const renderDevelopers = () => {
   const totalDevs = (state.developers || []).length;
   const linkedDevs = (state.developers || []).filter(d => (d.projectIds || []).length > 0).length;
@@ -4193,7 +4440,10 @@ const attachCardListeners = () => {
 
     const clearBtn = e.target.closest('#clearProjectsFilters, #clearTasksFilters, #clearTestFilters, #clearReleaseFilters, #clearTestCaseFilters, #clearReleasePtFilters');
     if (clearBtn) {
-      if (clearBtn.id === 'clearTestFilters') {
+      if (clearBtn.id === 'clearProjectsFilters') {
+        state.projectSearch = '';
+        clearFilters();
+      } else if (clearBtn.id === 'clearTestFilters') {
         state.testFilters = { project: '', developer: '', status: '', assignedStatus: '' };
         render();
       } else if (clearBtn.id === 'clearReleaseFilters') {
@@ -4214,6 +4464,9 @@ const attachCardListeners = () => {
     }
 
     // Clear inline search buttons
+    const clearProjectSearch = e.target.closest('#clearProjectSearch');
+    if (clearProjectSearch) { state.projectSearch = ''; render(); return; }
+
     const clearTaskSearch = e.target.closest('#clearTaskSearch');
     if (clearTaskSearch) { state.taskSearch = ''; render(); return; }
 
@@ -4400,6 +4653,12 @@ const attachCardListeners = () => {
     if (inlineTextarea) {
       inlineTextarea.style.height = 'auto';
       inlineTextarea.style.height = inlineTextarea.scrollHeight + 'px';
+      return;
+    }
+    const projectInput = e.target.closest('#projectSearchInput');
+    if (projectInput) {
+      clearTimeout(pageSearchTimer);
+      pageSearchTimer = setTimeout(() => { state.projectSearch = projectInput.value.toLowerCase(); rerenderPreservingFocus(projectInput); }, 180);
       return;
     }
     const taskInput = e.target.closest('#taskSearchInput');
@@ -5319,6 +5578,14 @@ const openDetailModal = (type, id) => {
 
     titleEl.textContent = 'Project Details';
     const isApp = project.projectType === 'app';
+    const assignedDevs = (state.developers || []).filter(d => (d.projectIds || []).some(pid => String(pid) === String(project.id)));
+    const devsHtml = assignedDevs.length > 0
+      ? assignedDevs.map(d => {
+        const initials = d.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'DV';
+        const avatarBg = getAvatarGradient(d.name);
+        return `<span class="project-dev-badge"><span class="project-dev-badge-avatar" style="background:${avatarBg}">${initials}</span><span class="project-dev-badge-name">${escapeHtml(d.name)}</span></span>`;
+      }).join('')
+      : '<span class="project-dev-badge-empty">No developers assigned</span>';
 
     bodyEl.innerHTML = `
       <div class="detail-container">
@@ -5361,6 +5628,13 @@ const openDetailModal = (type, id) => {
           <span class="detail-meta-label">Statuses</span>
           <div class="detail-statuses-list" style="margin-top:6px; display:flex; flex-wrap:wrap; gap:6px;">
             ${(project.statuses || []).map(s => statusPill(s)).join('')}
+          </div>
+        </div>
+
+        <div class="detail-statuses-section" style="margin-top:12px;">
+          <span class="detail-meta-label">Assigned Developers</span>
+          <div class="project-assigned-devs-list" style="margin-top:6px;">
+            ${devsHtml}
           </div>
         </div>
 
@@ -10719,19 +10993,28 @@ const init = async () => {
     if (e.target.files.length) importData(e.target.files[0]);
   });
 
-  // Search
+  // Search (Global search removed; guard if present, and delegate Ctrl+K to in-page search)
   const searchInput = document.getElementById('globalSearch');
-  let searchTimer;
-  searchInput.addEventListener('input', () => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => handleSearch(searchInput.value), 200);
-  });
+  if (searchInput) {
+    let searchTimer;
+    searchInput.addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => handleSearch(searchInput.value), 200);
+    });
+  }
 
   // Keyboard shortcut ⌘K / Ctrl+K
   document.addEventListener('keydown', e => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
       e.preventDefault();
-      searchInput.focus();
+      const activeSearch = document.getElementById('projectSearchInput')
+        || document.getElementById('taskSearchInput')
+        || document.getElementById('testSearchInput')
+        || document.getElementById('releaseSearchInput')
+        || document.getElementById('releasePtSearchInput')
+        || document.getElementById('testCaseSearchInput')
+        || searchInput;
+      if (activeSearch) activeSearch.focus();
     }
     if (e.key === 'Escape') {
       closeModals();

@@ -471,6 +471,7 @@ textarea:focus-visible,
   flex-shrink: 0;
   flex-wrap: wrap;
   overflow: hidden;
+  margin-left: auto;
 }
 
 /* ─── Buttons ─── */
@@ -9186,4 +9187,120 @@ select.form-select:focus {
   white-space: normal;
   word-break: break-word;
   line-height: 1.35;
+}
+
+/* ─── Project Card Assigned Developers ─── */
+.project-assigned-devs-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.project-assigned-devs-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.project-assigned-devs-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+
+.project-dev-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 2px 8px 2px 2px;
+  border-radius: var(--radius-pill, 9999px);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.25;
+  transition: all var(--transition, 0.15s ease);
+}
+
+.project-dev-badge:hover {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.project-dev-badge-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8.5px;
+  font-weight: 700;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+
+.project-dev-badge-name {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.project-dev-badge-empty {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.kanban-devs-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.kanban-dev-avatar {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  font-weight: 700;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+
+.kanban-dev-more {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  width: 17px;
+  height: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kanban-dev-name-text {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin-left: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
 }
