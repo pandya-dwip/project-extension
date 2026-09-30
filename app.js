@@ -9868,6 +9868,21 @@ ${(r.managerName && r.managerName !== '— Select Manager —') ? r.managerName 
 
 // ─── Notes Module ─────────────────────────────────────────
 
+const isTableSeparator = (str) => {
+  const t = str.trim();
+  if (!t.includes('-')) return false;
+  return /^\|?(\s*:?-{2,}:?\s*\|)+(\s*:?-{2,}:?\s*\|?)$/.test(t) ||
+         /^\|(\s*:?-{2,}:?\s*)\|$/.test(t);
+};
+
+const parseRowCells = (rowStr) => {
+  let s = rowStr.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|')) s = s.slice(0, -1);
+  s = s.replace(/\\\|/g, '__ESCAPED_PIPE__');
+  return s.split('|').map(c => c.replace(/__ESCAPED_PIPE__/g, '|').trim());
+};
+
 const parseMarkdown = (md) => {
   if (!md) return '<p style="color:var(--text-muted);font-style:italic;">Empty note</p>';
 
@@ -9906,45 +9921,129 @@ const parseMarkdown = (md) => {
     }
   };
 
-  lines.forEach(line => {
+  const usedSlugs = new Set();
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const trimmed = line.trim();
 
     if (trimmed.startsWith('__CODE_BLOCK_')) {
       closeList();
       resultLines.push(trimmed);
-      return;
+      continue;
     }
 
-    if (trimmed.startsWith('# ')) {
+    // Markdown Table: header line containing pipes followed by a separator line
+    if (trimmed.includes('|') && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
       closeList();
-      resultLines.push(`<h1>${parseInlineMarkdown(trimmed.slice(2))}</h1>`);
-      return;
-    }
-    if (trimmed.startsWith('## ')) {
-      closeList();
-      resultLines.push(`<h2>${parseInlineMarkdown(trimmed.slice(3))}</h2>`);
-      return;
-    }
-    if (trimmed.startsWith('### ')) {
-      closeList();
-      resultLines.push(`<h3>${parseInlineMarkdown(trimmed.slice(4))}</h3>`);
-      return;
+      const headerRow = lines[i];
+      const sepRow = lines[i + 1];
+
+      const headerCells = parseRowCells(headerRow);
+      const aligns = parseRowCells(sepRow).map(col => {
+        const c = col.trim();
+        const left = c.startsWith(':');
+        const right = c.endsWith(':');
+        if (left && right) return 'center';
+        if (right) return 'right';
+        if (left) return 'left';
+        return '';
+      });
+
+      let tableHtml = '<div class="notes-table-wrap"><table class="notes-table"><thead><tr>';
+      headerCells.forEach((cell, idx) => {
+        const align = aligns[idx] ? ` style="text-align:${aligns[idx]};"` : '';
+        tableHtml += `<th${align}>${parseInlineMarkdown(cell)}</th>`;
+      });
+      tableHtml += '</tr></thead><tbody>';
+
+      i += 2; // advance past header & separator
+      while (i < lines.length) {
+        const rowLine = lines[i].trim();
+        if (!rowLine || !rowLine.includes('|') || isTableSeparator(rowLine)) {
+          i--;
+          break;
+        }
+        const cells = parseRowCells(rowLine);
+        tableHtml += '<tr>';
+        cells.forEach((cell, idx) => {
+          const align = aligns[idx] ? ` style="text-align:${aligns[idx]};"` : '';
+          tableHtml += `<td${align}>${parseInlineMarkdown(cell)}</td>`;
+        });
+        tableHtml += '</tr>';
+        i++;
+      }
+
+      tableHtml += '</tbody></table></div>';
+      resultLines.push(tableHtml);
+      continue;
     }
 
+    // Horizontal Rule: ---, ***, ___, etc.
+    if (/^([-*_])(\s*\1){2,}$/.test(trimmed)) {
+      closeList();
+      resultLines.push('<hr class="notes-hr" />');
+      continue;
+    }
+
+    // Headings: # to ###### with automatic slug IDs for TOC anchor navigation
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      closeList();
+      const level = headingMatch[1].length;
+      const headingText = headingMatch[2];
+      const parsedText = parseInlineMarkdown(headingText);
+      const rawText = headingText.replace(/<[^>]+>/g, '').trim();
+      const baseSlug = rawText
+        .toLowerCase()
+        .replace(/[^\w\s-]/g, '')
+        .replace(/\s/g, '-');
+      let slug = baseSlug;
+      let count = 1;
+      while (usedSlugs.has(slug)) {
+        slug = `${baseSlug}-${count++}`;
+      }
+      usedSlugs.add(slug);
+      resultLines.push(`<h${level} id="${slug}">${parsedText}</h${level}>`);
+      continue;
+    }
+
+    // Blockquotes: > quote text (groups consecutive lines)
+    if (trimmed.startsWith('&gt;') || trimmed.startsWith('>')) {
+      closeList();
+      const bqLines = [];
+      while (i < lines.length) {
+        const curTrim = lines[i].trim();
+        if (curTrim.startsWith('&gt;') || curTrim.startsWith('>')) {
+          let text = curTrim.startsWith('&gt;') ? curTrim.slice(4) : curTrim.slice(1);
+          if (text.startsWith(' ')) text = text.slice(1);
+          bqLines.push(parseInlineMarkdown(text));
+          i++;
+        } else {
+          i--;
+          break;
+        }
+      }
+      resultLines.push(`<blockquote>${bqLines.join('<br>')}</blockquote>`);
+      continue;
+    }
+
+    // Checklist / Task list items
     const checkMatch = trimmed.match(/^- \[(x|X| )\] (.*)$/);
     if (checkMatch) {
       if (!inList || listType !== 'ul') {
         closeList();
-        resultLines.push('<ul style="list-style:none;padding-left:0;">');
+        resultLines.push('<ul class="notes-task-list" style="list-style:none;padding-left:0;">');
         inList = true;
         listType = 'ul';
       }
       const checked = checkMatch[1].toLowerCase() === 'x' ? 'checked' : '';
       const text = parseInlineMarkdown(checkMatch[2]);
       resultLines.push(`<li class="task-list-item"><input type="checkbox" ${checked} disabled /> <span>${text}</span></li>`);
-      return;
+      continue;
     }
 
+    // Bullet lists with indentation support
     const bulletMatch = trimmed.match(/^[-*] (.*)$/);
     if (bulletMatch) {
       if (!inList || listType !== 'ul') {
@@ -9953,10 +10052,13 @@ const parseMarkdown = (md) => {
         inList = true;
         listType = 'ul';
       }
-      resultLines.push(`<li>${parseInlineMarkdown(bulletMatch[1])}</li>`);
-      return;
+      const indent = line.search(/\S/);
+      const indentStyle = indent >= 4 ? ' style="margin-left:36px;"' : (indent >= 2 ? ' style="margin-left:20px;"' : '');
+      resultLines.push(`<li${indentStyle}>${parseInlineMarkdown(bulletMatch[1])}</li>`);
+      continue;
     }
 
+    // Numbered lists with indentation support
     const numMatch = trimmed.match(/^(\d+)\. (.*)$/);
     if (numMatch) {
       if (!inList || listType !== 'ol') {
@@ -9965,19 +10067,24 @@ const parseMarkdown = (md) => {
         inList = true;
         listType = 'ol';
       }
-      resultLines.push(`<li>${parseInlineMarkdown(numMatch[2])}</li>`);
-      return;
+      const indent = line.search(/\S/);
+      const indentStyle = indent >= 4 ? ' style="margin-left:36px;"' : (indent >= 2 ? ' style="margin-left:20px;"' : '');
+      resultLines.push(`<li${indentStyle}>${parseInlineMarkdown(numMatch[2])}</li>`);
+      continue;
     }
 
+    // Blank line
     if (!trimmed) {
       closeList();
-      resultLines.push('<br>');
-      return;
+      if (i > 0 && !lines[i - 1].trim()) {
+        resultLines.push('<br>');
+      }
+      continue;
     }
 
     closeList();
     resultLines.push(`<p>${parseInlineMarkdown(trimmed)}</p>`);
-  });
+  }
 
   closeList();
 
@@ -9996,9 +10103,29 @@ const parseMarkdown = (md) => {
 
 const parseInlineMarkdown = (text) => {
   if (!text) return '';
-  let str = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-  str = str.replace(/\*(.*?)\*/g, '<em>$1</em>');
-  str = str.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  let str = text;
+  // Bold + Italic: ***text*** or ___text___
+  str = str.replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  str = str.replace(/___(.*?)___/g, '<strong><em>$1</em></strong>');
+
+  // Bold: **text** or __text__
+  str = str.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  str = str.replace(/__(.*?)__/g, '<strong>$1</strong>');
+
+  // Italic: *text* or _text_
+  str = str.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  str = str.replace(/(^|[\s(])_([^_]+)_([\s).,;:!?]|$)/g, '$1<em>$2</em>$3');
+
+  // Strikethrough: ~~text~~
+  str = str.replace(/~~(.*?)~~/g, '<del>$1</del>');
+
+  // Links & Anchors: [text](url)
+  str = str.replace(/\[(.*?)\]\((.*?)\)/g, (match, txt, href) => {
+    const isAnchor = href.startsWith('#');
+    if (isAnchor) return `<a href="${href}">${txt}</a>`;
+    return `<a href="${href}" target="_blank" rel="noopener noreferrer">${txt}</a>`;
+  });
+
   return str;
 };
 
@@ -10041,6 +10168,18 @@ const insertMarkdownSyntax = (type) => {
       break;
     case 'checklist':
       replacement = `- [ ] ${selectedText || 'Task item'}`;
+      cursorOffset = replacement.length;
+      break;
+    case 'quote':
+      replacement = `> ${selectedText || 'Quote text'}`;
+      cursorOffset = replacement.length;
+      break;
+    case 'table':
+      replacement = `| Column 1 | Column 2 |\n|---|---|\n| Data 1 | Data 2 |`;
+      cursorOffset = replacement.length;
+      break;
+    case 'hr':
+      replacement = `\n---\n`;
       cursorOffset = replacement.length;
       break;
     case 'code':
@@ -10580,6 +10719,16 @@ const renderNotes = () => {
           </button>
           <button class="notes-tb-btn" data-syntax="checklist" title="Checklist (- [ ] Task)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+          </button>
+          <div class="notes-tb-divider"></div>
+          <button class="notes-tb-btn" data-syntax="quote" title="Quote (> text)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/></svg>
+          </button>
+          <button class="notes-tb-btn" data-syntax="table" title="Table (| col | col |)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
+          </button>
+          <button class="notes-tb-btn" data-syntax="hr" title="Horizontal Rule (---)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/></svg>
           </button>
           <div class="notes-tb-divider"></div>
           <button class="notes-tb-btn" data-syntax="code" title="Inline Code (\`code\`)">&lt;/&gt;</button>
@@ -11266,6 +11415,23 @@ const init = async () => {
       if (state.activeNoteId) saveActiveNote(true);
       state.noteEditorMode = modeBtn.dataset.mode;
       render();
+      return;
+    }
+
+    const noteAnchor = e.target.closest('.notes-preview a[href^="#"]');
+    if (noteAnchor) {
+      e.preventDefault();
+      const href = noteAnchor.getAttribute('href');
+      const rawTarget = decodeURIComponent(href.replace(/^#/, ''));
+      let targetEl = document.getElementById(rawTarget);
+      if (!targetEl) {
+        const clean = rawTarget.replace(/-+/g, '-');
+        targetEl = document.getElementById(clean) ||
+                   document.querySelector(`.notes-preview [id="${rawTarget}" i], .notes-preview [id="${clean}" i]`);
+      }
+      if (targetEl) {
+        targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
       return;
     }
   });
