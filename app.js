@@ -1614,6 +1614,34 @@ const initWeeklyChart = () => {
   });
 };
 
+// ─── Sync Project Release Dates ───────────────────────────
+const syncProjectReleaseDates = () => {
+  if (!state.releases || !state.projects) return false;
+  let changed = false;
+  state.releases.forEach(r => {
+    if (!r.releaseDate) return;
+    const projIds = r.projectIds || (r.projectId ? [r.projectId] : []);
+    const versions = r.versions || (r.version ? [r.version] : []);
+    projIds.forEach(pid => {
+      const p = state.projects.find(x => x.id === pid);
+      if (!p || !p.releaseHistory) return;
+      p.releaseHistory.forEach(entry => {
+        const vClean = (entry.version || '').toLowerCase().replace(/^v/, '').trim();
+        const matchesVer = versions.length === 0 || versions.some(v => (v || '').toLowerCase().replace(/^v/, '').trim() === vClean);
+        if (matchesVer && entry.releasedAt !== r.releaseDate) {
+          entry.releasedAt = r.releaseDate;
+          changed = true;
+        }
+      });
+      if (p.releaseHistory.length > 0 && p.lastReleaseAt !== p.releaseHistory[0].releasedAt) {
+        p.lastReleaseAt = p.releaseHistory[0].releasedAt;
+        changed = true;
+      }
+    });
+  });
+  return changed;
+};
+
 // ─── Dashboard ───────────────────────────────────────────
 const renderDashboard = () => {
   const totalProjects = state.projects.length;
@@ -1656,58 +1684,86 @@ const renderDashboard = () => {
   const rmName = rmStart.toLocaleDateString('en', { month: 'long', year: 'numeric' });
   const isReleasedMonth = (dateStr) => {
     if (!dateStr) return false;
+    if (typeof dateStr === 'string' && /^\d{4}-\d{2}/.test(dateStr)) {
+      const parts = dateStr.split('-');
+      const y = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10) - 1;
+      return y === rmYear && m === rmMonth;
+    }
     const d = new Date(dateStr);
     return !isNaN(d) && d.getFullYear() === rmYear && d.getMonth() === rmMonth;
   };
 
-  const manualReleasesThisMonth = (state.releases || [])
-    .filter(r => r.status === 'Released' && isReleasedMonth(r.releaseDate || r.updatedAt || r.createdAt));
+  syncProjectReleaseDates();
 
-  const projectReleasesThisMonth = [];
+  const allReleasesThisMonth = [];
+
+  // Get completed / released items from Release Management based strictly on their selected releaseDate
+  const manualReleasesThisMonth = (state.releases || [])
+    .filter(r => {
+      const isRel = r.status === 'Released' || (!r.status && r.releaseDate);
+      if (!isRel) return false;
+      const targetDate = r.releaseDate || r.createdAt;
+      return isReleasedMonth(targetDate);
+    });
+
+  manualReleasesThisMonth.forEach(r => {
+    const projIds = r.projectIds || (r.projectId ? [r.projectId] : []);
+    const projNames = projIds.map(pid => { const p = state.projects.find(x => x.id === pid); return p ? p.name : null; }).filter(Boolean);
+    const versions = r.versions || (r.version ? [r.version] : []);
+    const projSummary = projNames.length ? projNames.join(', ') : '';
+    const verSummary = versions.length ? versions.join(', ') : (r.version || '');
+    const displayDate = r.releaseDate || r.createdAt;
+
+    allReleasesThisMonth.push({
+      title: r.name,
+      subtitle: projSummary ? `${projSummary} · Version ${verSummary || '—'}` : `Version ${verSummary || '—'}`,
+      date: displayDate,
+      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px; color:var(--accent);"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>`
+    });
+  });
+
+  // Only include project releases from p.releaseHistory if that project is NOT tracked in Release Management!
   state.projects.forEach(p => {
+    const hasReleasesInMgmt = (state.releases || []).some(r => {
+      const pids = r.projectIds || (r.projectId ? [r.projectId] : []);
+      return pids.includes(p.id);
+    });
+    if (hasReleasesInMgmt) return; // Managed via Release Management, do NOT duplicate on dashboard!
+
     if (p.releaseHistory) {
       p.releaseHistory.forEach(entry => {
         if (isReleasedMonth(entry.releasedAt)) {
-          projectReleasesThisMonth.push({
-            projectName: p.name,
-            version: entry.version,
-            platform: entry.platform,
-            releasedAt: entry.releasedAt,
-            log: entry.log
+          let icon = '';
+          if (entry.platform === 'ANDROID') {
+            icon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px; color:#22c55e;"><path d="M4 9h16M4 15h16M10 3v2M14 3v2M9 21h6"/></svg>`;
+          } else if (entry.platform === 'IOS') {
+            icon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px; color:#0ea5e9;"><path d="M12 2a10 10 0 018 4.5l-1.5 1.5A8 8 0 1012 22a10 10 0 01-8-4.5l1.5-1.5A8 8 0 0012 2z"/></svg>`;
+          } else {
+            icon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px; color:#eab308;"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`;
+          }
+          allReleasesThisMonth.push({
+            title: `${p.name} (${entry.platform})`,
+            subtitle: entry.log || `Version ${entry.version} released`,
+            date: entry.releasedAt,
+            icon: icon
           });
         }
       });
     }
   });
 
-  const allReleasesThisMonth = [];
-  manualReleasesThisMonth.forEach(r => {
-    allReleasesThisMonth.push({
-      title: r.name,
-      subtitle: `Version ${r.version}`,
-      date: r.releaseDate || r.updatedAt || r.createdAt,
-      icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px; color:var(--accent);"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>`
-    });
-  });
-
-  projectReleasesThisMonth.forEach(pr => {
-    let icon = '';
-    if (pr.platform === 'ANDROID') {
-      icon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px; color:#22c55e;"><path d="M4 9h16M4 15h16M10 3v2M14 3v2M9 21h6"/></svg>`;
-    } else if (pr.platform === 'IOS') {
-      icon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px; color:#0ea5e9;"><path d="M12 2a10 10 0 018 4.5l-1.5 1.5A8 8 0 1012 22a10 10 0 01-8-4.5l1.5-1.5A8 8 0 0012 2z"/></svg>`;
-    } else {
-      icon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px; color:#eab308;"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`;
+  const parseItemDate = (dateStr) => {
+    if (!dateStr) return 0;
+    if (typeof dateStr === 'string' && /^\d{4}-\d{2}-\d{2}/.test(dateStr)) {
+      const [y, m, d] = dateStr.split('-');
+      return new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10)).getTime();
     }
-    allReleasesThisMonth.push({
-      title: `${pr.projectName} (${pr.platform})`,
-      subtitle: pr.log || `Version ${pr.version} released`,
-      date: pr.releasedAt,
-      icon: icon
-    });
-  });
+    const t = new Date(dateStr).getTime();
+    return isNaN(t) ? 0 : t;
+  };
 
-  allReleasesThisMonth.sort((a, b) => new Date(b.date) - new Date(a.date));
+  allReleasesThisMonth.sort((a, b) => parseItemDate(b.date) - parseItemDate(a.date));
 
   const releasesHtml = allReleasesThisMonth.length ? `
     <div class="timeline-wrap">
@@ -5916,6 +5972,24 @@ const renderReleases = () => {
     releases = releases.filter(r => r.status === state.releaseFilters.status);
   }
 
+  // Sort releases by releaseDate descending (newest releaseDate first), tie-breaking by createdAt
+  const parseSortTime = (dateStr) => {
+    if (!dateStr) return 0;
+    if (typeof dateStr === 'string' && /^\d{4}-\d{2}-\d{2}/.test(dateStr)) {
+      const [y, m, d] = dateStr.split('-');
+      return new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10)).getTime();
+    }
+    const t = new Date(dateStr).getTime();
+    return isNaN(t) ? 0 : t;
+  };
+
+  releases.sort((a, b) => {
+    const timeA = parseSortTime(a.releaseDate) || parseSortTime(a.createdAt);
+    const timeB = parseSortTime(b.releaseDate) || parseSortTime(b.createdAt);
+    if (timeB !== timeA) return timeB - timeA;
+    return parseSortTime(b.createdAt) - parseSortTime(a.createdAt);
+  });
+
   const releasedPct = total === 0 ? 0 : Math.round(releasedCount / total * 100);
 
   const hero = buildPageHero({
@@ -6030,7 +6104,7 @@ const renderReleaseCard = (r, q = '') => {
       ` : ''}
 
       <div class="project-card-footer" style="margin-top:auto; padding-top:10px;">
-        <span class="card-time">Created ${timeAgo(r.createdAt)}</span>
+        <span class="card-time">${r.releaseDate ? 'Release: ' + fmtDate(r.releaseDate) : 'Created ' + timeAgo(r.createdAt)}</span>
         <div class="card-actions" style="opacity: 1;">
           <button class="icon-btn" data-action="copy-notes" data-id="${r.id}" aria-label="Copy Email Notes" title="Copy Email Notes">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
@@ -6490,14 +6564,26 @@ const releaseProjectVersion = async (projectId, platform) => {
     p.lastReleaseLog = `${formatVersionLabel(oldUp)} released`;
   }
 
-  p.lastReleaseAt = now;
+  // Check if a release exists in Release Management for this project and version
+  const vNorm = oldUp.toLowerCase().replace(/^v/, '').trim();
+  const matchingRelease = (state.releases || []).find(r => {
+    const projIds = r.projectIds || (r.projectId ? [r.projectId] : []);
+    const vers = r.versions || (r.version ? [r.version] : []);
+    const pMatch = projIds.includes(projectId);
+    const vMatch = vers.some(v => (v || '').toLowerCase().replace(/^v/, '').trim() === vNorm);
+    return pMatch && (vMatch || vers.length === 0);
+  });
+
+  const effectiveReleaseDate = (matchingRelease && matchingRelease.releaseDate) ? matchingRelease.releaseDate : now;
+
+  p.lastReleaseAt = effectiveReleaseDate;
   p.updatedAt = now;
 
   p.releaseHistory = p.releaseHistory || [];
   p.releaseHistory.unshift({
     version: oldUp,
     platform: platform.toUpperCase(),
-    releasedAt: now,
+    releasedAt: effectiveReleaseDate,
     log: p.lastReleaseLog
   });
   if (p.releaseHistory.length > 10) {
@@ -9584,7 +9670,7 @@ const openReleaseModal = (id = null) => {
     document.getElementById('releaseDate').value = new Date().toISOString().split('T')[0];
     document.getElementById('releaseDesc').value = '';
     document.getElementById('releaseManager').value = 'Dwip Pandya';
-    document.getElementById('releaseStatus').value = 'Draft';
+    document.getElementById('releaseStatus').value = 'Released';
     document.getElementById('releaseWorkItems').value = '';
     document.getElementById('releaseNotes').value = '';
 
@@ -9640,6 +9726,8 @@ const saveRelease = async () => {
     logActivity(`Created release "${name}" (${versionSummary}) [${status}]`, 'project');
     showToast('Release created');
   }
+
+  syncProjectReleaseDates();
 
   await storage.save();
   closeModals();
@@ -10646,6 +10734,11 @@ const init = async () => {
   // Persist the "task completed" backfill immediately so existing tasks have
   // it in SQLite right away, not only after the next edit to each one.
   if (hadLegacyTasksWithoutWorkDone) {
+    await storage.save();
+  }
+
+  // Sync project release dates with Release Management release dates
+  if (syncProjectReleaseDates()) {
     await storage.save();
   }
 
