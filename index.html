@@ -495,6 +495,79 @@
     </div>
   </div>
 
+  <!-- Release Version Confirmation / Next Version Modal -->
+  <div class="modal modal-release-ver" id="releaseVersionModal" role="dialog" aria-modal="true">
+    <div class="modal-header">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="font-size:18px;">🚀</span>
+        <h2 class="modal-title" id="releaseVersionModalTitle">Release Project Version</h2>
+      </div>
+      <button class="modal-close" id="closeReleaseVersionModal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 6 6 18M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="releaseVersionProjectId" />
+      <input type="hidden" id="releaseVersionPlatform" />
+
+      <!-- Current Release Information -->
+      <div class="release-ver-info-box">
+        <div class="release-ver-info-row">
+          <span class="release-ver-info-label">Project</span>
+          <span class="release-ver-info-val" id="releaseVersionProjectName">—</span>
+        </div>
+        <div class="release-ver-info-row">
+          <span class="release-ver-info-label">Platform</span>
+          <span class="release-ver-info-val" id="releaseVersionPlatformBadge">—</span>
+        </div>
+        <div class="release-ver-info-row">
+          <span class="release-ver-info-label">Previous Released Version</span>
+          <span class="release-ver-info-val highlight" id="releaseVersionPrevVal">—</span>
+        </div>
+      </div>
+
+      <!-- Release Version Selection & Manual Input -->
+      <div class="form-group" style="margin-top:16px;">
+        <label for="nextReleaseVersionInput" style="font-weight:600;display:flex;align-items:center;justify-content:space-between;">
+          <span>Release Version to publish:</span>
+          <span style="font-size:11px;font-weight:normal;color:var(--text-muted);">Major, Minor, Patch, or Custom</span>
+        </label>
+
+        <!-- Quick Semver Buttons (Dynamically Populated) -->
+        <div class="release-ver-presets" id="releaseVersionPresets">
+          <button type="button" class="ver-preset-btn" data-type="patch">
+            <span class="preset-type">Patch</span>
+            <span class="preset-ver" id="presetPatchVer">—</span>
+          </button>
+          <button type="button" class="ver-preset-btn" data-type="minor">
+            <span class="preset-type">Minor</span>
+            <span class="preset-ver" id="presetMinorVer">—</span>
+          </button>
+          <button type="button" class="ver-preset-btn" data-type="major">
+            <span class="preset-type">Major</span>
+            <span class="preset-ver" id="presetMajorVer">—</span>
+          </button>
+        </div>
+
+        <input type="text" id="nextReleaseVersionInput" placeholder="Enter version (e.g. 1.1.0 or v2.0.0)..." style="margin-top:10px;font-size:13.5px;font-weight:600;padding:9px 12px;width:100%;box-sizing:border-box;" />
+        <span style="font-size:11.5px;color:var(--text-muted);margin-top:6px;display:block;">
+          Pick a dynamic increment above or manually enter any custom version.
+        </span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn-ghost" id="cancelReleaseVersionModal">Cancel</button>
+      <button type="button" class="btn-primary" id="confirmReleaseVersionBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="width:14px;height:14px;margin-right:6px;">
+          <path d="M13 10V3L4 14h7v7l9-11h-7z"/>
+        </svg>
+        Confirm &amp; Release
+      </button>
+    </div>
+  </div>
+
   <!-- Confirm Delete Modal -->
   <div class="modal modal-sm" id="confirmModal">
     <div class="modal-header">
@@ -1204,7 +1277,7 @@
     </div>
     <div class="modal-body">
       <p style="font-size:12.5px; color:var(--text-muted); margin:0;">
-        Generates an Excel workbook (Overview, Projects, Tasks, Releases, Test Cases) scoped to the filters below.
+        Generates an Excel workbook (Overview, Projects, Tasks, Releases, Release Details, Test Cases) scoped to the filters below.
       </p>
 
       <div class="form-group">

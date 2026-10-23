@@ -305,6 +305,25 @@ const incrementVersion = (ver) => {
   return ver + '.1';
 };
 
+const getSemverSuggestions = (ver) => {
+  const raw = (ver || '1.0.0').trim();
+  const hasV = raw.toLowerCase().startsWith('v');
+  const clean = raw.replace(/^[vV]/, '').trim();
+
+  const parts = clean.split('.').map(p => parseInt(p, 10));
+  const major = !isNaN(parts[0]) ? parts[0] : 1;
+  const minor = parts.length > 1 && !isNaN(parts[1]) ? parts[1] : 0;
+  const patch = parts.length > 2 && !isNaN(parts[2]) ? parts[2] : 0;
+
+  const prefix = hasV ? (raw.startsWith('V') ? 'V' : 'v') : '';
+
+  return {
+    patch: `${prefix}${major}.${minor}.${patch + 1}`,
+    minor: `${prefix}${major}.${minor + 1}.0`,
+    major: `${prefix}${major + 1}.0.0`
+  };
+};
+
 const formatCardDescription = (desc) => {
   if (!desc) return '';
   const trimmed = trimText(desc, 120);
@@ -1088,7 +1107,8 @@ const generateExcelReport = async () => {
     { header: 'Status', width: 14 },
     { header: 'Release Date', width: 16 },
     { header: 'Manager', width: 20 },
-    { header: 'Developers', width: 26 }
+    { header: 'Developers', width: 26 },
+    { header: 'Work Items', width: 32 }
   ];
   relSheet.columns = relCols.map(c => ({ width: c.width }));
 
@@ -1105,7 +1125,8 @@ const generateExcelReport = async () => {
       r.status || 'Draft',
       r.releaseDate ? new Date(r.releaseDate) : null,
       r.managerName || '—',
-      (r.developerIds || []).map(getDevName).join(', ') || '—'
+      (r.developerIds || []).map(getDevName).join(', ') || '—',
+      r.workItems || '—'
     ];
     values.forEach((v, c) => { relSheet.getCell(rowNum, c + 1).value = v; });
     const row = relSheet.getRow(rowNum);
@@ -1123,7 +1144,8 @@ const generateExcelReport = async () => {
     row.getCell(6).alignment = { vertical: 'middle', horizontal: 'center' };
     row.getCell(7).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
     row.getCell(8).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
-    row.height = 24;
+    row.getCell(9).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+    row.height = (r.workItems && r.workItems.length > 50) ? 32 : 24;
   });
   if (!releases.length) {
     relSheet.mergeCells(3, 1, 3, relCols.length);
@@ -1178,9 +1200,404 @@ const generateExcelReport = async () => {
     row.height = 24;
   });
   if (!releasePoints.length) {
-    relSheet.mergeCells(rpStart + 2, 1, rpStart + 2, rpCols.length);
+    relSheet.mergeCells(rpStart + 2, 1, rpStart + 2, relCols.length);
     relSheet.getCell(rpStart + 2, 1).value = 'No release points match the selected filters';
     relSheet.getCell(rpStart + 2, 1).alignment = { horizontal: 'center' };
+  }
+
+  // ══════════════════ Release Details (Detailed Breakdown & Roll-up) ══════════════════
+  const relDetailSheet = wb.addWorksheet('Release Details', {
+    properties: { tabColor: { argb: 'FFD97706' } },
+    views: [{ showGridLines: true }]
+  });
+
+  const relDetailCols = [
+    { width: 6 },   // Col 1: #
+    { width: 28 },  // Col 2: Name / Title / Project
+    { width: 24 },  // Col 3: Project(s)
+    { width: 18 },  // Col 4: Version(s) / Linked Release
+    { width: 15 },  // Col 5: Status / Type / Item #
+    { width: 16 },  // Col 6: Release Date / Checks Done / Item Status
+    { width: 20 },  // Col 7: Manager / Dev
+    { width: 26 },  // Col 8: Developers Involved / Assigned Dev
+    { width: 36 },  // Col 9: Work Items / Total Checks / Ticket
+    { width: 38 },  // Col 10: Description / Progress % / Item Description
+    { width: 44 },  // Col 11: Release Notes (Changelog) / Readiness
+    { width: 20 }   // Col 12: Linked Points & Readiness / Extra
+  ];
+  relDetailSheet.columns = relDetailCols;
+
+  let rdRow = 1;
+  const RD_COLS = 12;
+
+  // 1. Executive Roll-up: Releases & Points Summary by Project
+  sectionBanner(relDetailSheet, rdRow, 'Executive Roll-up: Releases & Release Points Summary by Project', RD_COLS, XL.bannerFrom);
+  rdRow++;
+
+  const projSummaryHeaders = [
+    '#', 'Project Name', 'Total Releases', 'Latest Version', 'Latest Release Date',
+    'Release Points', 'Points Ready', 'Total Checks', 'Checks Done', 'Readiness %',
+    'Readiness Status', 'Assigned Developer(s)'
+  ];
+  projSummaryHeaders.forEach((h, i) => { relDetailSheet.getCell(rdRow, i + 1).value = h; });
+  styleHeaderRow(relDetailSheet.getRow(rdRow), CAT_XL.projects);
+  rdRow++;
+
+  let sumTotalReleases = 0;
+  let sumTotalPoints = 0;
+  let sumTotalChecks = 0;
+  let sumDoneChecks = 0;
+
+  projects.forEach((p, idx) => {
+    const pReleases = releases.filter(r => projectIdsOf(r).includes(p.id));
+    const pPoints = releasePoints.filter(rp => projectIdsOf(rp).includes(p.id));
+
+    sumTotalReleases += pReleases.length;
+    sumTotalPoints += pPoints.length;
+
+    let pChecks = 0;
+    let pDone = 0;
+    let pCompletedPoints = 0;
+    pPoints.forEach(rp => {
+      const items = rp.checklistItems || [];
+      pChecks += items.length;
+      pDone += items.filter(it => it.done).length;
+      if (rp.isCompleted || (items.length > 0 && items.every(it => it.done))) {
+        pCompletedPoints++;
+      }
+    });
+
+    sumTotalChecks += pChecks;
+    sumDoneChecks += pDone;
+
+    const readinessPct = pChecks > 0 ? Math.round((pDone / pChecks) * 100) : (pPoints.length === 0 ? 100 : 0);
+
+    let readinessStatus = 'No Points';
+    if (pChecks > 0) {
+      if (pDone === pChecks) readinessStatus = 'Ready';
+      else if (pDone > 0) readinessStatus = 'In Progress';
+      else readinessStatus = 'Pending';
+    }
+
+    const sortedRel = [...pReleases].sort((a, b) => new Date(b.releaseDate || b.createdAt) - new Date(a.releaseDate || a.createdAt));
+    const latestR = sortedRel[0];
+    const latestVer = latestR ? (latestR.versions && latestR.versions.length ? latestR.versions.join(', ') : latestR.version || '—') : (p.previousVersion || '—');
+    const latestDate = latestR && latestR.releaseDate ? new Date(latestR.releaseDate) : (p.lastReleaseAt ? new Date(p.lastReleaseAt) : null);
+
+    const devNames = (state.developers || [])
+      .filter(d => (d.projectIds || []).includes(p.id))
+      .map(d => d.name)
+      .join(', ') || '—';
+
+    const row = relDetailSheet.getRow(rdRow);
+    const values = [
+      idx + 1,
+      p.name,
+      pReleases.length,
+      latestVer,
+      latestDate,
+      pPoints.length,
+      pCompletedPoints,
+      pChecks,
+      pDone,
+      `${readinessPct}%`,
+      readinessStatus,
+      devNames
+    ];
+    values.forEach((v, c) => { row.getCell(c + 1).value = v; });
+    zebraRow(row, idx % 2 === 0);
+
+    row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(2).font = { name: 'Segoe UI', bold: true, size: 9.5, color: { argb: 'FF0F172A' } };
+    row.getCell(2).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    row.getCell(3).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(4).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(5).alignment = { vertical: 'middle', horizontal: 'center' };
+    if (latestDate) row.getCell(5).numFmt = 'dd mmm yyyy';
+    row.getCell(6).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(7).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(8).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(9).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(10).alignment = { vertical: 'middle', horizontal: 'center' };
+    row.getCell(10).font = { name: 'Segoe UI', bold: true, size: 9.5, color: { argb: readinessPct >= 80 ? 'FF059669' : 'FFD97706' } };
+    row.getCell(11).alignment = { vertical: 'middle', horizontal: 'center' };
+    colorCell(row.getCell(11), {
+      'Ready': { fill: 'FFE8F5EE', font: 'FF059669' },
+      'In Progress': { fill: 'FFE1F5FE', font: 'FF01579B' },
+      'Pending': { fill: 'FFFFF3E0', font: 'FFD97706' },
+      'No Points': { fill: 'FFF5F5F5', font: 'FF757575' }
+    }, readinessStatus);
+    row.getCell(12).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+    row.height = 24;
+
+    rdRow++;
+  });
+
+  const rdTotalRow = relDetailSheet.getRow(rdRow);
+  const overallReadyPct = sumTotalChecks > 0 ? `${Math.round((sumDoneChecks / sumTotalChecks) * 100)}%` : '0%';
+  const totalVals = ['', 'TOTAL', sumTotalReleases, '', '', sumTotalPoints, '', sumTotalChecks, sumDoneChecks, overallReadyPct, '', ''];
+  totalVals.forEach((v, c) => { rdTotalRow.getCell(c + 1).value = v; });
+  rdTotalRow.height = 26;
+  rdTotalRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+    cell.font = { name: 'Segoe UI', bold: true, size: 10 };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+    cell.border = { top: { style: 'medium', color: { argb: CAT_XL.projects } }, bottom: thinBorder().bottom, left: thinBorder().left, right: thinBorder().right };
+    cell.alignment = { vertical: 'middle', horizontal: colNumber === 2 ? 'left' : 'center', indent: colNumber === 2 ? 1 : 0 };
+  });
+  rdRow += 2;
+
+  // 2. Releases In Full Detail
+  sectionBanner(relDetailSheet, rdRow, `Releases — In Full Detail (Total: ${releases.length})`, RD_COLS, CAT_XL.releases);
+  rdRow++;
+
+  const relDetailHeaders = [
+    '#', 'Release Name', 'Project(s)', 'Version(s)', 'Status', 'Release Date',
+    'Release Manager', 'Developers Involved', 'Work Items', 'Release Description',
+    'Release Notes (Changelog)', 'Linked Points & Readiness'
+  ];
+  relDetailHeaders.forEach((h, i) => { relDetailSheet.getCell(rdRow, i + 1).value = h; });
+  styleHeaderRow(relDetailSheet.getRow(rdRow), CAT_XL.releases);
+  rdRow++;
+
+  if (releases.length === 0) {
+    relDetailSheet.mergeCells(rdRow, 1, rdRow, RD_COLS);
+    relDetailSheet.getCell(rdRow, 1).value = 'No releases match the selected filters';
+    relDetailSheet.getCell(rdRow, 1).alignment = { horizontal: 'center', vertical: 'middle' };
+    zebraRow(relDetailSheet.getRow(rdRow), false);
+    rdRow++;
+  } else {
+    releases.forEach((r, idx) => {
+      const linkedRps = releasePoints.filter(rp =>
+        rp.releaseId === r.id ||
+        (projectIdsOf(rp).some(pid => projectIdsOf(r).includes(pid)) &&
+         (rp.versions || []).some(v => (r.versions || [r.version]).includes(v)))
+      );
+      const linkedChecksDone = linkedRps.reduce((sum, rp) => sum + (rp.checklistItems || []).filter(it => it.done).length, 0);
+      const linkedChecksTotal = linkedRps.reduce((sum, rp) => sum + (rp.checklistItems || []).length, 0);
+      const linkedSummary = linkedRps.length
+        ? `${linkedRps.length} pt${linkedRps.length > 1 ? 's' : ''} (${linkedChecksDone}/${linkedChecksTotal} checks)`
+        : '—';
+
+      const relDate = r.releaseDate ? new Date(r.releaseDate) : null;
+      const vers = (r.versions && r.versions.length ? r.versions : [r.version]).filter(Boolean).join(', ') || '—';
+      const devNames = (r.developerIds || []).map(getDevName).join(', ') || '—';
+
+      const row = relDetailSheet.getRow(rdRow);
+      const values = [
+        idx + 1,
+        r.name,
+        projectNamesOf(r),
+        vers,
+        r.status || 'Draft',
+        relDate,
+        r.managerName || '—',
+        devNames,
+        r.workItems || '—',
+        r.description || '—',
+        r.notes || '—',
+        linkedSummary
+      ];
+      values.forEach((v, c) => { row.getCell(c + 1).value = v; });
+      zebraRow(row, idx % 2 === 0);
+
+      row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell(2).font = { name: 'Segoe UI', bold: true, size: 9.5, color: { argb: 'FF0F172A' } };
+      row.getCell(2).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      row.getCell(3).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      row.getCell(4).alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell(5).alignment = { vertical: 'middle', horizontal: 'center' };
+      colorCell(row.getCell(5), RELEASE_STATUS_XL, r.status || 'Draft');
+      row.getCell(6).alignment = { vertical: 'middle', horizontal: 'center' };
+      if (relDate) row.getCell(6).numFmt = 'dd mmm yyyy';
+      row.getCell(7).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      row.getCell(8).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      row.getCell(9).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      row.getCell(10).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      row.getCell(11).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      row.getCell(12).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+
+      const hasLongText = (r.workItems && r.workItems.length > 50) || (r.description && r.description.length > 50) || (r.notes && r.notes.length > 50);
+      row.height = hasLongText ? 36 : 24;
+
+      rdRow++;
+    });
+  }
+
+  rdRow++;
+
+  // 3. Release Points In Full Detail
+  sectionBanner(relDetailSheet, rdRow, `Release Points — In Full Detail (Total: ${releasePoints.length})`, RD_COLS, CAT_XL.releasePoints);
+  rdRow++;
+
+  const rpDetailHeaders = [
+    '#', 'Release Point Title', 'Project(s)', 'Linked Release', 'Type', 'Version(s)',
+    'Assigned Developers', 'Checklist Progress', 'Status', 'Total Checks', 'Checks Done', 'Checks Pending'
+  ];
+  rpDetailHeaders.forEach((h, i) => { relDetailSheet.getCell(rdRow, i + 1).value = h; });
+  styleHeaderRow(relDetailSheet.getRow(rdRow), CAT_XL.releasePoints);
+  rdRow++;
+
+  if (releasePoints.length === 0) {
+    relDetailSheet.mergeCells(rdRow, 1, rdRow, RD_COLS);
+    relDetailSheet.getCell(rdRow, 1).value = 'No release points match the selected filters';
+    relDetailSheet.getCell(rdRow, 1).alignment = { horizontal: 'center', vertical: 'middle' };
+    zebraRow(relDetailSheet.getRow(rdRow), false);
+    rdRow++;
+  } else {
+    releasePoints.forEach((rp, idx) => {
+      const items = rp.checklistItems || [];
+      const done = items.filter(it => it.done).length;
+      const totalItems = items.length;
+      const pending = totalItems - done;
+      const pct = totalItems > 0 ? ` (${Math.round((done / totalItems) * 100)}%)` : '';
+      const progressText = totalItems > 0 ? `${done} / ${totalItems} items${pct}` : '0 items';
+
+      let status = 'Not Started';
+      if (rp.isCompleted || (totalItems > 0 && done === totalItems)) status = 'Completed';
+      else if (done > 0) status = 'In Progress';
+
+      const linkedRelease = rp.releaseId ? state.releases.find(r => r.id === rp.releaseId) : null;
+      const linkedRelName = linkedRelease ? linkedRelease.name : '—';
+      const devNames = (rp.developerIds || []).map(getDevName).join(', ') || '—';
+
+      const row = relDetailSheet.getRow(rdRow);
+      const values = [
+        idx + 1,
+        rp.title,
+        projectNamesOf(rp),
+        linkedRelName,
+        rp.releaseType === 'upcoming' ? 'Upcoming' : (rp.releaseType === 'released' ? 'Released' : 'Past'),
+        (rp.versions || []).join(', ') || '—',
+        devNames,
+        progressText,
+        status,
+        totalItems,
+        done,
+        pending
+      ];
+      values.forEach((v, c) => { row.getCell(c + 1).value = v; });
+      zebraRow(row, idx % 2 === 0);
+
+      row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell(2).font = { name: 'Segoe UI', bold: true, size: 9.5, color: { argb: 'FF0F172A' } };
+      row.getCell(2).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      row.getCell(3).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      row.getCell(4).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      row.getCell(5).alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell(6).alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell(7).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      row.getCell(8).alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell(8).font = { name: 'Segoe UI', bold: true, size: 9.5 };
+      row.getCell(9).alignment = { vertical: 'middle', horizontal: 'center' };
+      colorCell(row.getCell(9), {
+        'Completed': { fill: 'FFE8F5EE', font: 'FF059669' },
+        'In Progress': { fill: 'FFE1F5FE', font: 'FF01579B' },
+        'Not Started': { fill: 'FFF5F5F5', font: 'FF757575' }
+      }, status);
+      row.getCell(10).alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell(11).alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell(12).alignment = { vertical: 'middle', horizontal: 'center' };
+      row.height = 24;
+
+      rdRow++;
+    });
+  }
+
+  rdRow++;
+
+  // 4. Granular Checklist Items Breakdown (Every Task)
+  const allChecklistItems = [];
+  releasePoints.forEach(rp => {
+    const linkedRelease = rp.releaseId ? state.releases.find(r => r.id === rp.releaseId) : null;
+    (rp.checklistItems || []).forEach((it, itemIdx) => {
+      allChecklistItems.push({
+        rpTitle: rp.title,
+        projects: projectNamesOf(rp),
+        versions: (rp.versions || []).join(', ') || '—',
+        linkedRelName: linkedRelease ? linkedRelease.name : '—',
+        itemIndex: itemIdx + 1,
+        text: it.text,
+        done: it.done,
+        ticket: it.ticket || '',
+        developerId: it.developerId || (rp.developerIds && rp.developerIds.length === 1 ? rp.developerIds[0] : null),
+        relStatus: linkedRelease ? linkedRelease.status : (rp.releaseType || '—'),
+        relDate: linkedRelease && linkedRelease.releaseDate ? new Date(linkedRelease.releaseDate) : (rp.updatedAt ? new Date(rp.updatedAt) : null)
+      });
+    });
+  });
+
+  sectionBanner(relDetailSheet, rdRow, `Detailed Checklist Items Breakdown — Total Items: ${allChecklistItems.length}`, RD_COLS, 'FF2C5282');
+  rdRow++;
+
+  const itemHeaders = [
+    '#', 'Release Point Title', 'Project(s)', 'Version(s)', 'Linked Release',
+    'Item #', 'Item Status', 'Assigned Developer', 'Ticket / Jira Link',
+    'Checklist Item / Task Description', 'Release Status', 'Date'
+  ];
+  itemHeaders.forEach((h, i) => { relDetailSheet.getCell(rdRow, i + 1).value = h; });
+  styleHeaderRow(relDetailSheet.getRow(rdRow), 'FF2C5282');
+  rdRow++;
+
+  if (allChecklistItems.length === 0) {
+    relDetailSheet.mergeCells(rdRow, 1, rdRow, RD_COLS);
+    relDetailSheet.getCell(rdRow, 1).value = 'No checklist items found for the selected scope';
+    relDetailSheet.getCell(rdRow, 1).alignment = { horizontal: 'center', vertical: 'middle' };
+    zebraRow(relDetailSheet.getRow(rdRow), false);
+    rdRow++;
+  } else {
+    allChecklistItems.forEach((it, idx) => {
+      const devName = it.developerId ? getDevName(it.developerId) : '—';
+      const itemStatus = it.done ? 'Done' : 'Pending';
+
+      const row = relDetailSheet.getRow(rdRow);
+      row.getCell(1).value = idx + 1;
+      row.getCell(2).value = it.rpTitle;
+      row.getCell(3).value = it.projects;
+      row.getCell(4).value = it.versions;
+      row.getCell(5).value = it.linkedRelName;
+      row.getCell(6).value = `Item ${it.itemIndex}`;
+      row.getCell(7).value = itemStatus;
+      row.getCell(8).value = devName;
+
+      if (it.ticket) {
+        const isUrl = /^https?:\/\//i.test(it.ticket.trim());
+        if (isUrl) {
+          row.getCell(9).value = { text: it.ticket.trim(), hyperlink: it.ticket.trim() };
+          row.getCell(9).font = { name: 'Segoe UI', size: 9, color: { argb: 'FF1565C0' }, underline: true };
+        } else {
+          row.getCell(9).value = it.ticket.trim();
+        }
+      } else {
+        row.getCell(9).value = '—';
+      }
+
+      row.getCell(10).value = it.text;
+      row.getCell(11).value = it.relStatus;
+      row.getCell(12).value = it.relDate;
+
+      zebraRow(row, idx % 2 === 0);
+
+      row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell(2).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      row.getCell(3).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      row.getCell(4).alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell(5).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      row.getCell(6).alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell(7).alignment = { vertical: 'middle', horizontal: 'center' };
+      colorCell(row.getCell(7), {
+        'Done': { fill: 'FFE8F5EE', font: 'FF059669' },
+        'Pending': { fill: 'FFFFF3E0', font: 'FFD97706' }
+      }, itemStatus);
+      row.getCell(8).alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+      row.getCell(9).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      row.getCell(10).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true, indent: 1 };
+      row.getCell(11).alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell(12).alignment = { vertical: 'middle', horizontal: 'center' };
+      if (it.relDate) row.getCell(12).numFmt = 'dd mmm yyyy';
+
+      row.height = it.text.length > 50 ? 32 : 24;
+      rdRow++;
+    });
   }
 
   // ══════════════════ Test Cases ══════════════════
@@ -4277,7 +4694,7 @@ const attachCardListeners = () => {
       else if (action === 'release-platform') {
         const projectId = btn.dataset.projectId;
         const platform = btn.dataset.platform;
-        await releaseProjectVersion(projectId, platform);
+        openReleaseVersionModal(projectId, platform);
       }
       else if (action === 'remove-checklist-row') {
         // Save current values
@@ -6534,38 +6951,139 @@ const renderReleasePtCard = (rp, q = '') => {
   `;
 };
 
-// ─── Release Project Version Automation ─────────────────────
-const releaseProjectVersion = async (projectId, platform) => {
+// ─── Release Project Version Modal & Automation ─────────────
+const openReleaseVersionModal = (projectId, platform) => {
   const p = state.projects.find(proj => proj.id === projectId);
   if (!p) return;
-  const now = new Date().toISOString();
-  let oldUp = '';
 
   const formatVersionLabel = (v) => {
     if (!v) return '';
     return v.toLowerCase().startsWith('v') ? v : 'v' + v;
   };
 
+  let prevVer = '';
+  let upVer = '';
+
   if (platform === 'android') {
-    oldUp = p.androidUpcomingVersion || '1.0.0';
-    p.androidPreviousVersion = oldUp;
-    p.androidUpcomingVersion = incrementVersion(oldUp);
-    p.lastReleaseLog = `Android ${formatVersionLabel(oldUp)} released`;
+    prevVer = p.androidPreviousVersion || '';
+    upVer = p.androidUpcomingVersion || '';
   } else if (platform === 'ios') {
-    oldUp = p.iosUpcomingVersion || '1.0.0';
-    p.iosPreviousVersion = oldUp;
-    p.iosUpcomingVersion = incrementVersion(oldUp);
-    p.lastReleaseLog = `iOS ${formatVersionLabel(oldUp)} released`;
+    prevVer = p.iosPreviousVersion || '';
+    upVer = p.iosUpcomingVersion || '';
+  } else {
+    prevVer = p.previousVersion || '';
+    upVer = p.upcomingVersion || p.version || '';
+  }
+
+  // Base version is strictly derived from the project's previous released version
+  const baseVer = prevVer || upVer || '1.0.0';
+
+  const platformName = platform === 'android' ? 'Android' : (platform === 'ios' ? 'iOS' : 'Web');
+
+  const pIdInput = document.getElementById('releaseVersionProjectId');
+  const platInput = document.getElementById('releaseVersionPlatform');
+  const pNameEl = document.getElementById('releaseVersionProjectName');
+  const pBadgeEl = document.getElementById('releaseVersionPlatformBadge');
+  const prevValEl = document.getElementById('releaseVersionPrevVal');
+  const nextInput = document.getElementById('nextReleaseVersionInput');
+
+  if (pIdInput) pIdInput.value = projectId;
+  if (platInput) platInput.value = platform;
+  if (pNameEl) pNameEl.textContent = p.name;
+  if (pBadgeEl) pBadgeEl.textContent = platformName;
+  if (prevValEl) prevValEl.textContent = prevVer ? formatVersionLabel(prevVer) : 'None (Initial)';
+
+  // Compute dynamic suggestions strictly from previous released version
+  const suggestions = getSemverSuggestions(baseVer);
+  const patchEl = document.getElementById('presetPatchVer');
+  const minorEl = document.getElementById('presetMinorVer');
+  const majorEl = document.getElementById('presetMajorVer');
+
+  if (patchEl) patchEl.textContent = suggestions.patch;
+  if (minorEl) minorEl.textContent = suggestions.minor;
+  if (majorEl) majorEl.textContent = suggestions.major;
+
+  // Determine initial selection: if upVer matches any preset, select it, otherwise default to patch or minor
+  let selectedVer = upVer || suggestions.patch;
+  let activePresetType = '';
+
+  if (selectedVer === suggestions.patch) activePresetType = 'patch';
+  else if (selectedVer === suggestions.minor) activePresetType = 'minor';
+  else if (selectedVer === suggestions.major) activePresetType = 'major';
+  else {
+    activePresetType = 'patch';
+    selectedVer = suggestions.patch;
+  }
+
+  document.querySelectorAll('#releaseVersionPresets .ver-preset-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.type === activePresetType);
+  });
+
+  if (nextInput) {
+    nextInput.value = selectedVer;
+    setTimeout(() => {
+      nextInput.focus();
+      nextInput.select();
+    }, 50);
+  }
+
+  showModal('releaseVersionModal');
+};
+
+const confirmReleaseVersion = async () => {
+  const projectId = document.getElementById('releaseVersionProjectId')?.value;
+  const platform = document.getElementById('releaseVersionPlatform')?.value;
+  const nextInput = document.getElementById('nextReleaseVersionInput');
+  const releaseVer = (nextInput?.value || '').trim();
+
+  if (!releaseVer) {
+    showToast('Please specify the version to release');
+    if (nextInput) nextInput.focus();
+    return;
+  }
+
+  closeModals();
+  await releaseProjectVersion(projectId, platform, releaseVer);
+};
+
+const releaseProjectVersion = async (projectId, platform, releaseVer = null) => {
+  const p = state.projects.find(proj => proj.id === projectId);
+  if (!p) return;
+  const now = new Date().toISOString();
+
+  const formatVersionLabel = (v) => {
+    if (!v) return '';
+    return v.toLowerCase().startsWith('v') ? v : 'v' + v;
+  };
+
+  let releasedVersion = releaseVer;
+
+  if (platform === 'android') {
+    if (!releasedVersion) {
+      releasedVersion = p.androidUpcomingVersion || incrementVersion(p.androidPreviousVersion || '1.0.0');
+    }
+    p.androidPreviousVersion = releasedVersion;
+    p.androidUpcomingVersion = incrementVersion(releasedVersion);
+    p.lastReleaseLog = `Android ${formatVersionLabel(releasedVersion)} released`;
+  } else if (platform === 'ios') {
+    if (!releasedVersion) {
+      releasedVersion = p.iosUpcomingVersion || incrementVersion(p.iosPreviousVersion || '1.0.0');
+    }
+    p.iosPreviousVersion = releasedVersion;
+    p.iosUpcomingVersion = incrementVersion(releasedVersion);
+    p.lastReleaseLog = `iOS ${formatVersionLabel(releasedVersion)} released`;
   } else {
     // web
-    oldUp = p.upcomingVersion || p.version || '1.0.0';
-    p.previousVersion = oldUp;
-    p.upcomingVersion = incrementVersion(oldUp);
-    p.lastReleaseLog = `${formatVersionLabel(oldUp)} released`;
+    if (!releasedVersion) {
+      releasedVersion = p.upcomingVersion || p.version || incrementVersion(p.previousVersion || '1.0.0');
+    }
+    p.previousVersion = releasedVersion;
+    p.upcomingVersion = incrementVersion(releasedVersion);
+    p.lastReleaseLog = `${formatVersionLabel(releasedVersion)} released`;
   }
 
   // Check if a release exists in Release Management for this project and version
-  const vNorm = oldUp.toLowerCase().replace(/^v/, '').trim();
+  const vNorm = releasedVersion.toLowerCase().replace(/^v/, '').trim();
   const matchingRelease = (state.releases || []).find(r => {
     const projIds = r.projectIds || (r.projectId ? [r.projectId] : []);
     const vers = r.versions || (r.version ? [r.version] : []);
@@ -6581,7 +7099,7 @@ const releaseProjectVersion = async (projectId, platform) => {
 
   p.releaseHistory = p.releaseHistory || [];
   p.releaseHistory.unshift({
-    version: oldUp,
+    version: releasedVersion,
     platform: platform.toUpperCase(),
     releasedAt: effectiveReleaseDate,
     log: p.lastReleaseLog
@@ -6591,8 +7109,9 @@ const releaseProjectVersion = async (projectId, platform) => {
   }
 
   // Log activity
-  logActivity(`Project "${p.name}" version ${oldUp} (${platform.toUpperCase()}) was marked as released! 🚀`, 'project');
-  showToast(`🚀 Version ${oldUp} released!`);
+  const nextTargetVer = (platform === 'android' ? p.androidUpcomingVersion : (platform === 'ios' ? p.iosUpcomingVersion : p.upcomingVersion));
+  logActivity(`Project "${p.name}" version ${releasedVersion} (${platform.toUpperCase()}) was marked as released! 🚀 Next upcoming version set to ${nextTargetVer}`, 'project');
+  showToast(`🚀 Version ${releasedVersion} released!`);
 
   await storage.save();
   render();
@@ -11159,6 +11678,50 @@ const init = async () => {
   document.getElementById('closeConfirmModal').addEventListener('click', closeModals);
   document.getElementById('cancelConfirm').addEventListener('click', closeModals);
   document.getElementById('modalBackdrop').addEventListener('click', closeModals);
+
+  // Release Version Modal listeners
+  const closeReleaseVerModal = document.getElementById('closeReleaseVersionModal');
+  if (closeReleaseVerModal) closeReleaseVerModal.addEventListener('click', closeModals);
+  const cancelReleaseVerModal = document.getElementById('cancelReleaseVersionModal');
+  if (cancelReleaseVerModal) cancelReleaseVerModal.addEventListener('click', closeModals);
+  const confirmReleaseVerBtn = document.getElementById('confirmReleaseVersionBtn');
+  if (confirmReleaseVerBtn) confirmReleaseVerBtn.addEventListener('click', confirmReleaseVersion);
+
+  const releaseVerPresets = document.getElementById('releaseVersionPresets');
+  if (releaseVerPresets) {
+    releaseVerPresets.addEventListener('click', (e) => {
+      const btn = e.target.closest('.ver-preset-btn');
+      if (!btn) return;
+      const verSpan = btn.querySelector('.preset-ver');
+      const val = verSpan ? verSpan.textContent.trim() : '';
+      if (val) {
+        document.querySelectorAll('#releaseVersionPresets .ver-preset-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const input = document.getElementById('nextReleaseVersionInput');
+        if (input) {
+          input.value = val;
+          input.focus();
+        }
+      }
+    });
+  }
+
+  const nextVerInput = document.getElementById('nextReleaseVersionInput');
+  if (nextVerInput) {
+    nextVerInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        confirmReleaseVersion();
+      }
+    });
+    nextVerInput.addEventListener('input', (e) => {
+      const typed = e.target.value.trim();
+      document.querySelectorAll('#releaseVersionPresets .ver-preset-btn').forEach(b => {
+        const verSpan = b.querySelector('.preset-ver');
+        b.classList.toggle('active', verSpan && verSpan.textContent.trim() === typed);
+      });
+    });
+  }
 
   document.getElementById('closeDetailModal').addEventListener('click', closeModals);
   document.getElementById('closeDetailBtn').addEventListener('click', closeModals);
