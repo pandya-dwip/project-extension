@@ -3250,6 +3250,7 @@ const renderProjectOverview = () => {
       : verPair('Version', p.previousVersion, p.upcomingVersion || p.version)}
         ${metaItem('Created', p.createdAt ? fmtDate(p.createdAt) : '—')}
         ${metaItem('Last Updated', p.updatedAt ? timeAgo(p.updatedAt) : '—')}
+        ${p.jira ? metaItem('Jira Project', `${esc(p.jira.projectKey)} · ${esc(p.jira.projectName)}`) : ''}
       </div>
     </section>`;
 
@@ -4636,6 +4637,392 @@ const renderAutoBackupSettings = () => {
     </div>`;
 };
 
+// ─── Jira integration (UI) ───────────────────────────────
+// All Jira traffic goes through ClairJira (jira.js). state.jira only ever holds the
+// public part of the config (site, email, account name, hasToken) — never the token.
+const jiraAvailable = () => typeof ClairJira !== 'undefined' && typeof chrome !== 'undefined' && !!(chrome.storage && chrome.storage.local);
+const jiraConnected = () => !!(state.jira && state.jira.hasToken);
+const jiraHost = (site) => { try { return new URL(site).hostname; } catch (e) { return site || ''; } };
+const jiraErrorText = (e) => (e && e.name === 'JiraError') ? e.message : 'Something went wrong while contacting Jira. Please try again.';
+const jiraEsc = (s) => escapeHtml(s == null ? '' : String(s));
+
+const jiraResultHtml = (r) => r.ok ? `
+  <div class="jira-result ok">
+    <strong>Connected successfully.</strong>
+    <span>Account: ${jiraEsc(r.accountName)}${r.accountEmail && r.accountEmail !== r.accountName ? ` · ${jiraEsc(r.accountEmail)}` : ''}</span>
+    <span>Workspace: ${jiraEsc(r.workspace)}</span>
+    <span>Projects you can access: ${Number(r.projectCount) || 0}</span>
+  </div>` : `
+  <div class="jira-result fail"><strong>Connection failed.</strong><span>${jiraEsc(r.message)}</span></div>`;
+
+const renderJiraSettings = () => {
+  const head = `
+    <div class="settings-header-wrap">
+      <h3>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+        Integrations
+      </h3>
+      <p>Connect your own Jira Cloud account to import tickets into Release Points.</p>
+    </div>`;
+  if (!jiraAvailable()) {
+    return `<div class="settings-card"><div class="settings-info">${head}<div class="jira-box"><div class="jira-field-hint">Available in the installed extension only.</div></div></div></div>`;
+  }
+  const j = state.jira;
+  const status = jiraConnected()
+    ? `<span class="jira-status on"><i></i>Connected as ${jiraEsc(j.accountName || j.email)} · ${jiraEsc(jiraHost(j.site))}</span>`
+    : `<span class="jira-status off"><i></i>Not connected</span>`;
+  return `
+    <div class="settings-card">
+      <div class="settings-info">
+        ${head}
+        <div class="jira-box">
+          <div class="jira-head"><span class="jira-title">Jira</span>${status}</div>
+          <div class="form-group">
+            <label for="jiraSite">Jira Site URL</label>
+            <input type="url" id="jiraSite" placeholder="https://yourcompany.atlassian.net" value="${jiraEsc(j ? j.site : '')}" autocomplete="off" spellcheck="false" />
+          </div>
+          <div class="form-group">
+            <label for="jiraEmail">Atlassian Account Email</label>
+            <input type="email" id="jiraEmail" placeholder="you@company.com" value="${jiraEsc(j ? j.email : '')}" autocomplete="off" spellcheck="false" />
+          </div>
+          <div class="form-group">
+            <label for="jiraToken">API Token</label>
+            <input type="password" id="jiraToken" autocomplete="new-password" spellcheck="false"
+              placeholder="${j && j.hasToken ? '•••••••••••••• saved — leave blank to keep' : 'Paste your API token'}" />
+            <a class="jira-help-link" href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener noreferrer">Create an API token in your Atlassian account ↗</a>
+          </div>
+          <div class="jira-actions">
+            <button type="button" class="btn-primary" id="jiraSaveBtn">Save Configuration</button>
+            <button type="button" class="btn-ghost" id="jiraTestBtn" ${jiraConnected() ? '' : 'disabled'}>Test Connection</button>
+            ${j ? `<button type="button" class="btn-ghost jira-disconnect" id="jiraDisconnectBtn">Disconnect Jira</button>` : ''}
+          </div>
+          <div id="jiraResult">${state.jiraResult ? jiraResultHtml(state.jiraResult) : ''}</div>
+          <p class="jira-note">Saved only in this browser's extension storage — not encrypted, and never included in exports or backups. You can revoke the token in your Atlassian account at any time.</p>
+        </div>
+      </div>
+    </div>`;
+};
+
+// Save or Test. On failure only the result box and buttons are updated, so whatever
+// the user typed stays in the form; on success the page re-renders and the token
+// field comes back empty (the saved token is never put back into the DOM).
+const runJiraAction = async (kind) => {
+  const val = (id) => (document.getElementById(id) || {}).value || '';
+  const box = document.getElementById('jiraResult');
+  const btns = ['jiraSaveBtn', 'jiraTestBtn', 'jiraDisconnectBtn'].map(id => document.getElementById(id)).filter(Boolean);
+  btns.forEach(b => { b.disabled = true; });
+  if (box) box.innerHTML = `<div class="jira-result pending">${kind === 'save' ? 'Saving and verifying with Jira…' : 'Testing connection…'}</div>`;
+  try {
+    const r = kind === 'save'
+      ? await ClairJira.saveConfig({ site: val('jiraSite'), email: val('jiraEmail'), token: val('jiraToken') })
+      : await ClairJira.testConnection();
+    state.jira = await ClairJira.getPublicConfig();
+    state.jiraResult = { ok: true, ...r };
+    if (kind === 'save') showToast('Jira connected');
+    render();
+  } catch (e) {
+    state.jiraResult = null;
+    if (box) box.innerHTML = jiraResultHtml({ ok: false, message: jiraErrorText(e) });
+    btns.forEach(b => { b.disabled = false; });
+    const testBtn = document.getElementById('jiraTestBtn');
+    if (testBtn) testBtn.disabled = !jiraConnected();
+  }
+};
+
+const confirmJiraDisconnect = () => {
+  document.getElementById('confirmMessage').textContent =
+    'Disconnect Jira? This removes your saved Jira site, email and API token from Clair. Links between Clair projects and Jira projects are kept, so reconnecting restores them.';
+  confirmCallback = async () => {
+    await ClairJira.disconnect();
+    state.jira = null;
+    state.jiraResult = null;
+    closeModals();
+    render();
+    showToast('Jira disconnected');
+  };
+  showModal('confirmModal');
+};
+
+// ── Project modal: optional Jira project link ──
+let projectJiraSelection = null;  // { site, projectId, projectKey, projectName } or null
+let projectJiraPrevious = null;   // restored by "Cancel" while changing
+let jiraProjectReq = 0;
+let jiraProjectTimer = null;
+
+const renderProjectJiraField = () => {
+  const el = document.getElementById('projectJiraField');
+  if (!el) return;
+  const sel = projectJiraSelection;
+  if (sel) {
+    el.innerHTML = `
+      <div class="jira-linked">
+        <span class="jira-key">${jiraEsc(sel.projectKey)}</span>
+        <span class="jira-linked-name">${jiraEsc(sel.projectName)}</span>
+        <span class="jira-linked-site">${jiraEsc(jiraHost(sel.site))}</span>
+        <span class="jira-linked-actions">
+          ${jiraConnected() ? `<button type="button" class="btn-ghost jira-mini" data-jira-proj="change">Change</button>` : ''}
+          <button type="button" class="btn-ghost jira-mini" data-jira-proj="remove">Remove</button>
+        </span>
+      </div>`;
+  } else if (!jiraAvailable() || !jiraConnected()) {
+    el.innerHTML = `<div class="jira-field-hint">Connect Jira in Settings → Integrations to link this project to a Jira project.</div>`;
+  } else {
+    el.innerHTML = `
+      <div class="jira-picker">
+        <input type="text" id="jiraProjectSearch" placeholder="Search Jira projects by name or key…" autocomplete="off" spellcheck="false" />
+        ${projectJiraPrevious ? `<button type="button" class="btn-ghost jira-mini" data-jira-proj="cancel">Cancel</button>` : ''}
+      </div>
+      <div class="jira-project-results" id="jiraProjectResults"></div>`;
+    loadJiraProjects('');
+  }
+};
+
+const loadJiraProjects = async (query, startAt = 0) => {
+  const box = document.getElementById('jiraProjectResults');
+  if (!box) return;
+  const req = ++jiraProjectReq;
+  const more = box.querySelector('[data-jira-proj="more"]');
+  if (startAt === 0) box.innerHTML = `<div class="jira-state">Loading Jira projects…</div>`;
+  else if (more) { more.disabled = true; more.textContent = 'Loading…'; }
+  try {
+    const r = await ClairJira.listProjects({ query, startAt });
+    if (req !== jiraProjectReq || !document.getElementById('jiraProjectResults')) return; // stale
+    const rows = r.projects.map(p => `
+      <button type="button" class="jira-option" data-jira-proj="pick" data-site="${jiraEsc(r.site)}" data-id="${jiraEsc(p.id)}" data-key="${jiraEsc(p.key)}" data-name="${jiraEsc(p.name)}">
+        <span class="jira-key">${jiraEsc(p.key)}</span><span>${jiraEsc(p.name)}</span>
+      </button>`).join('');
+    const moreBtn = r.nextStartAt !== null ? `<button type="button" class="jira-more" data-jira-proj="more" data-start="${r.nextStartAt}">Load more projects</button>` : '';
+    if (startAt === 0) {
+      box.innerHTML = rows ? rows + moreBtn : `<div class="jira-state">${query ? 'No Jira projects match your search.' : 'Your Jira account cannot see any projects.'}</div>`;
+    } else {
+      if (more) more.remove();
+      box.insertAdjacentHTML('beforeend', rows + moreBtn);
+    }
+  } catch (e) {
+    if (req !== jiraProjectReq) return;
+    box.innerHTML = `<div class="jira-state error">${jiraEsc(jiraErrorText(e))} <button type="button" class="jira-more" data-jira-proj="retry">Retry</button></div>`;
+  }
+};
+
+const wireProjectJiraField = () => {
+  const el = document.getElementById('projectJiraField');
+  if (!el || el.dataset.wired) return;
+  el.dataset.wired = '1';
+  el.addEventListener('input', (e) => {
+    if (e.target.id !== 'jiraProjectSearch') return;
+    clearTimeout(jiraProjectTimer);
+    const q = e.target.value;
+    jiraProjectTimer = setTimeout(() => loadJiraProjects(q), 300);
+  });
+  el.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-jira-proj]');
+    if (!btn) return;
+    const act = btn.dataset.jiraProj;
+    const q = () => (document.getElementById('jiraProjectSearch') || {}).value || '';
+    if (act === 'pick') {
+      projectJiraSelection = { site: btn.dataset.site, projectId: btn.dataset.id, projectKey: btn.dataset.key, projectName: btn.dataset.name };
+      projectJiraPrevious = null;
+      renderProjectJiraField();
+    } else if (act === 'remove') {
+      projectJiraSelection = null; projectJiraPrevious = null; renderProjectJiraField();
+    } else if (act === 'change') {
+      projectJiraPrevious = projectJiraSelection; projectJiraSelection = null; renderProjectJiraField();
+      const inp = document.getElementById('jiraProjectSearch'); if (inp) inp.focus();
+    } else if (act === 'cancel') {
+      projectJiraSelection = projectJiraPrevious; projectJiraPrevious = null; renderProjectJiraField();
+    } else if (act === 'more') {
+      loadJiraProjects(q(), parseInt(btn.dataset.start, 10) || 0);
+    } else if (act === 'retry') {
+      loadJiraProjects(q());
+    }
+  });
+};
+
+// ── Release Point modal: import Jira tickets as checklist items ──
+let jiraImport = null; // { projectId, site, projectKey, query, issues, nextPageToken, selected: Map, req }
+let jiraIssueTimer = null;
+
+// Jira key of a checklist item: imported items carry jiraKey; manually added items
+// count too when their ticket is a Jira key or a .../browse/KEY-123 link.
+const itemJiraKey = (item) => {
+  if (item.jiraKey) return String(item.jiraKey).toUpperCase();
+  const t = String(item.ticket || '').trim();
+  const m = t.match(/\/browse\/([A-Z][A-Z0-9_]*-\d+)/i) || t.match(/^([A-Z][A-Z0-9_]*-\d+)$/i);
+  return m ? m[1].toUpperCase() : '';
+};
+
+// Keys already present in this Clair project's Release Points (the one being
+// edited is read from the live editor buffer, not from saved state).
+const existingJiraKeysFor = (projectId) => {
+  const keys = new Set();
+  const editingId = (document.getElementById('releasePtId') || {}).value;
+  (state.releasePoints || []).forEach(rp => {
+    if (rp.id === editingId) return;
+    if (!(rp.projectIds || (rp.projectId ? [rp.projectId] : [])).includes(projectId)) return;
+    (rp.checklistItems || []).forEach(i => { const k = itemJiraKey(i); if (k) keys.add(k); });
+  });
+  rpChecklistItems.forEach(i => { const k = itemJiraKey(i); if (k) keys.add(k); });
+  return keys;
+};
+
+const rpLinkedJiraProjects = () => {
+  const ids = Array.from(document.querySelectorAll('input[name="rpProjectCheck"]:checked')).map(cb => cb.value);
+  return state.projects.filter(p => ids.includes(p.id) && p.jira && p.jira.projectKey);
+};
+
+const updateJiraImportButton = () => {
+  const btn = document.getElementById('jiraImportToggleBtn');
+  if (!btn) return;
+  const linked = rpLinkedJiraProjects();
+  btn.style.display = linked.length ? '' : 'none';
+  if (!linked.length || (jiraImport && !linked.some(p => p.id === jiraImport.projectId))) closeJiraImportPanel();
+};
+
+const closeJiraImportPanel = () => {
+  jiraImport = null;
+  const panel = document.getElementById('jiraImportPanel');
+  if (panel) { panel.style.display = 'none'; panel.innerHTML = ''; }
+};
+
+const openJiraImportPanel = (projectId) => {
+  const panel = document.getElementById('jiraImportPanel');
+  const linked = rpLinkedJiraProjects();
+  const proj = linked.find(p => p.id === projectId) || linked[0];
+  if (!panel || !proj) return;
+  document.getElementById('bulkAddPanel').style.display = 'none';
+  document.getElementById('bulkAssignPanel').style.display = 'none';
+  panel.style.display = 'block';
+  const projectChooser = linked.length > 1
+    ? `<select id="jiraImportProject" class="jira-import-project">${linked.map(p => `<option value="${p.id}" ${p.id === proj.id ? 'selected' : ''}>${jiraEsc(p.jira.projectKey)} — ${jiraEsc(p.name)}</option>`).join('')}</select>`
+    : `<span class="jira-key">${jiraEsc(proj.jira.projectKey)}</span><span class="jira-import-pname">${jiraEsc(proj.jira.projectName)}</span>`;
+  const head = `<div class="jira-import-head"><strong>Import from Jira</strong>${projectChooser}<button type="button" class="jira-import-close" data-jira-imp="close" aria-label="Close" title="Close">✕</button></div>`;
+
+  let problem = '';
+  if (!jiraConnected()) problem = 'Jira isn’t connected. Connect it in Settings → Integrations, then try again.';
+  else if (proj.jira.site !== state.jira.site) problem = `This project is linked to ${jiraHost(proj.jira.site)}, but Clair is connected to ${jiraHost(state.jira.site)}. Connect that site or re-link the project.`;
+  if (problem) {
+    jiraImport = null;
+    panel.innerHTML = head + `<div class="jira-state error">${jiraEsc(problem)}</div>`;
+    return;
+  }
+  jiraImport = { projectId: proj.id, site: proj.jira.site, projectKey: proj.jira.projectKey, query: '', issues: [], nextPageToken: null, selected: new Map(), req: 0, loading: false, error: '' };
+  panel.innerHTML = head + `
+    <div class="jira-import-search">
+      <input type="text" id="jiraIssueSearch" placeholder="Search by key (e.g. ${jiraEsc(proj.jira.projectKey)}-142) or title…" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="jira-issue-list" id="jiraIssueList"></div>
+    <div class="jira-import-foot">
+      <span id="jiraSelCount" class="jira-sel-count">0 selected</span>
+      <button type="button" class="btn-accent" id="jiraImportConfirmBtn" data-jira-imp="import" disabled>Add selected</button>
+    </div>`;
+  loadJiraIssues();
+};
+
+const renderJiraIssueList = () => {
+  const list = document.getElementById('jiraIssueList');
+  if (!list || !jiraImport) return;
+  const ji = jiraImport;
+  const existing = existingJiraKeysFor(ji.projectId);
+  let html = ji.issues.map(i => {
+    const dup = existing.has(i.key.toUpperCase());
+    return `
+      <label class="jira-issue${dup ? ' is-dup' : ''}">
+        <input type="checkbox" data-jira-key="${jiraEsc(i.key)}" ${dup ? 'disabled' : ''} ${!dup && ji.selected.has(i.key) ? 'checked' : ''} />
+        <span class="jira-issue-key">${jiraEsc(i.key)}</span>
+        <span class="jira-issue-sum">${jiraEsc(i.summary)}</span>
+        <span class="jira-issue-asg">${i.assignee ? jiraEsc(i.assignee) : '<em>Unassigned</em>'}</span>
+        ${dup ? '<span class="jira-dup">Already added</span>' : ''}
+      </label>`;
+  }).join('');
+  if (ji.loading) html += `<div class="jira-state">Loading tickets…</div>`;
+  else if (ji.error) html += `<div class="jira-state error">${jiraEsc(ji.error)} <button type="button" class="jira-more" data-jira-imp="retry">Retry</button></div>`;
+  else if (!ji.issues.length) html = `<div class="jira-state">${ji.query ? 'No tickets match your search.' : `No tickets in ${jiraEsc(ji.projectKey)} yet.`}</div>`;
+  else if (ji.nextPageToken) html += `<button type="button" class="jira-more" data-jira-imp="more">Load more tickets</button>`;
+  list.innerHTML = html;
+  const n = ji.selected.size;
+  document.getElementById('jiraSelCount').textContent = `${n} selected`;
+  const btn = document.getElementById('jiraImportConfirmBtn');
+  btn.disabled = n === 0;
+  btn.textContent = n ? `Add ${n} ticket${n === 1 ? '' : 's'}` : 'Add selected';
+};
+
+const loadJiraIssues = async (append = false) => {
+  const ji = jiraImport;
+  if (!ji) return;
+  const req = ++ji.req;
+  ji.loading = true; ji.error = '';
+  if (!append) { ji.issues = []; ji.nextPageToken = null; }
+  renderJiraIssueList();
+  try {
+    const r = await ClairJira.searchIssues({ projectKey: ji.projectKey, text: ji.query, nextPageToken: append ? ji.nextPageToken : '' });
+    if (jiraImport !== ji || req !== ji.req) return; // panel closed or a newer search started
+    const seen = new Set(ji.issues.map(i => i.key));
+    ji.issues = ji.issues.concat(r.issues.filter(i => !seen.has(i.key)));
+    ji.nextPageToken = r.nextPageToken;
+  } catch (e) {
+    if (jiraImport !== ji || req !== ji.req) return;
+    ji.error = jiraErrorText(e);
+  }
+  ji.loading = false;
+  renderJiraIssueList();
+};
+
+const importSelectedJiraIssues = () => {
+  const ji = jiraImport;
+  if (!ji || !ji.selected.size) return;
+  syncChecklistItemsFromDOM();
+  const existing = existingJiraKeysFor(ji.projectId);
+  let added = 0;
+  const skipped = [];
+  ji.selected.forEach(issue => {
+    const key = issue.key.toUpperCase();
+    if (existing.has(key)) { skipped.push(issue.key); return; }
+    // Link to a Clair developer only on an exact (case-insensitive) name match.
+    const dev = issue.assignee ? state.developers.find(d => (d.name || '').trim().toLowerCase() === issue.assignee.trim().toLowerCase()) : null;
+    rpChecklistItems.push({
+      id: uid(), text: issue.summary, ticket: issue.url, developerId: dev ? dev.id : '', done: false,
+      jiraKey: issue.key, jiraIssueId: issue.id, jiraAssignee: issue.assignee || ''
+    });
+    existing.add(key);
+    added++;
+  });
+  closeJiraImportPanel();
+  renderChecklistEditor();
+  const parts = [];
+  if (added) parts.push(`Added ${added} Jira ticket${added === 1 ? '' : 's'} — click Save Release Point to keep them`);
+  if (skipped.length) parts.push(`${skipped.length} already in this project's release points (${skipped.join(', ')}), skipped`);
+  showToast(parts.join(' · ') || 'Nothing to add', added ? 'success' : 'error');
+};
+
+const wireJiraImportPanel = () => {
+  const panel = document.getElementById('jiraImportPanel');
+  if (!panel || panel.dataset.wired) return;
+  panel.dataset.wired = '1';
+  panel.addEventListener('input', (e) => {
+    if (e.target.id !== 'jiraIssueSearch' || !jiraImport) return;
+    clearTimeout(jiraIssueTimer);
+    const q = e.target.value;
+    jiraIssueTimer = setTimeout(() => { if (jiraImport) { jiraImport.query = q.trim(); loadJiraIssues(false); } }, 350);
+  });
+  panel.addEventListener('change', (e) => {
+    if (e.target.id === 'jiraImportProject') { openJiraImportPanel(e.target.value); return; }
+    const key = e.target.dataset && e.target.dataset.jiraKey;
+    if (!key || !jiraImport) return;
+    const issue = jiraImport.issues.find(i => i.key === key);
+    if (e.target.checked && issue) jiraImport.selected.set(key, issue); else jiraImport.selected.delete(key);
+    renderJiraIssueList();
+  });
+  panel.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-jira-imp]');
+    if (!btn) return;
+    const act = btn.dataset.jiraImp;
+    if (act === 'close') closeJiraImportPanel();
+    else if (act === 'more') loadJiraIssues(true);
+    else if (act === 'retry') loadJiraIssues(false);
+    else if (act === 'import') importSelectedJiraIssues();
+  });
+};
+
 const renderSettings = () => {
   const dbSizeKb = ((JSON.stringify(state).length) / 1024).toFixed(1);
   const hiddenSet = new Set(state.hiddenModules || []);
@@ -4837,6 +5224,9 @@ const renderSettings = () => {
           </div>
         </div>
 
+        <!-- Integrations: Jira -->
+        ${renderJiraSettings()}
+
         <!-- 5. Danger Zone -->
         <div class="settings-card danger-zone">
           <div class="settings-info">
@@ -5000,7 +5390,8 @@ const attachCardListeners = () => {
       const card = btn.closest('[data-id]');
       const cardId = id || (card ? card.dataset.id : null);
 
-      if (action === 'open-project-overview') openProjectOverview(cardId);
+      if (action === 'new-project') openProjectModal();
+      else if (action === 'open-project-overview') openProjectOverview(cardId);
       else if (action === 'close-project-overview') closeProjectOverview();
       else if (action === 'po-task-filter') { state.overviewTaskFilter = btn.dataset.filter; render(); }
       else if (action === 'view-task') openDetailModal('task', cardId);
@@ -5396,6 +5787,10 @@ const attachCardListeners = () => {
       showModal('confirmModal');
       return;
     }
+
+    if (e.target.closest('#jiraSaveBtn')) { runJiraAction('save'); return; }
+    if (e.target.closest('#jiraTestBtn')) { runJiraAction('test'); return; }
+    if (e.target.closest('#jiraDisconnectBtn')) { confirmJiraDisconnect(); return; }
 
     if (e.target.closest('#autoBackupTimeSave')) {
       // Saved only on click: a time input passes through partial values (e.g. 01:00
@@ -5980,7 +6375,9 @@ const openProjectModal = (id = null) => {
     document.getElementById('projectOverallStatus').value = p.overallProjectStatus || 'YET_TO_START';
 
     selectedStatuses = [...(p.statuses || [])];
+    projectJiraSelection = p.jira ? { ...p.jira } : null;
   } else {
+    projectJiraSelection = null;
     title.textContent = 'New Project';
     document.getElementById('projectId').value = '';
     document.getElementById('projectName').value = '';
@@ -6002,6 +6399,9 @@ const openProjectModal = (id = null) => {
 
   renderStatusPicker();
   updateSelectedStatusDisplay();
+  projectJiraPrevious = null;
+  wireProjectJiraField();
+  renderProjectJiraField();
 
   // Wire up type toggle buttons
   document.querySelectorAll('#projectTypeToggle .type-btn').forEach(btn => {
@@ -6091,6 +6491,8 @@ const saveProject = async () => {
       overallProjectStatus,
       updatedAt: now
     };
+    if (projectJiraSelection) state.projects[idx].jira = { ...projectJiraSelection };
+    else delete state.projects[idx].jira;
     // Clean up old fields if type changed
     if (projectType === 'app') {
       delete state.projects[idx].previousVersion;
@@ -6117,6 +6519,7 @@ const saveProject = async () => {
       dueDate,
       priority,
       overallProjectStatus,
+      ...(projectJiraSelection ? { jira: { ...projectJiraSelection } } : {}),
       createdAt: now,
       updatedAt: now
     });
@@ -7283,7 +7686,7 @@ const renderReleasePtCard = (rp, q = '') => {
           : url.hostname.replace('www.', '');
       } catch (e) { }
       return `
-        <a href="${href}" target="_blank" class="rp-item-ticket link" title="View Ticket: ${ticket}" onclick="event.stopPropagation();">
+        <a href="${href}" target="_blank" rel="noopener noreferrer" class="rp-item-ticket link" title="View Ticket: ${escapeHtml(ticket)}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
           <span>${display}</span>
         </a>
@@ -7325,10 +7728,12 @@ const renderReleasePtCard = (rp, q = '') => {
 
     const dev = item.developerId ? state.developers.find(d => d.id === item.developerId) : null;
     const ticketHtml = item.ticket ? renderTicketInline(item.ticket) : '';
-    const devHtml = dev ? `
-      <span class="rp-item-dev" title="Assigned to ${dev.name}">
+    // A Clair developer wins; otherwise show the Jira assignee of an imported ticket.
+    const assigneeName = dev ? dev.name : (item.jiraAssignee || '');
+    const devHtml = assigneeName ? `
+      <span class="rp-item-dev" title="${dev ? 'Assigned to' : 'Jira assignee:'} ${escapeHtml(assigneeName)}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-        <span>${dev.name}</span>
+        <span>${escapeHtml(assigneeName)}</span>
       </span>
     ` : '';
 
@@ -7338,7 +7743,7 @@ const renderReleasePtCard = (rp, q = '') => {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
         </div>
         <div class="rp-checklist-item-content">
-          <span class="rp-checklist-item-text">${item.text}</span>
+          <span class="rp-checklist-item-text">${escapeHtml(item.text)}</span>
           ${(ticketHtml || devHtml) ? `
             <div class="rp-checklist-item-meta">
               ${ticketHtml}
@@ -7752,7 +8157,7 @@ const renderChecklistEditor = () => {
   }
 
   container.innerHTML = rpChecklistItems.map((item, idx) => {
-    const devOptions = `<option value="">— Assignee —</option>` +
+    const devOptions = `<option value="">${item.jiraAssignee ? `Jira: ${escapeHtml(item.jiraAssignee)}` : '— Assignee —'}</option>` +
       filteredDevs.map(d => `<option value="${d.id}" ${item.developerId === d.id ? 'selected' : ''}>${d.name}</option>`).join('');
 
     return `
@@ -7805,6 +8210,7 @@ const loadReleasePtProjectsList = (selectedProjectIds = []) => {
       populateReleasePtReleases(checkedIds);
       populateReleasePtDevs(checkedIds);
       renderChecklistEditor();
+      updateJiraImportButton();
     };
   });
 };
@@ -7848,6 +8254,14 @@ const openReleasePtModal = (id = null) => {
   // Reset panels to hidden state
   document.getElementById('bulkAddPanel').style.display = 'none';
   document.getElementById('bulkAssignPanel').style.display = 'none';
+  closeJiraImportPanel();
+  wireJiraImportPanel();
+  updateJiraImportButton();
+  document.getElementById('jiraImportToggleBtn').onclick = () => {
+    if (jiraImport || document.getElementById('jiraImportPanel').style.display !== 'none') { closeJiraImportPanel(); return; }
+    syncChecklistItemsFromDOM(); // so duplicate detection sees unsaved edits
+    openJiraImportPanel();
+  };
 
   renderChecklistEditor();
 
@@ -8367,7 +8781,7 @@ const renderTestCaseManagement = () => {
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>',
       'No projects found',
       'You need to create a project first before creating modules or test cases.',
-      '<button class="btn-primary" onclick="openProjectModal()" style="margin-top: 12px;">Create Project</button>'
+      '<button class="btn-primary" data-action="new-project" style="margin-top: 12px;">Create Project</button>'
     )}
     `;
   }
@@ -11866,10 +12280,17 @@ const init = async () => {
   // Scheduled auto-backup status is written by background.js into chrome.storage.local.
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
     state.autoBackup = await chrome.storage.local.get(AUTO_BACKUP_KEYS);
+    if (jiraAvailable()) state.jira = await ClairJira.getPublicConfig();
     chrome.storage.onChanged.addListener(async (changes, area) => {
+      if (area === 'local' && jiraAvailable() && ClairJira.JIRA_KEY in changes) {
+        state.jira = await ClairJira.getPublicConfig(); // e.g. connected/disconnected in another Clair tab
+      }
       if (area !== 'local' || !AUTO_BACKUP_KEYS.some(k => k in changes)) return;
       state.autoBackup = await chrome.storage.local.get(AUTO_BACKUP_KEYS);
-      if (state.view === 'settings') render();
+      // Refresh just the Automatic Backup box: a full render() here would wipe whatever
+      // the user is typing elsewhere on Settings (e.g. the Jira form) when a backup runs.
+      const box = state.view === 'settings' && document.querySelector('.auto-backup-box');
+      if (box && (document.activeElement || {}).id !== 'autoBackupTime') box.outerHTML = renderAutoBackupSettings();
     });
   }
 

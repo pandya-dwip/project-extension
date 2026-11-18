@@ -4,7 +4,7 @@
 
 **A local-first project & release tracker — built as a Chrome Extension**
 
-![Version](https://img.shields.io/badge/version-2.4.0-informational?style=flat-square)
+![Version](https://img.shields.io/badge/version-2.5.0-informational?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Chrome%20Extension-4285F4?style=flat-square&logo=googlechrome&logoColor=white)
 ![Manifest](https://img.shields.io/badge/manifest-V3-success?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-Vanilla%20JS%20%2F%20HTML%20%2F%20CSS-F7DF1E?style=flat-square)
@@ -52,6 +52,20 @@ The current app version is displayed in the sidebar footer and is always read di
 ---
 
 ## What's New
+
+### v2.5.0
+
+#### Jira integration (import tickets into Release Points)
+
+- **Settings → Integrations → Jira** — connect your own Jira Cloud site with your Atlassian email and an **API token**. Save verifies the credentials before storing them; **Test Connection** reports the account, workspace, and how many projects you can access; **Disconnect Jira** removes the stored site, email, and token.
+- **Link a Clair project to a Jira project** (optional) from the project Create/Edit modal — search your accessible Jira projects, pick one, change or remove it later. Stored on the project as `jira: { site, projectId, projectKey, projectName }`.
+- **Import from Jira** in the Release Point editor (shown only when a selected project is linked): search by issue key, issue number, or title; multi-select; load more; then add the selected tickets as checklist items — title = summary, ticket = `https://<site>/browse/KEY`, assignee = Jira display name (also linked to a Clair developer with exactly the same name), plus `jiraKey`/`jiraIssueId`.
+- **No duplicates** — tickets already in any Release Point of the same Clair project (including manually entered keys or `/browse/KEY` links) are shown as "Already added" and skipped. The same ticket can still go into a different Clair project.
+- **Why API tokens, not OAuth** — Atlassian's OAuth 2.0 (3LO) token exchange requires a client secret, which can't be kept secret inside an extension; it would need a backend. API tokens work with no backend and no app registration. Jira Cloud (`*.atlassian.net`) only; self-hosted Jira Data Center is not supported.
+- **Credential storage (be aware)** — the site, email, and token are kept in `chrome.storage.local` (key `jiraConfig`), never in SQLite, so they are never in JSON exports or automatic backups. They are **not encrypted**: anyone with access to your Windows account / Chrome profile could read them. The token is never shown again after saving, never put in the page, and never logged. Revoke it any time at Atlassian.
+- **Permission** — `https://*.atlassian.net/*` is an *optional* host permission, requested only when you save a Jira configuration and removed on disconnect.
+- Only `summary` and `assignee` are requested from Jira (REST API v3: `/myself`, `/project/search`, `/search/jql`), with pagination, rate-limit retry (`Retry-After`), and readable errors for bad credentials, missing permissions, unreachable sites, and deleted projects.
+- Fixes found along the way: checklist item text on Release Point cards is now HTML-escaped (a ticket titled `Fix <br> tag` no longer injects markup), and a background backup status update now refreshes only the Automatic Backup box instead of re-rendering all of Settings (which wiped anything being typed).
 
 ### v2.4.0
 
@@ -338,6 +352,7 @@ Cards use a horizontal two-column layout (info + slim progress bar on the left, 
 - **System overview** — record counts and estimated storage size.
 - **Export** — downloads a timestamped JSON file to the `Backup/` folder.
 - **Automatic Backup** — on/off switch, backup time (picker + **Save**, default 6:00 PM), last successful backup with file name, and Success/Failed status with the error message. See [Automatic Backups](#automatic-backups).
+- **Integrations → Jira** — Jira site URL, Atlassian email, API token (masked; blank keeps the saved one), Save Configuration / Test Connection / Disconnect Jira, and the connection status.
 - **Import** — restores from any previously exported JSON file.
 - **Clear database** — wipes all SQLite tables after triggering an export.
 - **Developer management** — add, edit, and delete developers; link them to projects.
@@ -576,9 +591,10 @@ DEVELOPER ─┬── PROJECT       (developer.projectIds[])
 
 ```
 project-extension/
-├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 2.4.0)
+├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 2.5.0)
 ├── background.js            Service worker — tab lifecycle + scheduled automatic backup
 ├── backup.js                Shared JSON backup format, Backup/ folder path, auto-backup filename
+├── jira.js                  Jira Cloud client (API token auth): test connection, projects, issue search
 ├── offscreen.html / .js     Hidden page that builds the auto-backup file (blob URL) for the service worker
 ├── index.html               Static shell: sidebar, top bar, modals, form controls
 ├── app.js                   Single-page controller (~12 600 lines)
@@ -621,6 +637,8 @@ project-extension/
 | `chrome.runtime.getContexts / sendMessage / onMessage` | Detects an existing offscreen page; service worker ↔ offscreen messaging |
 | `chrome.runtime.onInstalled / onStartup` | Ensures the backup alarm exists and catches up a missed backup |
 | `chrome.runtime.getURL` | Resolves the extension-relative `index.html` and `sql-wasm.wasm` URLs |
+| `chrome.permissions.request / contains / remove` | Optional `https://*.atlassian.net/*` host permission — requested when saving a Jira configuration, removed on disconnect |
+| `chrome.storage.local` (`jiraConfig`) | Jira site, email, API token, and connected account name — unencrypted, never exported |
 | `chrome.runtime.getManifest` | Reads the app version for the sidebar badge |
 | `indexedDB` (standard Web API, not Chrome-specific) | Durable storage for the exported SQLite database file — the actual ongoing persistence layer, in both extension and standalone modes |
 
@@ -749,6 +767,7 @@ Clair follows a no-build, no-framework approach. Keep contributions consistent w
 - [ ] Projects List view: dragging a project card reorders the list and persists across reload.
 - [ ] Project Details: opens from the **Project Details** button in both List and Kanban views; stats match the project's tasks (tasks linked to multiple projects are counted per project, nothing from other projects); release history is newest first; editing a task/release/project from the page updates it immediately; **Projects** returns to the list; works in light and dark and at phone width.
 - [ ] Client Name: create a project with and without a client; it shows on List and Kanban cards, the detail modal, and Project Details; it survives export → import.
+- [ ] Jira: Save with a wrong token shows "rejected the email or API token" and stores nothing; a valid token connects and shows the account/workspace; the token field is empty afterwards; link a project, open a Release Point for it, Import from Jira, search/select/add tickets, save — the card shows each key as a link opening Jira in a new tab plus the assignee; importing the same ticket again in that project is blocked; Disconnect removes the credentials; an exported JSON contains no token.
 - [ ] Automatic backup: Settings shows Enabled, schedule, last success, and status; saving a new time moves the alarm (`chrome.alarms.get('clair-daily-backup')` in the service worker console); disabling clears it; a backup file appears in `Backup/` and imports successfully; it matches a manual export apart from `exportedAt`.
 
 ---

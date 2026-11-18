@@ -9513,6 +9513,77 @@ select.form-select:focus {
 .auto-backup-time-edit .btn-ghost { padding: 5px 12px; font-size: 12.5px; }
 .auto-backup-error { font-size: 11.5px; color: var(--danger); background: var(--danger-light); padding: 6px 10px; border-radius: var(--radius-sm); word-break: break-word; }
 
+/* ─── Jira integration ─── */
+.jira-box { margin-top: 12px; display: flex; flex-direction: column; gap: 4px; }
+.jira-box .form-group { margin-bottom: 10px; }
+.jira-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.jira-title { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.jira-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--text-secondary); min-width: 0; overflow-wrap: anywhere; }
+.jira-status i { width: 8px; height: 8px; border-radius: 50%; background: var(--status-planned); flex-shrink: 0; }
+.jira-status.on i { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
+.jira-help-link { display: inline-block; margin-top: 6px; font-size: 12px; color: var(--accent); text-decoration: none; }
+.jira-help-link:hover { text-decoration: underline; }
+.jira-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+.jira-actions button:disabled { opacity: 0.55; cursor: not-allowed; }
+.jira-disconnect { color: var(--danger) !important; }
+.jira-result { margin-top: 10px; display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: var(--radius-sm); font-size: 12.5px; line-height: 1.5; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-secondary); overflow-wrap: anywhere; }
+.jira-result strong { color: var(--text); }
+.jira-result.ok { background: var(--accent-subtle); border-color: var(--accent-light); }
+.jira-result.ok strong { color: var(--accent); }
+.jira-result.fail { background: var(--danger-light); border-color: transparent; color: var(--danger); }
+.jira-result.fail strong { color: var(--danger); }
+.jira-note { margin-top: 10px; font-size: 11.5px; line-height: 1.5; color: var(--text-muted); }
+
+.jira-key { font-family: var(--font-mono); font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: var(--radius-xs); background: var(--info-light); color: var(--info); white-space: nowrap; }
+.jira-field-hint { font-size: 12.5px; color: var(--text-muted); padding: 8px 10px; border: 1px dashed var(--border); border-radius: var(--radius-sm); }
+.jira-linked { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.jira-linked-name { font-size: 13px; font-weight: 500; color: var(--text); }
+.jira-linked-site { font-size: 11.5px; color: var(--text-muted); }
+.jira-linked-actions { margin-left: auto; display: inline-flex; gap: 6px; }
+.btn-ghost.jira-mini { padding: 3px 10px; font-size: 12px; }
+.jira-picker { display: flex; gap: 8px; align-items: center; }
+.jira-picker input { flex: 1; }
+.jira-project-results { margin-top: 6px; max-height: 190px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
+.jira-option { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; border: none; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); font-family: var(--font); font-size: 13px; text-align: left; cursor: pointer; }
+.jira-option:last-child { border-bottom: none; }
+.jira-option:hover { background: var(--surface-2); }
+.jira-more { display: block; width: 100%; padding: 7px 10px; border: none; background: transparent; color: var(--accent); font-family: var(--font); font-size: 12.5px; font-weight: 500; cursor: pointer; }
+.jira-more:hover { background: var(--accent-subtle); }
+.jira-state .jira-more { display: inline; width: auto; padding: 0 4px; }
+.jira-state { padding: 14px 10px; font-size: 12.5px; color: var(--text-muted); text-align: center; }
+.jira-state.error { color: var(--danger); }
+
+.jira-import-panel { margin-bottom: 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; }
+.jira-import-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 12.5px; color: var(--text); }
+.jira-import-pname { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.jira-import-project { height: 30px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font-family: var(--font); font-size: 12.5px; padding: 0 6px; min-width: 0; }
+.jira-import-close { margin-left: auto; border: none; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: var(--radius-xs); }
+.jira-import-close:hover { background: var(--surface-3); color: var(--text); }
+.jira-import-search input { width: 100%; height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font-family: var(--font); font-size: 13px; }
+.jira-import-search input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-subtle); }
+.jira-issue-list { margin-top: 8px; max-height: 260px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
+.jira-issue { display: grid; grid-template-columns: 16px auto minmax(0, 1fr) auto; align-items: center; column-gap: 10px; row-gap: 2px; padding: 8px 10px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 12.5px; }
+.jira-issue:last-child { border-bottom: none; }
+.jira-issue:hover { background: var(--surface-2); }
+.jira-issue input { margin: 0; accent-color: var(--accent); }
+.jira-issue-key { font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--info); white-space: nowrap; }
+.jira-issue-sum { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jira-issue-asg { color: var(--text-secondary); font-size: 11.5px; white-space: nowrap; }
+.jira-issue-asg em { color: var(--text-muted); }
+.jira-issue.is-dup { cursor: default; opacity: 0.65; }
+.jira-issue.is-dup:hover { background: transparent; }
+.jira-dup { grid-column: 3 / -1; font-size: 10.5px; font-weight: 600; color: var(--warning); }
+.jira-import-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+.jira-sel-count { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
+.jira-import-foot .btn-accent { font-size: 12px; padding: 6px 16px; height: 32px; }
+.jira-import-foot .btn-accent:disabled { opacity: 0.5; cursor: not-allowed; }
+@media (max-width: 640px) {
+  .jira-issue { grid-template-columns: 16px minmax(0, 1fr); }
+  .jira-issue-key { grid-column: 2; }
+  .jira-issue-sum, .jira-issue-asg, .jira-dup { grid-column: 2; white-space: normal; }
+  .jira-linked-actions { margin-left: 0; }
+}
+
 /* ─── Project Overview (sub-page of Projects) ─── */
 .pc-details-btn {
   display: inline-flex;
