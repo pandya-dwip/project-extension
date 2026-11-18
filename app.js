@@ -441,28 +441,15 @@ const triggerBrowserDownload = (url, filename) => {
 };
 
 const exportData = () => {
-  const data = {
-    projects: state.projects,
-    tasks: state.tasks,
-    tests: state.tests,
-    activity: state.activity,
-    developers: state.developers || [],
-    releases: state.releases || [],
-    testCases: state.testCases || [],
-    modules: state.modules || [],
-    releasePoints: state.releasePoints || [],
-    noteFolders: state.noteFolders || [],
-    notes: state.notes || [],
-    exportedAt: new Date().toISOString()
-  };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  // Same builder the scheduled auto-backup uses (backup.js), so both formats stay identical.
+  const blob = new Blob([ClairBackup.toJSON(state)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const filename = `clair-export-${new Date().toISOString().split('T')[0]}.json`;
 
   if (typeof chrome !== 'undefined' && chrome.downloads) {
     chrome.downloads.download({
       url: url,
-      filename: `Extensions/project-extension/Backup/${filename}`,
+      filename: `${ClairBackup.DIR}${filename}`,
       conflictAction: 'uniquify',
       saveAs: false
     }, (downloadId) => {
@@ -4594,6 +4581,56 @@ const renderDevelopers = () => {
 };
 
 // ─── Restructured Settings Module ─────────────────────────
+const AUTO_BACKUP_KEYS = ['autoBackupEnabled', 'autoBackupTime', 'autoBackupStatus', 'autoBackupLastSuccessAt', 'autoBackupLastFile', 'autoBackupLastError', 'autoBackupLastFailedAt'];
+const AUTO_BACKUP_DEFAULT_TIME = '18:00'; // must match DEFAULT_BACKUP_TIME in background.js
+const autoBackupTimeOf = () => (state.autoBackup && state.autoBackup.autoBackupTime) || AUTO_BACKUP_DEFAULT_TIME;
+const fmtBackupTime = (hhmm) => {
+  const [h, m] = hhmm.split(':').map(Number);
+  return new Date(2000, 0, 1, h, m).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+};
+
+// Automatic Backup block for the Data Portability card. The schedule itself runs in
+// background.js; this only shows its status and flips autoBackupEnabled.
+const renderAutoBackupSettings = () => {
+  const ab = state.autoBackup;
+  if (!ab) {
+    return `<div class="auto-backup-box"><div class="auto-backup-row"><span>Automatic Backup</span><strong>Available in the installed extension only</strong></div></div>`;
+  }
+  const enabled = ab.autoBackupEnabled !== false;
+  const at = (iso) => iso ? `${fmtDate(iso)}, ${fmtTime(iso)}` : 'Not yet';
+  let statusHtml = '<span class="auto-backup-muted">No automatic backup has run yet</span>';
+  if (ab.autoBackupStatus === 'success') statusHtml = '<span class="auto-backup-pill ok">Success</span>';
+  if (ab.autoBackupStatus === 'failed') {
+    statusHtml = `<span class="auto-backup-pill fail">Failed</span><span class="auto-backup-muted">${at(ab.autoBackupLastFailedAt)}</span>`;
+  }
+  const fileName = (ab.autoBackupLastFile || '').split(/[\\/]/).pop();
+  return `
+    <div class="auto-backup-box">
+      <div class="auto-backup-head">
+        <div>
+          <div class="auto-backup-title">Automatic Backup</div>
+          <div class="auto-backup-muted">Daily JSON backup to Downloads/${escapeHtml(ClairBackup.DIR)}</div>
+        </div>
+        <label class="switch-toggle" title="${enabled ? 'Disable' : 'Enable'} automatic backups">
+          <input type="checkbox" id="autoBackupToggle" ${enabled ? 'checked' : ''} />
+          <span class="switch-slider"></span>
+        </label>
+      </div>
+      <div class="auto-backup-row"><span>Automatic Backup</span><strong>${enabled ? 'Enabled' : 'Disabled'}</strong></div>
+      <div class="auto-backup-row"><span>Schedule</span><strong>Daily at ${fmtBackupTime(autoBackupTimeOf())}</strong></div>
+      <div class="auto-backup-row auto-backup-time-row">
+        <label for="autoBackupTime">Backup Time</label>
+        <span class="auto-backup-time-edit">
+          <input type="time" id="autoBackupTime" value="${autoBackupTimeOf()}" required />
+          <button type="button" class="btn-ghost" id="autoBackupTimeSave">Save</button>
+        </span>
+      </div>
+      <div class="auto-backup-row"><span>Last Successful Backup</span><strong title="${escapeHtml(ab.autoBackupLastFile || '')}">${at(ab.autoBackupLastSuccessAt)}${fileName ? `<em>${escapeHtml(fileName)}</em>` : ''}</strong></div>
+      <div class="auto-backup-row"><span>Backup Status</span><strong>${statusHtml}</strong></div>
+      ${ab.autoBackupStatus === 'failed' && ab.autoBackupLastError ? `<div class="auto-backup-error">${escapeHtml(ab.autoBackupLastError)}</div>` : ''}
+    </div>`;
+};
+
 const renderSettings = () => {
   const dbSizeKb = ((JSON.stringify(state).length) / 1024).toFixed(1);
   const hiddenSet = new Set(state.hiddenModules || []);
@@ -4759,6 +4796,7 @@ const renderSettings = () => {
                 Export Full Report (Excel)
               </button>
             </div>
+            ${renderAutoBackupSettings()}
           </div>
         </div>
 
@@ -5354,6 +5392,21 @@ const attachCardListeners = () => {
       return;
     }
 
+    if (e.target.closest('#autoBackupTimeSave')) {
+      // Saved only on click: a time input passes through partial values (e.g. 01:00
+      // while typing 16:00), and each saved value can trigger a catch-up backup.
+      const value = document.getElementById('autoBackupTime').value;
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) { showToast('Enter a valid backup time', 'error'); return; }
+      if (value === autoBackupTimeOf()) { showToast(`Backup time is already ${fmtBackupTime(value)}`); return; }
+      try {
+        await chrome.storage.local.set({ autoBackupTime: value }); // background.js reschedules the alarm
+        showToast(`Automatic backup time set to ${fmtBackupTime(value)} daily`);
+      } catch (err) {
+        showToast('Could not save the backup time', 'error');
+      }
+      return;
+    }
+
     const settingsExportBtn = e.target.closest('#settingsExportBtn');
     if (settingsExportBtn) {
       exportData();
@@ -5376,6 +5429,14 @@ const attachCardListeners = () => {
   // Change delegation (filters)
   let dateFilterTimer;
   content.addEventListener('change', e => {
+    if (e.target.id === 'autoBackupToggle') {
+      // background.js reacts to this key (creates/clears the alarm); the UI refreshes via storage.onChanged.
+      const on = e.target.checked;
+      chrome.storage.local.set({ autoBackupEnabled: on })
+        .then(() => showToast(on ? `Automatic backup enabled (daily at ${fmtBackupTime(autoBackupTimeOf())})` : 'Automatic backup disabled'))
+        .catch(() => { e.target.checked = !on; showToast('Could not change the automatic backup setting', 'error'); });
+      return;
+    }
     const calSortSelect = e.target.closest('[data-cal-sort]');
     if (calSortSelect) {
       state.calendarRightPanelSort = calSortSelect.value;
@@ -11796,6 +11857,16 @@ const init = async () => {
   }
   state.defaultView = await ClairDB.getPref('default_view', 'dashboard');
   applyModuleVisibility();
+
+  // Scheduled auto-backup status is written by background.js into chrome.storage.local.
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    state.autoBackup = await chrome.storage.local.get(AUTO_BACKUP_KEYS);
+    chrome.storage.onChanged.addListener(async (changes, area) => {
+      if (area !== 'local' || !AUTO_BACKUP_KEYS.some(k => k in changes)) return;
+      state.autoBackup = await chrome.storage.local.get(AUTO_BACKUP_KEYS);
+      if (state.view === 'settings') render();
+    });
+  }
 
   // Persist the "task completed" backfill immediately so existing tasks have
   // it in SQLite right away, not only after the next edit to each one.

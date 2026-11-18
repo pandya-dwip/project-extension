@@ -143,13 +143,19 @@ const ClairDB = (() => {
   }
 
   // ── Public API ──
+  async function loadSqlJs() {
+    if (SQL) return SQL;
+    const wasmUrl = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL)
+      ? chrome.runtime.getURL('sql-wasm.wasm')
+      : 'sql-wasm.wasm';
+    SQL = await initSqlJs({ locateFile: () => wasmUrl });
+    return SQL;
+  }
+
   async function init() {
     if (readyPromise) return readyPromise;
     readyPromise = (async () => {
-      const wasmUrl = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL)
-        ? chrome.runtime.getURL('sql-wasm.wasm')
-        : 'sql-wasm.wasm';
-      SQL = await initSqlJs({ locateFile: () => wasmUrl });
+      await loadSqlJs();
 
       let bytes = null;
       try { bytes = await idbGetFile(); } catch (e) { console.warn('IndexedDB read failed, starting fresh DB:', e); }
@@ -166,10 +172,29 @@ const ClairDB = (() => {
     await idbPutFile(bytes);
   }
 
-  function selectAll(table) {
-    const res = db.exec(`SELECT data FROM ${table} ORDER BY seq`);
+  function selectAll(table, conn = db) {
+    const res = conn.exec(`SELECT data FROM ${table} ORDER BY seq`);
     if (!res.length) return [];
     return res[0].values.map(row => JSON.parse(row[0]));
+  }
+
+  // Read-only view of the last persisted database, for the scheduled background
+  // backup. Unlike load(), it never creates the schema, migrates, or persists — so
+  // it can't race with or overwrite what an open Clair tab is saving.
+  // Returns null when Clair has never saved any data.
+  async function loadSnapshot() {
+    const bytes = await idbGetFile();
+    if (!bytes) return null;
+    await loadSqlJs();
+    const snap = new SQL.Database(new Uint8Array(bytes));
+    try {
+      const existing = new Set((snap.exec("SELECT name FROM sqlite_master WHERE type = 'table'")[0] || { values: [] }).values.map(r => r[0]));
+      const out = {};
+      TABLES.forEach(t => { out[t] = existing.has(t) ? selectAll(t, snap) : []; });
+      return out;
+    } finally {
+      snap.close();
+    }
   }
 
   async function load() {
@@ -224,6 +249,7 @@ const ClairDB = (() => {
   return {
     init,
     load,
+    loadSnapshot,
     save,
     getPref,
     setPref,

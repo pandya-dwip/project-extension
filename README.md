@@ -4,7 +4,7 @@
 
 **A local-first project & release tracker — built as a Chrome Extension**
 
-![Version](https://img.shields.io/badge/version-2.3.5-informational?style=flat-square)
+![Version](https://img.shields.io/badge/version-2.4.0-informational?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Chrome%20Extension-4285F4?style=flat-square&logo=googlechrome&logoColor=white)
 ![Manifest](https://img.shields.io/badge/manifest-V3-success?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-Vanilla%20JS%20%2F%20HTML%20%2F%20CSS-F7DF1E?style=flat-square)
@@ -53,11 +53,32 @@ The current app version is displayed in the sidebar footer and is always read di
 
 ## What's New
 
-### Latest (unreleased)
+### v2.4.0
 
-> The `manifest.json` version has not been bumped for this round of changes — the sidebar badge still reads 2.3.5. Bump it when these changes ship.
->
 > An earlier pass of this work included a full visual redesign (indigo/violet accent, a design-token system, a grouped "+ New" topbar dropdown). Those changes never made it into the committed codebase and are **not** present today — the UI is still the original green-accented theme with a flat row of topbar buttons. Everything below this note reflects what's actually in the code.
+
+#### Scheduled automatic JSON backups
+
+- **Daily automatic backup** at a user-chosen local time (default **6:00 PM**), set from **Settings → Data Portability → Automatic Backup**. Files are saved to the same `Backup/` folder as manual exports, named `clair-autobackup-YYYY-MM-DD_HH-mm-ss.json`.
+- **Identical format to manual Export** — both use the single JSON builder in [backup.js](backup.js), so the two can't drift apart. Automatic backups import like any other backup.
+- **Runs in the background** — scheduled with `chrome.alarms` in the service worker, so it works with the Clair tab closed and survives service-worker termination and browser restarts.
+- **Missed runs are caught up once** — if Chrome was closed or the PC was off at the scheduled time, one backup runs when Chrome next starts. A failed backup is reported in Settings and retried at the next scheduled time, never in a loop. Overlapping triggers can't create duplicates.
+- **Changing the time behaves sensibly** — moving it to a time that has already passed today (with no backup since) runs one catch-up backup immediately; moving it later just reschedules. The time is applied only when you click **Save**, so partial values while typing can't trigger a backup.
+- **Settings shows** enabled/disabled, the schedule, last successful backup (date, time, file name), and Success/Failed with the error message.
+- **Read-only data access** — the background reads the last saved SQLite file through a new `ClairDB.loadSnapshot()` that never migrates, writes, or persists, so it can't race with an open Clair tab.
+- New permissions: `alarms` (schedule) and `offscreen` (a hidden page builds the backup file — service workers can't create blob URLs, and a full backup is too large for a `data:` URL). Neither shows a permission warning.
+
+#### Projects: Project Details page
+
+- **New Project Details page** for each project, opened with the **Project Details** button on List and Kanban cards. Clicking elsewhere on a List card still opens the existing quick-details modal.
+- **Hero header** — type, overall status, priority, client, description, statuses, a task-completion ring, and a strip with team, due date, previous → current version (Android and iOS separately for App projects), created, and last updated. **Edit Project** opens the existing edit modal.
+- **Stat strip** — total, completed, in-progress, pending (To-Do), and on-hold tasks; developers; releases; latest release date.
+- **Release History** — a dated vertical timeline, newest first, combining Release Management records and versions released from the project card's Release button. Platform (Android/iOS) is shown when the project's own version data identifies it. Release records open the existing release detail modal.
+- **Developer Involvement** — per-developer task counts with a completed / in-progress / to-do / on-hold bar; includes developers on the project's tasks or linked to it in Developer Management (developers only on tasks are tagged "tasks only").
+- **Project Timeline** — built from task and release dates. The Activity log stores plain text with no project reference, so it isn't used; nothing is guessed or fabricated.
+- **Task History** — full-width table with status filters, title/developer search, and rows that open the existing task detail modal.
+- **Everything is derived, nothing is stored** — all figures are recalculated from existing records on every render, so task/release/project edits show up immediately. No schema change or migration.
+- **Client Name** now also appears on List view cards and in the project detail modal (it was previously only on Kanban cards and in search/reports). Client names are HTML-escaped on Kanban cards.
 
 #### Persistence: chrome.storage.local → SQLite
 
@@ -106,6 +127,7 @@ The current app version is displayed in the sidebar footer and is always read di
 
 - **Search inputs no longer lose focus while typing.** Every debounced page search (Tasks, Project Insights, Release Management, Release Points, Test Case Management, plus the Test Case project-dropdown search) re-renders `#mainContent` on each keystroke, which was destroying and recreating the input element mid-type. A shared `rerenderPreservingFocus()` helper now restores focus (and cursor position, where the input type supports it) immediately after each re-render.
 - Release Points grid changed from 3 cards per row to 2, giving the checklist column more room instead of truncating item text/links.
+- The Projects List/Kanban toggle handler reacted to *any* `.view-toggle-btn` on the page, which could set the saved view mode to `undefined`; it now only responds to buttons carrying `data-view-mode`.
 - Release Point checklist ticket links now show the meaningful part of the URL (e.g. the Jira ticket key `CIMTRACK-482`) instead of a fixed 20-character slice of "hostname + path" that usually cut off mid-domain before reaching anything useful.
 
 ### v2.3.5
@@ -156,7 +178,7 @@ The current app version is displayed in the sidebar footer and is always read di
 | Area | What you can do |
 |---|---|
 | **Dashboard** | Live counts for projects, tasks, and insights; weekly task completion bar chart; released projects by month; recent projects, tasks, and insights. |
-| **Projects** | Create web and mobile app projects with platform-specific version fields; support custom metadata (Client, Team, Due Date, Priority); toggle between classic 3-column List view and 5-column lifecycle Kanban board view with HTML5 drag-and-drop; manually reorder projects in List view by dragging; search, filter, edit, delete. |
+| **Projects** | Create web and mobile app projects with platform-specific version fields; support custom metadata (Client, Team, Due Date, Priority); toggle between classic 3-column List view and 5-column lifecycle Kanban board view with HTML5 drag-and-drop; manually reorder projects in List view by dragging; search, filter, edit, delete; open a per-project **Project Details** page with stats, developer involvement, release history, timeline, and task history. |
 | **Tasks** | 4-column Kanban board (To-Do, In Progress, Done, On Hold); drag cards between columns; visual date alerts for overdue, due-today, and due-tomorrow tasks; assign tasks to developers; log a free-text "Work Done" note per task; filter by a Start Date range (From/To). |
 | **Project Insights** | Capture issues, enhancements, and notes per project; track each item through a Dev → QA → Done workflow; filter by developer, status, and assignment state. |
 | **Release Management** | Log releases sorted by release date; advance through a seven-stage status workflow (Draft → Released); generate email-style release announcements; copy notes to clipboard. |
@@ -165,7 +187,7 @@ The current app version is displayed in the sidebar footer and is always read di
 | **Test Case Management** | Enter structured test cases with priority, severity, module, and status; import cases from Excel/CSV; a searchable project dropdown ("All Projects" first, showing per-project summary cards) replaces per-project tabs; inline modules row; pass-rate donut + status-breakdown bar chart; paginated table (configurable rows per page). |
 | **Developers** | Maintain a developer registry; link developers to projects so they appear in context-sensitive dropdowns on tasks and insights. |
 | **Activity Feed** | Timestamped audit trail of every create, update, delete, move, and copy action (capped at 200 entries). |
-| **Data Portability** | Export all collections to a single JSON file; restore from any previous export; clear all data after a mandatory backup prompt. Underlying storage is SQLite, but the export/import file shape is unchanged. |
+| **Data Portability** | Export all collections to a single JSON file; automatic daily JSON backup at a configurable time (default 6:00 PM); restore from any previous export; clear all data after a mandatory backup prompt. Underlying storage is SQLite, but the export/import file shape is unchanged. |
 | **Responsive UI** | Sidebar collapses to a hamburger menu on small screens; card grids and Kanban boards reflow for mobile and tablet. |
 | **Appearance** | Light and dark themes, resolved in JS (System follows the OS setting, or pin Light/Dark explicitly) from Settings → Appearance; choice persists across reloads. |
 | **Global Search** | `Ctrl+K` / `Cmd+K` opens instant search across projects, tasks, and developers from any screen. |
@@ -203,6 +225,7 @@ Clair is a single-page application. Navigation switches the rendered view in pla
 |---|---|---|
 | Dashboard | `dashboard` | Live metrics, weekly chart, released projects, and recent records |
 | Projects | `projects` | Project catalog with 3-column cards, version boxes, and release actions |
+| Project Details | `projects` + `state.overviewProjectId` | Per-project page: stats, developers, release history, timeline, tasks |
 | Tasks | `tasks` | Kanban board for task execution |
 | Project Insights | `tests` | Issue, enhancement, and note board per project |
 | Release Management | `releases` | Release lifecycle and note generation (sorted by release date) |
@@ -236,6 +259,21 @@ Projects support two types of status values independently:
 2. **Overall Project Status (Lifecycle)**: A single lifecycle categorization: `Yet to Start`, `On Going`, `Completed`, `Monitoring`, `On Hold`.
 
 Filters: project status, previous version, upcoming version. Search matches name, description, client, team, and version fields.
+
+### Project Details
+
+Opened from the **Project Details** button on any List or Kanban card; the top bar reads "Project Details" and a **Projects** button returns to the list (scroll position restored). Using the sidebar also leaves the page. It is a sub-page of the `projects` view (`state.overviewProjectId`), not a separate nav item.
+
+| Section | Contents |
+|---|---|
+| Hero | Type, overall status, priority, client, description, statuses, task-completion ring; team, due date, previous → current version (Android/iOS separately for App), created, last updated; **Edit Project** |
+| Stat strip | Total / completed / in-progress / pending / on-hold tasks, developers, releases, latest release date |
+| Release History | Dated vertical timeline, newest first: Release Management records (click to open) plus versions released from the project card |
+| Developer Involvement | Per-developer assigned/completed/in-progress/to-do/on-hold counts with a status bar |
+| Project Timeline | Project created/updated, tasks created/completed, releases created/published — from record dates only |
+| Task History | Full-width table (title, status, priority, developers, start → end, created, completed, work done) with status filters and search; rows open the task detail modal |
+
+Tasks are matched by `task.projectIds`, so a task linked to several projects counts once for each of them and never appears on unrelated projects. On wide screens Release History sits beside a sidebar (Developer Involvement + Timeline, which scroll inside their cards) with Task History full-width below; on narrower screens everything stacks.
 
 ### Tasks — Kanban Board
 
@@ -299,6 +337,7 @@ Cards use a horizontal two-column layout (info + slim progress bar on the left, 
 - **Appearance** — choose System / Light / Dark theme; persists across reloads.
 - **System overview** — record counts and estimated storage size.
 - **Export** — downloads a timestamped JSON file to the `Backup/` folder.
+- **Automatic Backup** — on/off switch, backup time (picker + **Save**, default 6:00 PM), last successful backup with file name, and Success/Failed status with the error message. See [Automatic Backups](#automatic-backups).
 - **Import** — restores from any previously exported JSON file.
 - **Clear database** — wipes all SQLite tables after triggering an export.
 - **Developer management** — add, edit, and delete developers; link them to projects.
@@ -323,7 +362,9 @@ Chrome toolbar action
         ▼
 background.js  (MV3 service worker)
   ├─ Opens a Clair tab on first click
-  └─ Focuses the existing tab on subsequent clicks
+  ├─ Focuses the existing tab on subsequent clicks
+  └─ Scheduled backup: chrome.alarms → offscreen.html builds the file → chrome.downloads
+       (settings + status in chrome.storage.local, read by Settings)
         │
         ▼
 index.html  (static shell)
@@ -340,7 +381,8 @@ app.js  (single-page controller)
   ├─ modal*()           modal open / close / save handlers
   ├─ drag & drop        Kanban column movement
   ├─ search/filter      debounced, per-view
-  ├─ import/export      JSON file read/write
+  ├─ import/export      JSON file read/write (format from backup.js)
+  ├─ renderProjectOverview()  Project Details page, all figures derived per render
   ├─ applyTheme/setTheme  light/dark theme, persisted via ClairDB.setPref
   ├─ initWeeklyChart()  Chart.js bar chart for weekly task completions
   ├─ patchReleasePtCardAfterToggle()  targeted DOM patch (no full re-render)
@@ -353,7 +395,8 @@ db.js  (ClairDB — persistence layer)
   ├─ schema: projects/tasks/tests/activity/developers/releases/
   │          testCases/modules/releasePoints/noteFolders/notes + meta (prefs, migration state)
   ├─ migrateFromLegacyStorage()  one-time, transactional, verified, idempotent
-  └─ load()/save()/getPref()/setPref()  the only API the rest of the app uses
+  ├─ load()/save()/getPref()/setPref()  the only API the rest of the app uses
+  └─ loadSnapshot()     read-only copy of the last saved DB, for the background backup
         │
         ▼
 IndexedDB  (durable byte storage for the exported SQLite file)
@@ -533,12 +576,14 @@ DEVELOPER ─┬── PROJECT       (developer.projectIds[])
 
 ```
 project-extension/
-├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 2.3.5)
-├── background.js            Service worker — tab lifecycle management
+├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 2.4.0)
+├── background.js            Service worker — tab lifecycle + scheduled automatic backup
+├── backup.js                Shared JSON backup format, Backup/ folder path, auto-backup filename
+├── offscreen.html / .js     Hidden page that builds the auto-backup file (blob URL) for the service worker
 ├── index.html               Static shell: sidebar, top bar, modals, form controls
-├── app.js                   Single-page controller (~9 400 lines)
-├── db.js                    ClairDB — SQLite persistence layer, schema, migration (~220 lines)
-├── style.css                Complete stylesheet with CSS custom properties (~7 750 lines)
+├── app.js                   Single-page controller (~12 600 lines)
+├── db.js                    ClairDB — SQLite persistence layer, schema, migration, snapshot (~260 lines)
+├── style.css                Complete stylesheet with CSS custom properties (~9 900 lines)
 ├── sql-wasm.js              sql.js (SQLite → WebAssembly) loader, vendored
 ├── sql-wasm.wasm            SQLite compiled to WebAssembly
 ├── chart.umd.min.js         Bundled Chart.js v4.4.4 (local, no CDN)
@@ -551,7 +596,8 @@ project-extension/
 │   ├── icon48.png
 │   └── icon128.png
 ├── Backup/
-│   └── clair-export-YYYY-MM-DD.json   JSON backups created by the export function
+│   ├── clair-export-YYYY-MM-DD.json                  JSON backups created by manual Export
+│   └── clair-autobackup-YYYY-MM-DD_HH-mm-ss.json     JSON backups created by the daily schedule
 └── Reports/
     └── clair-report-YYYY-MM-DD.xlsx   Excel reports created by Settings → Export Report
 ```
@@ -566,8 +612,14 @@ project-extension/
 | `chrome.tabs.get / create / update` | Opens the app tab or focuses the existing one |
 | `chrome.windows.update` | Brings the Chrome window to the foreground |
 | `chrome.tabs.onRemoved` | Clears the stored tab ID when the tab is closed |
-| `chrome.storage.local.get / remove` | One-time only: reads legacy pre-SQLite data on first launch after the migration, then clears it once migrated data is verified. No longer used for ongoing persistence. |
-| `chrome.downloads.download` | Saves export JSON to the `Backup/` folder |
+| `chrome.storage.local.get / remove` | One-time: reads legacy pre-SQLite data on first launch after the migration, then clears it once migrated data is verified. |
+| `chrome.storage.local.get / set`, `chrome.storage.onChanged` | Automatic-backup settings and status only (`autoBackupEnabled`, `autoBackupTime`, `autoBackupLastAttemptAt`, `autoBackupStatus`, `autoBackupLastSuccessAt`, `autoBackupLastFile`, `autoBackupLastError`, `autoBackupLastFailedAt`). Kept out of SQLite so the service worker never writes to the database file an open Clair tab is saving. |
+| `chrome.downloads.download` | Saves manual exports and automatic backups to the `Backup/` folder |
+| `chrome.downloads.search / onChanged` | Confirms an automatic backup actually finished before reporting Success |
+| `chrome.alarms` | One-shot alarm at the next scheduled backup time, re-armed after each run (`alarms` permission) |
+| `chrome.offscreen.createDocument / closeDocument` | Hidden page that builds the backup blob — service workers can't create blob URLs (`offscreen` permission, reason `BLOBS`) |
+| `chrome.runtime.getContexts / sendMessage / onMessage` | Detects an existing offscreen page; service worker ↔ offscreen messaging |
+| `chrome.runtime.onInstalled / onStartup` | Ensures the backup alarm exists and catches up a missed backup |
 | `chrome.runtime.getURL` | Resolves the extension-relative `index.html` and `sql-wasm.wasm` URLs |
 | `chrome.runtime.getManifest` | Reads the app version for the sidebar badge |
 | `indexedDB` (standard Web API, not Chrome-specific) | Durable storage for the exported SQLite database file — the actual ongoing persistence layer, in both extension and standalone modes |
@@ -586,9 +638,27 @@ clair-export-2026-06-20.json
 
 The export includes: `projects`, `tasks`, `tests` (insights), `developers`, `releases`, `testCases`, `modules`, `releasePoints`, `noteFolders`, `notes`, and `activity`.
 
+### Automatic Backups
+
+Clair also backs up automatically once a day, by default at **6:00 PM** local time:
+
+```
+Downloads/Extensions/project-extension/Backup/clair-autobackup-2026-11-18_18-00-00.json
+```
+
+- **Same file format** as a manual export (both built by [backup.js](backup.js)), so automatic backups import the same way. The folder is relative to the browser's Downloads directory — the same rule manual exports follow.
+- **Configure it** in **Settings → Data Portability → Automatic Backup**: turn it on/off, and set the time with the time picker + **Save**. Settings also shows the last successful backup and whether the last run succeeded or failed (with the reason).
+- **Runs in the background** — no Clair tab needs to be open. Chrome itself must be running; if it wasn't at the scheduled time, **one** catch-up backup runs when Chrome next starts.
+- **No duplicates, no retry loops** — a backup is due only when the last attempt happened before the most recent scheduled time, and the attempt is recorded before it runs. A failure is shown in Settings and retried at the next scheduled time.
+- **After install or update**, the first automatic backup happens at the next scheduled time (no immediate backup).
+- **Success means the file exists** — status is set to Success only after Chrome reports the download complete.
+- Each automatic backup appears in Chrome's downloads list. Old backups are not deleted automatically (roughly the size of one manual export per day).
+
+How it works: `chrome.alarms` wakes [background.js](background.js) → it opens [offscreen.html](offscreen.html), which reads the last saved database with `ClairDB.loadSnapshot()` (read-only), builds the JSON, and returns a blob URL → the service worker downloads it with `chrome.downloads` and records the result in `chrome.storage.local`.
+
 ### Importing
 
-In **Settings**, click **Import Data** and select a previously exported JSON file. Imported records replace the current state for each collection present in the file.
+In **Settings**, click **Import Data** and select a previously exported JSON file (manual or automatic). Imported records replace the current state for each collection present in the file.
 
 ### Export File Shape
 
@@ -604,9 +674,12 @@ In **Settings**, click **Import Data** and select a previously exported JSON fil
   "releasePoints": [...],
   "noteFolders": [...],
   "notes": [...],
-  "activity": [...]
+  "activity": [...],
+  "exportedAt": "ISO 8601"
 }
 ```
+
+Keys appear in the order defined by `ClairBackup.KEYS` in [backup.js](backup.js) (`projects, tasks, tests, activity, developers, releases, testCases, modules, releasePoints, noteFolders, notes`), followed by `exportedAt`. Missing collections are written as `[]`.
 
 ---
 
@@ -624,6 +697,10 @@ In **Settings**, click **Import Data** and select a previously exported JSON fil
 | Fonts display as system fallback | Google Fonts request blocked by network | The app is fully functional; only the typeface changes |
 | Version shows wrong value | `manifest.json` version not updated | Update the `"version"` field in `manifest.json` and reload the extension |
 | Chart does not appear on dashboard | No tasks with a `completedAt` date in selected month | Complete at least one task; or navigate to a month that has completions |
+| Automatic backup never runs | Extension not reloaded after updating, backups disabled, or Chrome closed at the scheduled time | Reload the extension at `chrome://extensions`; check Settings → Automatic Backup is enabled; a missed run happens once when Chrome next starts |
+| Automatic Backup status: "No saved Clair data found to back up" | Clair has never saved any data in this browser profile | Open Clair and add or import data; the next scheduled run will succeed |
+| Automatic Backup status: "Download interrupted (…)" | Downloads folder unavailable, disk full, or permissions | Fix the Downloads location/space; the next scheduled run retries (or use manual Export now) |
+| Automatic backup ran at an unexpected time | Backup time changed to a time already passed today with no backup since — one catch-up runs immediately by design | Expected; later runs follow the saved time |
 
 ---
 
@@ -635,7 +712,7 @@ Clair follows a no-build, no-framework approach. Keep contributions consistent w
 2. Bump the `"version"` field in [manifest.json](manifest.json) for any user-visible change — the sidebar badge updates automatically.
 3. Reload the unpacked extension at `chrome://extensions`.
 4. Test both **extension mode** and **standalone `index.html` mode** after any storage or persistence change.
-5. All persistence goes through `ClairDB` in [db.js](db.js) — don't call `chrome.storage`/`localStorage` directly from `app.js`; add a `ClairDB` method instead. If you add a new collection, add its table to the schema in `ensureSchema()` and to the `TABLES` array.
+5. All persistence goes through `ClairDB` in [db.js](db.js) — don't call `chrome.storage`/`localStorage` directly from `app.js`; add a `ClairDB` method instead. If you add a new collection, add its table to the schema in `ensureSchema()` and to the `TABLES` array, **and** to `ClairBackup.KEYS` in [backup.js](backup.js) so exports and automatic backups include it. The one deliberate exception is the automatic-backup settings/status in `chrome.storage.local`, which the service worker must write without touching the SQLite file.
 6. Keep storage shape changes backward-compatible with existing backup files where possible.
 7. Update this README when adding views, form fields, storage collections, Chrome permissions, or browser APIs.
 
@@ -669,6 +746,9 @@ Clair follows a no-build, no-framework approach. Keep contributions consistent w
 - [ ] Task date range filter: matches `startDate` (not `createdAt`), inclusive on both ends; typing a full date into From/To doesn't jump segments or lose focus.
 - [ ] Test Case Management: defaults to "All Projects" cards; selecting a project shows the modules row, both chart cards, and a paginated table; changing rows-per-page and Prev/Next behave correctly; Excel import correctly populates the Simplified Scenario column.
 - [ ] Projects List view: dragging a project card reorders the list and persists across reload.
+- [ ] Project Details: opens from the **Project Details** button in both List and Kanban views; stats match the project's tasks (tasks linked to multiple projects are counted per project, nothing from other projects); release history is newest first; editing a task/release/project from the page updates it immediately; **Projects** returns to the list; works in light and dark and at phone width.
+- [ ] Client Name: create a project with and without a client; it shows on List and Kanban cards, the detail modal, and Project Details; it survives export → import.
+- [ ] Automatic backup: Settings shows Enabled, schedule, last success, and status; saving a new time moves the alarm (`chrome.alarms.get('clair-daily-backup')` in the service worker console); disabling clears it; a backup file appears in `Backup/` and imports successfully; it matches a manual export apart from `exportedAt`.
 
 ---
 

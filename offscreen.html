@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<!-- Hidden page used only by the scheduled auto-backup (see background.js).
+     Service workers can't create blob URLs and a full backup is too big for a
+     data: URL, so this page builds the backup file and hands back a blob URL. -->
+<html>
+<head><meta charset="UTF-8"></head>
+<body>
+  <script src="sql-wasm.js"></script>
+  <script src="db.js"></script>
+  <script src="backup.js"></script>
+  <script src="offscreen.js"></script>
+</body>
+</html>
