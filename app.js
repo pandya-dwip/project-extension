@@ -96,7 +96,12 @@ let state = {
   noteSortBy: 'updatedAt',
   expandedNoteFolderIds: new Set(),
   hiddenModules: [],
-  defaultView: 'dashboard'
+  defaultView: 'dashboard',
+  // Project Overview (sub-page of 'projects'): null = show the projects list/kanban
+  overviewProjectId: null,
+  overviewTaskFilter: 'all',
+  overviewTaskSearch: '',
+  overviewReturnScroll: 0
 };
 
 let confirmCallback = null;
@@ -1750,6 +1755,7 @@ const setView = (view) => {
     saveActiveNote(true);
   }
   state.view = view;
+  state.overviewProjectId = null;
   if (view === 'testcases') {
     state.testCasePage = 1;
     const ct = document.getElementById('mainContent');
@@ -1816,7 +1822,7 @@ const render = () => {
 
   switch (state.view) {
     case 'dashboard': ct.innerHTML = renderDashboard(); initWeeklyChart(); break;
-    case 'projects': ct.innerHTML = renderProjects(); break;
+    case 'projects': ct.innerHTML = state.overviewProjectId ? renderProjectOverview() : renderProjects(); break;
     case 'tasks': ct.innerHTML = renderTasks(); break;
     case 'calendar': ct.innerHTML = renderCalendar(); break;
     case 'tests': ct.innerHTML = renderTests(); break;
@@ -2764,6 +2770,13 @@ const renderProjects = () => {
   `;
 };
 
+// Opens the full Project Details page (renderProjectOverview) from a List/Kanban card.
+const projectDetailsBtn = (id) => `
+  <button class="pc-details-btn" data-action="open-project-overview" data-id="${id}" title="Open project details page">
+    Project Details
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+  </button>`;
+
 const renderKanbanBoard = (projects, q = '') => {
   const columns = [
     { id: 'YET_TO_START', label: 'Yet to Start' },
@@ -2802,7 +2815,7 @@ const renderKanbanCard = (p, q = '') => {
   const clientLine = p.clientName ? `
     <div class="kanban-meta-item" title="Client">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-      <span>${highlight(p.clientName, q)}</span>
+      <span>${highlight(escapeHtml(p.clientName), q)}</span>
     </div>
   ` : '';
 
@@ -2879,6 +2892,7 @@ const renderKanbanCard = (p, q = '') => {
       <div class="kanban-card-footer">
         ${priorityBadge}
         <div class="kanban-card-actions">
+          ${projectDetailsBtn(p.id)}
           <button class="icon-btn" data-action="edit-project" data-id="${p.id}" aria-label="Edit" title="Edit" style="padding:4px; width:24px; height:24px;">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px; height:13px;"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>
@@ -3000,12 +3014,14 @@ const renderProjectCard = (p, q = '') => {
         <div class="project-name">${highlight(p.name, q)}</div>
         ${isApp ? `<span class="project-type-badge app">App</span>` : `<span class="project-type-badge web">Web</span>`}
       </div>
+      ${p.clientName ? `<div class="pc-client" title="Client"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>${highlight(escapeHtml(p.clientName), q)}</div>` : ''}
       <div class="project-statuses">
         ${(p.statuses || []).map(s => statusPill(s)).join('')}
       </div>
       ${p.description ? `<div class="project-desc">${highlight(formatCardDescription(p.description), q)}</div>` : ''}
       ${assignedDevsHtml}
       <div class="pc-footer">
+        ${projectDetailsBtn(p.id)}
         <div class="card-actions">
           <button class="icon-btn" data-action="edit-project" data-id="${p.id}" aria-label="Edit" title="Edit">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -3038,6 +3054,369 @@ const renderProjectCard = (p, q = '') => {
 
   </div>
 `;
+};
+
+// ─── Project Overview ────────────────────────────────────
+// A sub-page of 'projects' (state.overviewProjectId). Everything shown is derived
+// on each render from projects/tasks/releases/developers — nothing is stored, so
+// any edit elsewhere in Clair is reflected the next time render() runs.
+const PO_OVERALL_STATUS = {
+  YET_TO_START: { label: 'Yet to Start', cls: 'yet-to-start' },
+  ON_GOING: { label: 'On Going', cls: 'in-progress' },
+  COMPLETED: { label: 'Completed', cls: 'completed' },
+  MONITORING: { label: 'Monitoring', cls: 'stable' },
+  ON_HOLD: { label: 'On Hold', cls: 'on-hold' }
+};
+const PO_PLATFORM_LABEL = { ANDROID: 'Android', IOS: 'iOS', WEB: 'Web', APP: 'App' };
+
+const openProjectOverview = (id) => {
+  if (!state.projects.some(p => p.id === id)) return;
+  const ct = document.getElementById('mainContent');
+  if (!state.overviewProjectId && ct) state.overviewReturnScroll = ct.scrollTop;
+  state.overviewProjectId = id;
+  state.overviewTaskFilter = 'all';
+  state.overviewTaskSearch = '';
+  document.getElementById('pageTitle').textContent = 'Project Details';
+  render();
+  if (ct) ct.scrollTo({ top: 0, behavior: 'instant' });
+};
+
+const closeProjectOverview = () => {
+  state.overviewProjectId = null;
+  document.getElementById('pageTitle').textContent = 'Projects';
+  render();
+  const ct = document.getElementById('mainContent');
+  if (ct) ct.scrollTo({ top: state.overviewReturnScroll || 0, behavior: 'instant' });
+};
+
+// Task status as the app treats it: tasks saved before statuses existed count as To-Do.
+const poTaskStatus = (t) => TASK_STATUS_OPTIONS.includes(t.status) ? t.status : 'To-Do';
+const poNormVer = (v) => String(v || '').toLowerCase().replace(/^v/, '').trim();
+
+const getProjectOverviewData = (p) => {
+  const isApp = p.projectType === 'app';
+  const tasks = state.tasks.filter(t => (t.projectIds || []).includes(p.id));
+  const countBy = (list, s) => list.filter(t => poTaskStatus(t) === s).length;
+
+  // Developers: anyone assigned to one of this project's tasks, plus anyone linked
+  // to the project in Developer Management.
+  const devIds = new Set(tasks.flatMap(t => t.developerIds || []));
+  (state.developers || []).forEach(d => { if ((d.projectIds || []).includes(p.id)) devIds.add(d.id); });
+  const developers = [...devIds].map(id => {
+    const dev = (state.developers || []).find(d => d.id === id);
+    const dt = tasks.filter(t => (t.developerIds || []).includes(id));
+    return {
+      id, name: String(dev ? dev.name : id),
+      member: !!dev && (dev.projectIds || []).includes(p.id),
+      total: dt.length, done: countBy(dt, 'Done'), inProgress: countBy(dt, 'In Progress'),
+      todo: countBy(dt, 'To-Do'), onHold: countBy(dt, 'On Hold')
+    };
+  }).sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+
+  // Version releases logged via the project's "Release Version" buttons (the same
+  // data the project card shows, including its legacy single-entry fallback).
+  const history = [...(p.releaseHistory || [])];
+  if (history.length === 0 && p.lastReleaseAt) {
+    history.push({ version: p.previousVersion || p.androidPreviousVersion || p.iosPreviousVersion || '', platform: isApp ? 'APP' : 'WEB', releasedAt: p.lastReleaseAt, log: p.lastReleaseLog });
+  }
+
+  // Release Management records linked to this project.
+  const records = (state.releases || []).filter(r => (r.projectIds || (r.projectId ? [r.projectId] : [])).includes(p.id));
+  const knownVers = new Set([
+    ...history.map(h => poNormVer(h.version)),
+    ...[p.previousVersion, p.upcomingVersion, p.androidPreviousVersion, p.androidUpcomingVersion, p.iosPreviousVersion, p.iosUpcomingVersion].filter(Boolean).map(poNormVer)
+  ]);
+  // Platform is not stored on release records; it is read from this project's own
+  // version data, and left blank when nothing matches.
+  const platformsFor = (versions) => {
+    if (!isApp) return ['WEB'];
+    const set = new Set();
+    versions.map(poNormVer).forEach(v => {
+      history.forEach(h => { if (poNormVer(h.version) === v && h.platform && h.platform !== 'APP') set.add(h.platform); });
+      if (v && (v === poNormVer(p.androidPreviousVersion) || v === poNormVer(p.androidUpcomingVersion))) set.add('ANDROID');
+      if (v && (v === poNormVer(p.iosPreviousVersion) || v === poNormVer(p.iosUpcomingVersion))) set.add('IOS');
+    });
+    return [...set];
+  };
+
+  const recordEntries = records.map(r => {
+    const all = r.versions || (r.version ? [r.version] : []);
+    const multiProject = (r.projectIds || []).length > 1;
+    const own = all.filter(v => knownVers.has(poNormVer(v)));
+    const versions = multiProject && own.length ? own : all; // don't show other projects' versions
+    return {
+      kind: 'record', id: r.id, name: r.name || 'Untitled release', versions, platforms: platformsFor(versions),
+      status: r.status || 'Draft', date: r.releaseDate || r.createdAt || '', createdAt: r.createdAt,
+      manager: r.managerName || '', notes: r.description || r.notes || ''
+    };
+  });
+  const recordVers = new Set(recordEntries.flatMap(e => e.versions.map(poNormVer)));
+  const versionEntries = history
+    .filter(h => !recordVers.has(poNormVer(h.version)))
+    .map(h => ({
+      kind: 'version', id: null, name: h.log || `${h.version} released`, versions: h.version ? [h.version] : [],
+      platforms: h.platform ? [h.platform] : [], status: 'Released', date: h.releasedAt || '', manager: '', notes: ''
+    }));
+  const byDateDesc = (a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0);
+  const releases = [...recordEntries, ...versionEntries].sort(byDateDesc);
+  const latestRelease = releases.find(r => r.status === 'Released' && r.date);
+
+  // Timeline from recorded dates only (the Activity log has no project reference).
+  const events = [];
+  const add = (date, text, ref = null, dateOnly = false) => { if (date) events.push({ date, text, ref, dateOnly }); };
+  add(p.createdAt, 'Project created');
+  if (p.updatedAt && p.updatedAt !== p.createdAt) add(p.updatedAt, 'Project last updated');
+  tasks.forEach(t => {
+    const ref = { action: 'view-task', id: t.id, label: t.title };
+    add(t.createdAt, 'Task created', ref);
+    if (poTaskStatus(t) === 'Done') add(t.completedDate, 'Task completed', ref, true); // time is a noon placeholder from the date picker
+  });
+  recordEntries.forEach(r => {
+    const ref = { action: 'view-release', id: r.id, label: r.name };
+    add(r.createdAt, 'Release created', ref);
+    if (r.status === 'Released' && r.date !== r.createdAt) add(r.date, 'Release published', ref);
+  });
+  versionEntries.forEach(v => add(v.date, 'Version released', { label: v.name }));
+  events.sort(byDateDesc);
+
+  return {
+    tasks, developers, releases, events, latestRelease,
+    stats: {
+      total: tasks.length, done: countBy(tasks, 'Done'), inProgress: countBy(tasks, 'In Progress'),
+      todo: countBy(tasks, 'To-Do'), onHold: countBy(tasks, 'On Hold')
+    }
+  };
+};
+
+const renderProjectOverview = () => {
+  const p = state.projects.find(x => x.id === state.overviewProjectId);
+  if (!p) { state.overviewProjectId = null; return renderProjects(); } // e.g. project was deleted
+
+  const isApp = p.projectType === 'app';
+  const d = getProjectOverviewData(p);
+  const esc = (s) => escapeHtml(s == null ? '' : String(s));
+  const ver = (v) => (!v || /^n\/a$/i.test(v)) ? '—' : esc(v);
+  const isDateOnly = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
+  const when = (s) => isDateOnly(s) ? fmtDate(s) : `${fmtDate(s)} · ${fmtTime(s)}`;
+  const overall = PO_OVERALL_STATUS[p.overallProjectStatus || 'YET_TO_START'] || PO_OVERALL_STATUS.YET_TO_START;
+  const statusCls = (s) => s.toLowerCase().replace(' ', '').replace('-', '');
+  const pct = d.stats.total ? Math.round((d.stats.done / d.stats.total) * 100) : 0;
+  const icon = {
+    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>',
+    edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+    client: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6"/></svg>',
+    rocket: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>',
+    tasks: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>',
+    team: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>',
+    clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>'
+  };
+  const cardHead = (ic, title, count, extra = '') => `
+    <div class="po-card-head">
+      <span class="po-card-icon">${ic}</span>
+      <h3 class="po-card-title">${title}</h3>
+      ${count != null ? `<span class="po-card-count">${count}</span>` : ''}
+      ${extra}
+    </div>`;
+
+  // ── Hero ──
+  const verPair = (label, prev, curr) => `
+    <div class="po-hero-meta-item">
+      <span class="po-hero-meta-label">${label}</span>
+      <span class="po-hero-meta-value po-hero-vers"><span class="po-hv prev">${ver(prev)}</span><span class="po-hv-arrow">→</span><span class="po-hv curr">${ver(curr)}</span></span>
+    </div>`;
+  const metaItem = (label, value) => `
+    <div class="po-hero-meta-item"><span class="po-hero-meta-label">${label}</span><span class="po-hero-meta-value">${value}</span></div>`;
+  const ringR = 34, ringC = 2 * Math.PI * ringR;
+  const hero = `
+    <section class="po-hero">
+      <div class="po-hero-bar">
+        <button class="po-hero-btn" data-action="close-project-overview">${icon.back} Projects</button>
+        <button class="po-hero-btn primary" data-action="edit-project" data-id="${p.id}">${icon.edit} Edit Project</button>
+      </div>
+      <div class="po-hero-body">
+        <div class="po-hero-main">
+          <div class="po-hero-chips">
+            <span class="po-hchip type">${isApp ? 'App' : 'Web'}</span>
+            <span class="po-hchip status ${overall.cls}"><i></i>${overall.label}</span>
+            ${p.priority ? `<span class="po-hchip prio ${esc(p.priority.toLowerCase())}">${esc(p.priority)} priority</span>` : ''}
+          </div>
+          <h2 class="po-hero-title">${esc(p.name)}</h2>
+          ${p.clientName ? `<div class="po-hero-client">${icon.client}<span>${esc(p.clientName)}</span></div>` : ''}
+          ${p.description ? `<div class="po-hero-desc">${formatFullDescription(esc(p.description))}</div>` : ''}
+          ${(p.statuses || []).length ? `<div class="po-hero-statuses">${p.statuses.map(s => `<span class="po-hstatus">${esc(s)}</span>`).join('')}</div>` : ''}
+        </div>
+        <div class="po-hero-ring" title="${d.stats.done} of ${d.stats.total} tasks completed">
+          <svg viewBox="0 0 80 80">
+            <circle class="track" cx="40" cy="40" r="${ringR}"/>
+            <circle class="fill" cx="40" cy="40" r="${ringR}" stroke-dasharray="${ringC.toFixed(2)}" stroke-dashoffset="${(ringC * (1 - pct / 100)).toFixed(2)}"/>
+          </svg>
+          <div class="po-hero-ring-label"><strong>${pct}%</strong><span>complete</span></div>
+          <div class="po-hero-ring-sub">${d.stats.done} / ${d.stats.total} tasks</div>
+        </div>
+      </div>
+      <div class="po-hero-meta">
+        ${metaItem('Client', esc(p.clientName) || '—')}
+        ${metaItem('Assigned Team', esc(p.assignedTeam) || '—')}
+        ${metaItem('Due Date', p.dueDate ? fmtDate(p.dueDate) : '—')}
+        ${isApp
+      ? verPair('Android', p.androidPreviousVersion, p.androidUpcomingVersion) + verPair('iOS', p.iosPreviousVersion, p.iosUpcomingVersion)
+      : verPair('Version', p.previousVersion, p.upcomingVersion || p.version)}
+        ${metaItem('Created', p.createdAt ? fmtDate(p.createdAt) : '—')}
+        ${metaItem('Last Updated', p.updatedAt ? timeAgo(p.updatedAt) : '—')}
+      </div>
+    </section>`;
+
+  // ── Stat strip ──
+  const stat = (label, value, tone) => `<div class="po-stat tone-${tone}"><span class="po-stat-num">${value}</span><span class="po-stat-label">${label}</span></div>`;
+  const stats = `
+    <div class="po-stats">
+      ${stat('Total Tasks', d.stats.total, 'neutral')}
+      ${stat('Completed', d.stats.done, 'done')}
+      ${stat('In Progress', d.stats.inProgress, 'progress')}
+      ${stat('Pending (To-Do)', d.stats.todo, 'todo')}
+      ${stat('On Hold', d.stats.onHold, 'hold')}
+      ${stat('Developers', d.developers.length, 'team')}
+      ${stat('Releases', d.releases.length, 'release')}
+      ${stat('Latest Release', d.latestRelease ? fmtDate(d.latestRelease.date) : '—', 'release date')}
+    </div>`;
+
+  // ── Releases (rail) ──
+  const releaseSection = `
+    <section class="po-card">
+      ${cardHead(icon.rocket, 'Release History', d.releases.length)}
+      ${d.releases.length === 0 ? `<div class="po-empty">${icon.rocket}<span>No releases recorded for this project yet.</span></div>` : `
+      <div class="po-rail">
+        ${d.releases.map((r, i) => {
+    const dt = r.date ? new Date(isDateOnly(r.date) ? r.date + 'T00:00:00' : r.date) : null;
+    const valid = dt && !isNaN(dt);
+    const isLatest = d.latestRelease && r === d.latestRelease;
+    return `
+          <div class="po-rail-item ${isLatest ? 'latest' : ''}">
+            <div class="po-rail-date">
+              ${valid ? `<span class="day">${dt.getDate()}</span><span class="mon">${dt.toLocaleDateString('en-IN', { month: 'short' })} ${dt.getFullYear()}</span>` : '<span class="mon">No date</span>'}
+            </div>
+            <div class="po-rail-node"><i></i></div>
+            <div class="po-rail-card ${r.kind === 'record' ? 'po-row-link' : ''}" ${r.kind === 'record' ? `data-action="view-release" data-id="${r.id}" title="Open release details"` : ''}>
+              <div class="po-rail-top">
+                <span class="po-rail-name">${esc(r.name)}</span>
+                ${isLatest ? '<span class="po-latest-tag">Latest</span>' : ''}
+                <span class="status-pill ${statusCls(r.status)} po-rail-status">${esc(r.status)}</span>
+              </div>
+              <div class="po-rail-tags">
+                ${r.versions.map(v => `<span class="po-ver">${esc(v)}</span>`).join('')}
+                ${r.platforms.map(pl => `<span class="po-platform ${pl.toLowerCase()}">${PO_PLATFORM_LABEL[pl] || esc(pl)}</span>`).join('')}
+                ${r.kind === 'version' ? '<span class="po-kind">Version release</span>' : ''}
+                ${r.manager ? `<span class="po-rail-mgr">Manager · <strong>${esc(r.manager)}</strong></span>` : ''}
+              </div>
+              ${r.notes ? `<div class="po-rail-notes">${esc(trimText(r.notes, 220))}</div>` : ''}
+            </div>
+          </div>`;
+  }).join('')}
+      </div>`}
+    </section>`;
+
+  // ── Task history ──
+  const filter = state.overviewTaskFilter || 'all';
+  const q = (state.overviewTaskSearch || '').trim();
+  const shownTasks = d.tasks
+    .filter(t => filter === 'all' || poTaskStatus(t) === filter)
+    .filter(t => !q || (t.title || '').toLowerCase().includes(q) || getTaskDevNames(t).join(' ').toLowerCase().includes(q))
+    .sort((a, b) => (Date.parse(b.createdAt || b.startDate) || 0) - (Date.parse(a.createdAt || a.startDate) || 0));
+  const filters = [['all', 'All', d.stats.total], ['Done', 'Completed', d.stats.done], ['In Progress', 'In Progress', d.stats.inProgress], ['To-Do', 'To-Do', d.stats.todo], ['On Hold', 'On Hold', d.stats.onHold]];
+  const taskSection = `
+    <section class="po-card">
+      ${cardHead(icon.tasks, 'Task History', d.tasks.length)}
+      <div class="po-toolbar">
+        <div class="po-seg">
+          ${filters.map(([val, label, n]) => `<button class="po-seg-btn ${filter === val ? 'active' : ''}" data-action="po-task-filter" data-filter="${val}">${label}<span>${n}</span></button>`).join('')}
+        </div>
+        <div class="page-search-wrap po-search">
+          <svg class="page-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          <input type="text" class="page-search-input" id="poTaskSearchInput" placeholder="Search task or developer…" value="${esc(state.overviewTaskSearch || '')}" />
+        </div>
+      </div>
+      ${shownTasks.length === 0 ? `<div class="po-empty">${icon.tasks}<span>${d.tasks.length === 0 ? 'No tasks are linked to this project yet.' : 'No tasks match this filter.'}</span></div>` : `
+      <div class="po-table-wrap">
+        <table class="po-table po-task-table">
+          <thead><tr><th>Task</th><th>Status</th><th>Priority</th><th>Developer(s)</th><th>Start → End</th><th>Created</th><th>Completed</th><th>Work Done</th></tr></thead>
+          <tbody>
+            ${shownTasks.map(t => {
+    const s = poTaskStatus(t);
+    const devs = getTaskDevNames(t);
+    const prio = t.priority || 'Medium';
+    return `<tr class="po-row-link" data-action="view-task" data-id="${t.id}" title="Open task details">
+                <td class="po-task-title">${esc(t.title)}</td>
+                <td><span class="po-tstatus ${statusCls(s)}"><i></i>${s}</span></td>
+                <td><span class="po-prio ${esc(prio.toLowerCase())}"><i></i>${esc(prio)}</span></td>
+                <td class="po-task-devs">${devs.length ? esc(devs.join(', ')) : '<span class="po-muted">—</span>'}</td>
+                <td class="nowrap">${t.startDate ? fmtDate(t.startDate) : '—'}<br><span class="po-muted">→ ${t.endDate ? fmtDate(t.endDate) : '—'}</span></td>
+                <td class="nowrap">${t.createdAt ? fmtDate(t.createdAt) : '—'}</td>
+                <td class="nowrap">${s === 'Done' && t.completedDate ? fmtDate(t.completedDate) : '<span class="po-muted">—</span>'}</td>
+                <td class="po-workdone" title="${esc(t.workDone || '')}">${t.workDone ? esc(trimText(t.workDone, 110)) : '<span class="po-muted">—</span>'}</td>
+              </tr>`;
+  }).join('')}
+          </tbody>
+        </table>
+      </div>`}
+    </section>`;
+
+  // ── Team (developer involvement) ──
+  const seg = (n, total, cls) => n ? `<span class="${cls}" style="width:${(n / total) * 100}%"></span>` : '';
+  const teamSection = `
+    <section class="po-card">
+      ${cardHead(icon.team, 'Developer Involvement', d.developers.length)}
+      ${d.developers.length === 0 ? `<div class="po-empty">${icon.team}<span>No developers are linked to this project or its tasks yet.</span></div>` : `
+      <div class="po-team">
+        ${d.developers.map(dv => {
+    const initials = dv.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'DV';
+    const parts = [[dv.done, 'done'], [dv.inProgress, 'in progress'], [dv.todo, 'to-do'], [dv.onHold, 'on hold']].filter(([n]) => n).map(([n, l]) => `${n} ${l}`);
+    return `
+          <div class="po-dev-row">
+            <span class="po-dev-avatar" style="background:${getAvatarGradient(dv.name)}">${esc(initials)}</span>
+            <div class="po-dev-info">
+              <div class="po-dev-top">
+                <span class="po-dev-name">${esc(dv.name)}</span>
+                ${dv.member ? '' : '<span class="po-dev-note" title="Not linked to this project in Developer Management">tasks only</span>'}
+                <span class="po-dev-total" title="Tasks assigned">${dv.total}</span>
+              </div>
+              <div class="po-dev-bar">${dv.total ? seg(dv.done, dv.total, 'done') + seg(dv.inProgress, dv.total, 'progress') + seg(dv.todo, dv.total, 'todo') + seg(dv.onHold, dv.total, 'hold') : ''}</div>
+              <div class="po-dev-legend">${parts.length ? parts.join(' · ') : 'No tasks yet'}</div>
+            </div>
+          </div>`;
+  }).join('')}
+      </div>
+      <div class="po-legend"><span><i class="done"></i>Completed</span><span><i class="progress"></i>In Progress</span><span><i class="todo"></i>To-Do</span><span><i class="hold"></i>On Hold</span></div>`}
+    </section>`;
+
+  // ── Timeline ──
+  const timelineSection = `
+    <section class="po-card">
+      ${cardHead(icon.clock, 'Project Timeline', d.events.length, '<span class="po-card-note">From task &amp; release records</span>')}
+      ${d.events.length === 0 ? `<div class="po-empty">${icon.clock}<span>No dated history for this project yet.</span></div>` : `
+      <ul class="po-timeline">
+        ${d.events.map(ev => `
+          <li class="po-tl-item">
+            <span class="po-tl-dot"></span>
+            <div class="po-tl-body">
+              <span class="po-tl-text">${ev.text}${ev.ref ? `: ${ev.ref.action
+      ? `<button type="button" class="po-tl-ref" data-action="${ev.ref.action}" data-id="${ev.ref.id}">${esc(ev.ref.label)}</button>`
+      : `<span class="po-tl-ref-plain">${esc(ev.ref.label)}</span>`}` : ''}</span>
+              <span class="po-tl-date">${ev.dateOnly ? fmtDate(ev.date) : when(ev.date)}</span>
+            </div>
+          </li>`).join('')}
+      </ul>`}
+    </section>`;
+
+  return `
+    <div class="po-page">
+      ${hero}
+      ${stats}
+      <div class="po-layout">
+        <div class="po-main">${releaseSection}</div>
+        <aside class="po-side">${teamSection}${timelineSection}</aside>
+      </div>
+      ${taskSection}
+    </div>`;
 };
 
 // ─── Tasks ───────────────────────────────────────────────
@@ -4518,7 +4897,7 @@ const attachCardListeners = () => {
 
   // Click delegation
   content.addEventListener('click', async e => {
-    const toggleBtn = e.target.closest('.view-toggle-btn');
+    const toggleBtn = e.target.closest('.view-toggle-btn[data-view-mode]');
     if (toggleBtn) {
       const mode = toggleBtn.dataset.viewMode;
       state.projectsViewMode = mode;
@@ -4578,7 +4957,12 @@ const attachCardListeners = () => {
       const card = btn.closest('[data-id]');
       const cardId = id || (card ? card.dataset.id : null);
 
-      if (action === 'edit-project') openProjectModal(cardId);
+      if (action === 'open-project-overview') openProjectOverview(cardId);
+      else if (action === 'close-project-overview') closeProjectOverview();
+      else if (action === 'po-task-filter') { state.overviewTaskFilter = btn.dataset.filter; render(); }
+      else if (action === 'view-task') openDetailModal('task', cardId);
+      else if (action === 'view-release') openDetailModal('release', cardId);
+      else if (action === 'edit-project') openProjectModal(cardId);
       else if (action === 'delete-project') confirmDeleteProject(cardId);
       else if (action === 'clear-release-history') confirmClearReleaseHistory(cardId);
       else if (action === 'edit-task') openTaskModal(cardId);
@@ -5144,6 +5528,12 @@ const attachCardListeners = () => {
     if (testInput) {
       clearTimeout(pageSearchTimer);
       pageSearchTimer = setTimeout(() => { state.testSearch = testInput.value.toLowerCase(); rerenderPreservingFocus(testInput); }, 180);
+      return;
+    }
+    const poTaskInput = e.target.closest('#poTaskSearchInput');
+    if (poTaskInput) {
+      clearTimeout(pageSearchTimer);
+      pageSearchTimer = setTimeout(() => { state.overviewTaskSearch = poTaskInput.value.toLowerCase(); rerenderPreservingFocus(poTaskInput); }, 180);
       return;
     }
     const releaseInput = e.target.closest('#releaseSearchInput');
@@ -6087,6 +6477,14 @@ const openDetailModal = (type, id) => {
               <div class="detail-meta-value" style="color:var(--accent); font-weight:600;">${project.upcomingVersion || '–'}</div>
             </div>
           `}
+          <div class="detail-meta-item">
+            <span class="detail-meta-label">Client</span>
+            <div class="detail-meta-value">${escapeHtml(project.clientName) || '–'}</div>
+          </div>
+          <div class="detail-meta-item">
+            <span class="detail-meta-label">Assigned Team</span>
+            <div class="detail-meta-value">${escapeHtml(project.assignedTeam) || '–'}</div>
+          </div>
           <div class="detail-meta-item">
             <span class="detail-meta-label">Created</span>
             <div class="detail-meta-value">${fmtDate(project.createdAt)}</div>
