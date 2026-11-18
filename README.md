@@ -650,7 +650,8 @@ Downloads/Extensions/project-extension/Backup/clair-autobackup-2026-11-18_18-00-
 - **Configure it** in **Settings → Data Portability → Automatic Backup**: turn it on/off, and set the time with the time picker + **Save**. Settings also shows the last successful backup and whether the last run succeeded or failed (with the reason).
 - **Runs in the background** — no Clair tab needs to be open. Chrome itself must be running; if it wasn't at the scheduled time, **one** catch-up backup runs when Chrome next starts.
 - **No duplicates, no retry loops** — a backup is due only when the last attempt happened before the most recent scheduled time, and the attempt is recorded before it runs. A failure is shown in Settings and retried at the next scheduled time.
-- **After install or update**, the first automatic backup happens at the next scheduled time (no immediate backup).
+- **When the scheduler first becomes active** (install, or reloading after updating to 2.4.0), it runs one backup straight away for the most recent scheduled time, then follows the schedule. On a brand-new install with no data yet, that first run shows *Failed — No saved Clair data found to back up* until data exists.
+- **After updating Clair, reload it at `chrome://extensions`.** Refreshing the Clair tab loads the new page but not the new background script or permissions; until the extension is reloaded, Settings shows a "Not active yet" warning and no automatic backup runs.
 - **Success means the file exists** — status is set to Success only after Chrome reports the download complete.
 - Each automatic backup appears in Chrome's downloads list. Old backups are not deleted automatically (roughly the size of one manual export per day).
 
@@ -697,7 +698,7 @@ Keys appear in the order defined by `ClairBackup.KEYS` in [backup.js](backup.js)
 | Fonts display as system fallback | Google Fonts request blocked by network | The app is fully functional; only the typeface changes |
 | Version shows wrong value | `manifest.json` version not updated | Update the `"version"` field in `manifest.json` and reload the extension |
 | Chart does not appear on dashboard | No tasks with a `completedAt` date in selected month | Complete at least one task; or navigate to a month that has completions |
-| Automatic backup never runs | Extension not reloaded after updating, backups disabled, or Chrome closed at the scheduled time | Reload the extension at `chrome://extensions`; check Settings → Automatic Backup is enabled; a missed run happens once when Chrome next starts |
+| Automatic backup never runs / Settings says "Not active yet" | Extension not reloaded after updating (the tab shows new code, but Chrome still runs the old background script without the `alarms` permission), backups disabled, or Chrome closed at the scheduled time | Reload Clair at `chrome://extensions` — a missed run is then caught up straight away; check Settings → Automatic Backup is enabled |
 | Automatic Backup status: "No saved Clair data found to back up" | Clair has never saved any data in this browser profile | Open Clair and add or import data; the next scheduled run will succeed |
 | Automatic Backup status: "Download interrupted (…)" | Downloads folder unavailable, disk full, or permissions | Fix the Downloads location/space; the next scheduled run retries (or use manual Export now) |
 | Automatic backup ran at an unexpected time | Backup time changed to a time already passed today with no backup since — one catch-up runs immediately by design | Expected; later runs follow the saved time |

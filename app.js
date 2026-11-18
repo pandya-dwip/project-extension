@@ -4597,6 +4597,10 @@ const renderAutoBackupSettings = () => {
     return `<div class="auto-backup-box"><div class="auto-backup-row"><span>Automatic Backup</span><strong>Available in the installed extension only</strong></div></div>`;
   }
   const enabled = ab.autoBackupEnabled !== false;
+  // getManifest() reflects the extension Chrome actually has loaded. Without the
+  // alarms permission, an updated page is talking to an old background script that
+  // has no scheduler — settings would save but no backup would ever run.
+  const schedulerLoaded = (chrome.runtime.getManifest().permissions || []).includes('alarms');
   const at = (iso) => iso ? `${fmtDate(iso)}, ${fmtTime(iso)}` : 'Not yet';
   let statusHtml = '<span class="auto-backup-muted">No automatic backup has run yet</span>';
   if (ab.autoBackupStatus === 'success') statusHtml = '<span class="auto-backup-pill ok">Success</span>';
@@ -4616,6 +4620,7 @@ const renderAutoBackupSettings = () => {
           <span class="switch-slider"></span>
         </label>
       </div>
+      ${schedulerLoaded ? '' : `<div class="auto-backup-error"><strong>Not active yet.</strong> Clair was updated but Chrome is still running the previous version, so no automatic backup will run. Open <code>chrome://extensions</code> and click Reload on Clair.</div>`}
       <div class="auto-backup-row"><span>Automatic Backup</span><strong>${enabled ? 'Enabled' : 'Disabled'}</strong></div>
       <div class="auto-backup-row"><span>Schedule</span><strong>Daily at ${fmtBackupTime(autoBackupTimeOf())}</strong></div>
       <div class="auto-backup-row auto-backup-time-row">

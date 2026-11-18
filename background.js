@@ -154,12 +154,9 @@ function maybeBackup() {
     const { enabled, hour, minute } = await getBackupSettings();
     if (!enabled) return;
     const now = new Date();
-    const { autoBackupLastAttemptAt } = await chrome.storage.local.get('autoBackupLastAttemptAt');
-    if (autoBackupLastAttemptAt === undefined) {
-      // First run after install/update: start with the next scheduled time, no instant backup.
-      await chrome.storage.local.set({ autoBackupLastAttemptAt: now.getTime() });
-      return;
-    }
+    // Never attempted (first activation) counts as missed: the most recent scheduled
+    // time is caught up once, so a time chosen before the scheduler was active still runs.
+    const { autoBackupLastAttemptAt = 0 } = await chrome.storage.local.get('autoBackupLastAttemptAt');
     if (autoBackupLastAttemptAt >= lastScheduledAt(hour, minute, now)) return; // already ran (or was attempted)
     await chrome.storage.local.set({ autoBackupLastAttemptAt: now.getTime() });
     await runBackup(now);
