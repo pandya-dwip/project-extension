@@ -4,7 +4,7 @@
 
 **A local-first project & release tracker — built as a Chrome Extension**
 
-![Version](https://img.shields.io/badge/version-2.5.0-informational?style=flat-square)
+![Version](https://img.shields.io/badge/version-2.6.0-informational?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Chrome%20Extension-4285F4?style=flat-square&logo=googlechrome&logoColor=white)
 ![Manifest](https://img.shields.io/badge/manifest-V3-success?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-Vanilla%20JS%20%2F%20HTML%20%2F%20CSS-F7DF1E?style=flat-square)
@@ -12,7 +12,7 @@
 ![Storage](https://img.shields.io/badge/storage-SQLite%20(sql.js)-blueviolet?style=flat-square)
 ![Theme](https://img.shields.io/badge/theme-light%20%2F%20dark-333333?style=flat-square)
 
-Track projects, tasks, releases, and your team — entirely in your browser, with no server required.
+Track projects, tasks, releases, test cases, and your team — entirely in your browser, with no server required.
 
 </div>
 
@@ -43,7 +43,7 @@ Clair is a single-page Chrome Extension (Manifest V3) for coordinating software 
 
 All data is stored in a real **SQLite database** running in-browser via [sql.js](https://github.com/sql-js/sql.js) (SQLite compiled to WebAssembly), persisted to **IndexedDB** so it survives reloads, browser restarts, and extension updates. Existing installs are migrated automatically and exactly once — legacy `chrome.storage.local` (or `localStorage`, in standalone mode) data is read, inserted into SQLite inside a transaction, verified, and only then cleared. A JSON export/import flow still provides backup and cross-device portability on top of that.
 
-The UI also supports **light and dark themes** — either following the OS setting automatically, or pinned explicitly from Settings → Appearance (the choice persists in the database).
+The UI also supports **light and dark themes** — either following the OS setting automatically, or pinned explicitly from Settings → General (the choice persists in the database).
 
 The current app version is displayed in the sidebar footer and is always read directly from `manifest.json` — it updates automatically whenever the manifest version is bumped.
 
@@ -52,6 +52,32 @@ The current app version is displayed in the sidebar footer and is always read di
 ---
 
 ## What's New
+
+### v2.6.0
+
+#### UI redesign: Dashboard, Release Points, Settings, Test Case Management
+
+- **Dashboard → Recent Tasks** — a status bar with Done / In Progress / To-Do / On Hold counts, a **Needs attention** list (overdue and due within 3 days, labelled "22 days overdue", "Due tomorrow", …) and **Recently completed**. Rows open the task.
+- **Dashboard → Test Cases by Project** — overall pass rate with a results bar and legend, then one row per project (results bar, pass % coloured by health, red "N failed" badge, total). Rows open the project in Test Case Management.
+- **Dashboard → Active Releases & Plans** — release stage pipeline (Draft → Released), **In flight** releases with their release points nested underneath (see the fix below), and **Recently shipped**.
+- **Release Points → accordion** — the cards are replaced by a collapsible list grouped into **In progress** and **Completed**. Each row shows a progress ring, title, projects, type, versions, the release it belongs to, assignees, and last update; expanding it shows the full checklist (no truncation). Ticking an item updates progress in place, and checklist rows work from the keyboard (Space/Enter). Project filter chips with done/total counts, **Expand all / Collapse all**, and search that also looks inside checklist items (matches open automatically). Incomplete and newly saved release points start expanded.
+- **Settings → section menu** — a two-pane layout: **General** (theme cards with previews, default startup module), **Modules**, **Data & Backups** (export/import/report, automatic backup, storage stats), **Integrations** (Jira), **Danger Zone**. Arrow keys move between sections; on phones the menu becomes a horizontal tab strip. All existing controls keep their behaviour.
+- **Test Case Management → three levels**:
+  1. **Home** — totals and pass rate, project cards (pass-rate ring, cases/modules/last run, results bar, failing or all-passing badge), projects without tests in a compact strip; search and sort (most cases, most failures, lowest pass rate, name).
+  2. **Project overview** — KPI strip, results donut, breakdowns by priority / type / assignee, a modules table (results bar, pass %, failures; rename, delete, add), and **Open failures**. **Open test scenarios →** goes to level 3.
+  3. **Test scenarios** — module rail, status chips with live counts, priority/type filters, search, selection mode, and a slimmer table (ID, scenario with module and simplified scenario, status, priority, assignee, executed date). Click a row to expand it and edit Module, Severity, Type, Defect ID, and the long text fields — edits still save automatically. Pagination, Import Excel, Bulk Update, and Add Test Case are unchanged.
+
+#### Fixes
+
+- **Release point versions shown twice** — a release point displayed its linked release's version (`v1.7.0`) *and* its own ticked versions, which are stored as the form's labels (`v1.7.0 (Up)`), so ticking the upcoming version showed both. Versions are now shown once, without the stale "(Up)/(Prev)" suffix; a platform label ("Android v1.7.3") wins over a bare one. Stored data is unchanged.
+- **Which release point belongs to which release** — the Dashboard listed releases and release points as one flat list. They are now grouped: a release point belongs to its **Linked Release**, or — if none is set — to a release of the same project that includes one of its versions (marked "matched by version" / dashed tag). Remaining open release points are listed as "not linked to a release".
+- **Linked Release dropdown** — now lists releases where the selected project isn't the release's first project, and no longer shows "(undefined)" for multi-version releases.
+- **Test cases** — non-date text in an execution date no longer shows as "Invalid Date"; in selection mode, clicking a scenario title selects the row instead of expanding it; module checkboxes in selection mode, which never had any effect, were removed.
+- Release point checklist text and ticket titles are HTML-escaped.
+
+#### Manifest
+
+- Version 2.6.0, a clearer description, `short_name`, and `minimum_chrome_version: 116` (the automatic backup uses `chrome.runtime.getContexts`, available from Chrome 116).
 
 ### v2.5.0
 
@@ -191,19 +217,20 @@ The current app version is displayed in the sidebar footer and is always read di
 
 | Area | What you can do |
 |---|---|
-| **Dashboard** | Live counts for projects, tasks, and insights; weekly task completion bar chart; released projects by month; recent projects, tasks, and insights. |
+| **Dashboard** | Live counts for projects, tasks, insights, releases, and release points; weekly task completion chart; released projects by month; Recent Tasks (status mix, needs attention, recently completed); Test Cases by Project; Active Releases & Plans (stage pipeline, in-flight releases with their release points, recently shipped). |
 | **Projects** | Create web and mobile app projects with platform-specific version fields; support custom metadata (Client, Team, Due Date, Priority); toggle between classic 3-column List view and 5-column lifecycle Kanban board view with HTML5 drag-and-drop; manually reorder projects in List view by dragging; search, filter, edit, delete; open a per-project **Project Details** page with stats, developer involvement, release history, timeline, and task history. |
 | **Tasks** | 4-column Kanban board (To-Do, In Progress, Done, On Hold); drag cards between columns; visual date alerts for overdue, due-today, and due-tomorrow tasks; assign tasks to developers; log a free-text "Work Done" note per task; filter by a Start Date range (From/To). |
 | **Project Insights** | Capture issues, enhancements, and notes per project; track each item through a Dev → QA → Done workflow; filter by developer, status, and assignment state. |
 | **Release Management** | Log releases sorted by release date; advance through a seven-stage status workflow (Draft → Released); generate email-style release announcements; copy notes to clipboard. |
-| **Release Points** | Compact horizontal cards in a two-column grid; slim progress bar per card; inline delete for checklist items; bulk add with a count picker; scroll-preserving checklist toggle; checklist ticket links show the ticket key, not a truncated URL. |
+| **Release Points** | Accordion list grouped into In progress / Completed; progress ring and bar per release point; full checklist on expand with in-place, keyboard-accessible ticking; project filter chips, Expand/Collapse all, search inside checklist items; shows the release each point belongs to; bulk add and bulk assign in the editor; import Jira tickets as checklist items; ticket links show the ticket key. |
 | **Notes** | Organize notes by project; create main folders and 1-level subfolders; write notes with a 10-item Markdown toolbar & Edit/Preview mode toggle; move notes across project/folder tree; debounced search & sort by updated date, creation date, or title. |
-| **Test Case Management** | Enter structured test cases with priority, severity, module, and status; import cases from Excel/CSV; a searchable project dropdown ("All Projects" first, showing per-project summary cards) replaces per-project tabs; inline modules row; pass-rate donut + status-breakdown bar chart; paginated table (configurable rows per page). |
+| **Test Case Management** | Three levels: a home page of project cards with pass rates; a project overview with KPIs, results donut, priority/type/assignee breakdowns, modules table, and open failures; and a test scenarios page with a module rail, status chips, filters, expandable rows with autosaving fields, bulk selection, and pagination. Import cases from Excel/CSV; bulk update. |
 | **Developers** | Maintain a developer registry; link developers to projects so they appear in context-sensitive dropdowns on tasks and insights. |
 | **Activity Feed** | Timestamped audit trail of every create, update, delete, move, and copy action (capped at 200 entries). |
 | **Data Portability** | Export all collections to a single JSON file; automatic daily JSON backup at a configurable time (default 6:00 PM); restore from any previous export; clear all data after a mandatory backup prompt. Underlying storage is SQLite, but the export/import file shape is unchanged. |
 | **Responsive UI** | Sidebar collapses to a hamburger menu on small screens; card grids and Kanban boards reflow for mobile and tablet. |
-| **Appearance** | Light and dark themes, resolved in JS (System follows the OS setting, or pin Light/Dark explicitly) from Settings → Appearance; choice persists across reloads. |
+| **Settings** | Section menu (General, Modules, Data & Backups, Integrations, Danger Zone): theme, default startup module, sidebar module visibility, backup/import/report, automatic backup, storage stats, Jira connection, clear database. |
+| **Appearance** | Light and dark themes, resolved in JS (System follows the OS setting, or pin Light/Dark explicitly) from Settings → General; choice persists across reloads. |
 | **Global Search** | `Ctrl+K` / `Cmd+K` opens instant search across projects, tasks, and developers from any screen. |
 | **Version Badge** | App version shown in the sidebar footer; auto-read from `manifest.json` — always stays in sync. |
 
@@ -237,21 +264,29 @@ Clair is a single-page application. Navigation switches the rendered view in pla
 
 | Screen | Internal view key | Purpose |
 |---|---|---|
-| Dashboard | `dashboard` | Live metrics, weekly chart, released projects, and recent records |
+| Dashboard | `dashboard` | Live metrics, weekly chart, released projects, recent tasks, test cases, and releases in flight |
 | Projects | `projects` | Project catalog with 3-column cards, version boxes, and release actions |
 | Project Details | `projects` + `state.overviewProjectId` | Per-project page: stats, developers, release history, timeline, tasks |
 | Tasks | `tasks` | Kanban board for task execution |
 | Project Insights | `tests` | Issue, enhancement, and note board per project |
 | Release Management | `releases` | Release lifecycle and note generation (sorted by release date) |
-| Release Points | `releasepoints` | Compact checklist cards with bulk add and inline delete |
+| Release Points | `releasepoints` | Accordion of release readiness checklists, grouped by In progress / Completed |
 | Notes | `notes` | Project-based notes & Markdown workspace with 1-level subfolder hierarchy |
-| Test Cases | `testcases` | Structured test case entry and management |
+| Test Cases | `testcases` + `state.activeTestCaseProjectId` / `state.tcPage` | Home (all projects) → project overview → test scenarios |
 | Activity | `activity` | Chronological audit feed |
-| Settings | `settings` | Export, import, clear data, and developer management |
+| Settings | `settings` + `state.settingsSection` | General, Modules, Data & Backups, Integrations, Danger Zone |
 
 ### Dashboard
 
-Displays four metric cards (projects, tasks, insights, top status), a weekly task completion bar chart with month navigation, a "Released" section showing projects released in the selected month, and three lists showing the four most recent projects, five most recent tasks, and five most recent insights. Auto-updates whenever data changes.
+A hero with live counts, then:
+
+- **Released** — releases shipped in the selected month (month navigation).
+- **Charts & Metrics** — tasks completed per week of the selected month.
+- **Recent Tasks** — status bar and counts; **Needs attention** (open tasks overdue or due within 3 days, with "N days overdue" / "Due tomorrow" labels); **Recently completed**. Rows open the task.
+- **Test Cases by Project** — overall pass rate and one row per project (results bar, pass %, failed badge, total); rows open that project in Test Case Management.
+- **Active Releases & Plans** — stage pipeline; **In flight**: each release at Planned / In Progress / Testing / Approved (or with open checklist work) with its release points nested and their progress; open release points with no release under "not linked to a release"; **Recently shipped**.
+
+A release point belongs to a release through its **Linked Release** field; when that isn't set, it is matched to a release of the same project that includes one of its versions and labelled "matched by version". Everything updates whenever data changes.
 
 ### Projects
 
@@ -327,11 +362,14 @@ The release metrics header shows counts per stage group: Draft/Planned, Active/T
 
 ### Release Points
 
-Cards use a horizontal two-column layout (info + slim progress bar on the left, scrollable checklist on the right) and sit in a responsive two-column grid.
+An accordion list: a compact header (totals, in progress, completed, upcoming, overall checks ring), a toolbar (search, type, status, Expand all / Collapse all, **New Release Point**), project filter chips with done/total counts, then two groups — **In progress** and **Completed**.
 
-**Checklist interactions on the card:**
-- Click any item row to toggle it done/undone — scroll position is fully preserved (no full page refresh).
-- Click the pencil icon on an item to enter inline edit mode, which shows **Save**, **Cancel**, and **Delete** buttons.
+Each collapsed row shows the progress ring, title, projects, Upcoming/Released, versions (each once), the release it belongs to (solid tag = Linked Release, dashed tag = matched by version), a progress bar, assignee avatars, and last update; edit and delete sit on the right. Incomplete and newly saved release points start expanded, and the open/closed state survives re-renders.
+
+**Checklist interactions (expanded row):**
+- Click an item — or focus it and press Space/Enter — to toggle it done/undone. Progress updates in place; the row stays where it is until the next render.
+- Click the pencil icon on an item for inline edit (**Save** / **Cancel**).
+- Search also matches checklist text, tickets, and Jira keys, and opens the matching release points.
 
 **Adding checklist items in the modal:**
 - **Add Item** — inserts one empty row.
@@ -339,23 +377,27 @@ Cards use a horizontal two-column layout (info + slim progress bar on the left, 
 
 ### Test Case Management
 
-- **Project selector**: a searchable dropdown (top-right, "All Projects" listed first) replaces the old horizontal-scrolling project tabs.
-- **"All Projects" (default)**: shows a card per project — case count and a Passed/Failed/Blocked/Untested breakdown with a pass-rate bar. Clicking a card (or picking it from the dropdown) drills into that project.
-- **A specific project selected**: shows the Modules row (inline, next to the project dropdown, horizontal pills — only present in this mode), two chart cards (pass-rate donut + a Status Breakdown bar chart of Passed/Failed/Blocked/Untested), the filter toolbar (search, run status, priority, type, Import Excel, Bulk Update, Select Cases), and the full test case table.
-- **Pagination**: rows-per-page selector (5 / 10 / 25 / 50 / 100 / 150 / All, default 25) with Prev/Next and a "Showing X–Y of Z" indicator, replacing the previous "load 100 more on scroll" behavior.
-- **Bulk selection**: "Select Cases" enables checkboxes for multi-select, bulk field updates, and bulk delete.
-- **Excel/CSV import**: drag-and-drop or file picker, with column auto-mapping (editable before import) and duplicate detection.
+Three levels, with a breadcrumb (Test Cases / Project / Test scenarios) to move back up:
+
+1. **Home** — totals (total, passed, failed, blocked, untested) and overall pass rate; a card per project with test cases (pass-rate ring, cases, modules, last run, results bar, "N failing" / "All passing"); projects without test cases in a compact "No test cases yet" strip. Search projects and sort by most cases, most failures, lowest pass rate, or name. Import Excel and Add Test Case are available here too.
+2. **Project overview** — KPIs (cases, passed, failed, blocked, untested, pass rate, automated %), a results donut, breakdowns by priority, type, and assignee, a **Modules** table (results bar, pass %, failures; click a module to see its scenarios; rename/delete; Add Module), and **Open failures** (failed and blocked cases with defect keys; "View all in scenarios"). **Open test scenarios →** goes to level 3.
+3. **Test scenarios** — a module rail (All cases, each module, counts, add/rename/delete), search, status chips with live counts, priority and type filters, and the table: ID, scenario (module and simplified scenario underneath), status, priority, assignee, executed date. Failed/blocked rows are edged red/amber. **Click a row to expand it** and edit Module, Severity, Type, Defect ID, Scenario, Simplified scenario, Description, Steps, Expected, Actual, and Comments — every field saves automatically. The eye icon opens the details popup.
+
+- **Pagination**: rows per page (5 / 10 / 25 / 50 / 100 / 150 / All, default 25) with Prev/Next.
+- **Selection**: "Select cases" switches row clicks to selecting; Select all (filtered), Clear, Delete selected.
+- **Excel/CSV import**: drag-and-drop or file picker, with column auto-mapping (editable before import) and duplicate detection. **Bulk Update** edits fields across many cases.
 
 ### Settings
 
-- **Appearance** — choose System / Light / Dark theme; persists across reloads.
-- **System overview** — record counts and estimated storage size.
-- **Export** — downloads a timestamped JSON file to the `Backup/` folder.
-- **Automatic Backup** — on/off switch, backup time (picker + **Save**, default 6:00 PM), last successful backup with file name, and Success/Failed status with the error message. See [Automatic Backups](#automatic-backups).
-- **Integrations → Jira** — Jira site URL, Atlassian email, API token (masked; blank keeps the saved one), Save Configuration / Test Connection / Disconnect Jira, and the connection status.
-- **Import** — restores from any previously exported JSON file.
-- **Clear database** — wipes all SQLite tables after triggering an export.
-- **Developer management** — add, edit, and delete developers; link them to projects.
+A section menu on the left (arrow keys move between sections; a horizontal tab strip on phones) and one section at a time on the right:
+
+- **General** — theme cards with previews (System / Light / Dark); default startup module.
+- **Modules** — show or hide each sidebar module (hidden modules keep their data; Settings is always on).
+- **Data & Backups** — Export backup (timestamped JSON to the `Backup/` folder), Import backup, Excel report; **Automatic backup** (on/off, backup time with **Save**, last successful backup, Success/Failed with the reason — see [Automatic Backups](#automatic-backups)); storage counts and data size.
+- **Integrations** — **Jira Cloud**: site URL, Atlassian email, API token (masked; blank keeps the saved one), Save Configuration / Test Connection / Disconnect Jira, and the connection status.
+- **Danger Zone** — Clear database (all SQLite tables, after exporting a backup first).
+
+Developers are managed on the **Developers** page.
 
 ---
 
@@ -366,6 +408,9 @@ Cards use a horizontal two-column layout (info + slim progress bar on the left, 
 | `Ctrl+K` / `Cmd+K` | Open global search |
 | `Ctrl+Enter` / `Cmd+Enter` | Save the active modal form |
 | `Escape` | Close the active modal |
+| `Space` / `Enter` | On a focused Release Point checklist item: tick / untick it |
+| `Enter` / `Space` | On a focused module in the Test scenarios rail: show that module |
+| `↑` / `↓` / `Home` / `End` | In the Settings section menu: move between sections |
 
 ---
 
@@ -591,15 +636,15 @@ DEVELOPER ─┬── PROJECT       (developer.projectIds[])
 
 ```
 project-extension/
-├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 2.5.0)
+├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 2.6.0)
 ├── background.js            Service worker — tab lifecycle + scheduled automatic backup
 ├── backup.js                Shared JSON backup format, Backup/ folder path, auto-backup filename
 ├── jira.js                  Jira Cloud client (API token auth): test connection, projects, issue search
 ├── offscreen.html / .js     Hidden page that builds the auto-backup file (blob URL) for the service worker
 ├── index.html               Static shell: sidebar, top bar, modals, form controls
-├── app.js                   Single-page controller (~12 600 lines)
+├── app.js                   Single-page controller (~12 900 lines)
 ├── db.js                    ClairDB — SQLite persistence layer, schema, migration, snapshot (~260 lines)
-├── style.css                Complete stylesheet with CSS custom properties (~9 900 lines)
+├── style.css                Complete stylesheet with CSS custom properties (~10 600 lines)
 ├── sql-wasm.js              sql.js (SQLite → WebAssembly) loader, vendored
 ├── sql-wasm.wasm            SQLite compiled to WebAssembly
 ├── chart.umd.min.js         Bundled Chart.js v4.4.4 (local, no CDN)
@@ -750,8 +795,8 @@ Clair follows a no-build, no-framework approach. Keep contributions consistent w
 - [ ] Dashboard weekly chart renders for the selected month.
 - [ ] Dashboard "Released" section filters correctly when navigating months.
 - [ ] Release cards are sorted by release date (most recent first).
-- [ ] Release Point checklist toggle preserves scroll position.
-- [ ] Inline checklist item delete removes the item without opening the modal.
+- [ ] Release Points: rows are grouped into In progress / Completed; clicking a row expands/collapses it; Expand all / Collapse all work; ticking an item (mouse or Space/Enter) updates the count in place and the row stays open; project chips filter; searching a ticket key opens the matching release point; each version appears once; the release tag is solid for a Linked Release and dashed for "matched by version".
+- [ ] Dashboard: Recent Tasks counts match task statuses; Needs attention lists overdue/due-soon tasks; Test Cases by Project rows open the project; Active Releases & Plans nests each release point under its release and lists the rest as not linked.
 - [ ] Bulk Add count picker inserts the correct number of empty rows.
 - [ ] Export creates a valid JSON backup.
 - [ ] Import restores projects, tasks, insights, developers, releases, test cases, release points, note folders, and notes.
@@ -760,10 +805,11 @@ Clair follows a no-build, no-framework approach. Keep contributions consistent w
 - [ ] Fresh install (empty IndexedDB, no legacy data): app boots, schema is created, mock/backup data loads without errors.
 - [ ] Upgrade path: seed legacy `chrome.storage.local` data, load the app, confirm it migrates into SQLite with matching record counts and the legacy keys are cleared.
 - [ ] Reloading after migration does not duplicate rows (`migrated_v1` guard) — check via `await ClairDB.load()` in the console.
-- [ ] Theme: toggling System / Light / Dark in Settings → Appearance updates the UI immediately and persists across a reload; no dark-then-light flash on launch regardless of OS theme.
+- [ ] Theme: toggling System / Light / Dark in Settings → General updates the UI immediately and persists across a reload; no dark-then-light flash on launch regardless of OS theme.
 - [ ] Task Work Done: new tasks start blank; existing (pre-update) tasks show the "task completed" backfill; editing and saving persists it to SQLite and shows on the card and detail modal.
 - [ ] Task date range filter: matches `startDate` (not `createdAt`), inclusive on both ends; typing a full date into From/To doesn't jump segments or lose focus.
-- [ ] Test Case Management: defaults to "All Projects" cards; selecting a project shows the modules row, both chart cards, and a paginated table; changing rows-per-page and Prev/Next behave correctly; Excel import correctly populates the Simplified Scenario column.
+- [ ] Test Case Management: home shows project cards and the "No test cases yet" strip; a card opens the project overview (KPIs, charts, modules, open failures); **Open test scenarios** shows the scenario table; clicking a row expands it and edits autosave; status chips, filters, search, module rail, selection mode, rows-per-page and Prev/Next behave correctly; the breadcrumb returns to each level; Excel import correctly populates the Simplified Scenario column.
+- [ ] Settings: each section in the menu opens (also with ↑/↓); theme cards switch the theme; module toggles hide/show sidebar items; Data & Backups and Integrations controls behave as before; Clear database asks for confirmation.
 - [ ] Projects List view: dragging a project card reorders the list and persists across reload.
 - [ ] Project Details: opens from the **Project Details** button in both List and Kanban views; stats match the project's tasks (tasks linked to multiple projects are counted per project, nothing from other projects); release history is newest first; editing a task/release/project from the page updates it immediately; **Projects** returns to the list; works in light and dark and at phone width.
 - [ ] Client Name: create a project with and without a client; it shows on List and Kanban cards, the detail modal, and Project Details; it survives export → import.

@@ -1,8 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Clair – Task & Project Tracker",
-  "version": "2.5.0",
-  "description": "A minimal personal workspace for managing projects and daily tasks.",
+  "short_name": "Clair",
+  "version": "2.6.0",
+  "description": "Local-first tracker for projects, tasks, releases and test cases, with Jira import and daily auto-backups. Your data stays local.",
+  "minimum_chrome_version": "116",
   "permissions": [
     "storage",
     "tabs",
@@ -17,7 +19,7 @@
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
   "action": {
-    "default_title": "Open Clair"
+    "default_title": "Open Clair — projects, releases & test cases"
   },
   "background": {
     "service_worker": "background.js"
