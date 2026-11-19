@@ -4,7 +4,7 @@
 
 **A local-first project & release tracker — built as a Chrome Extension**
 
-![Version](https://img.shields.io/badge/version-3.0.0-informational?style=flat-square)
+![Version](https://img.shields.io/badge/version-3.1.0-informational?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Chrome%20Extension-4285F4?style=flat-square&logo=googlechrome&logoColor=white)
 ![Manifest](https://img.shields.io/badge/manifest-V3-success?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-Vanilla%20JS%20%2F%20HTML%20%2F%20CSS-F7DF1E?style=flat-square)
@@ -52,6 +52,23 @@ The current app version is displayed in the sidebar footer and is always read di
 ---
 
 ## What's New
+
+### v3.1.0
+
+#### Jira two-way sync: change status and comment from Clair
+
+On the Jira page's details view, click a ticket's summary to open its panel (under the row):
+
+- **Change status** — the dropdown lists only the transitions Jira currently allows *you* on *that* ticket (`GET /rest/api/3/issue/{key}/transitions`); nothing about workflows is hard-coded. The choice is a pending change until you sync.
+- **Comments** — all existing comments with author, created and edited time (`GET …/comment`, every page). Write a comment (multi-line supported) and add it to the pending changes.
+- **Pending changes** — the panel shows "N changes not yet applied to Jira", the selected status and the queued comments (removable); the table marks the ticket **Pending**. Nothing is sent and the ticket cache is not changed until **Sync to Jira**. Pending changes are saved (new SQLite table `jiraPending`), so they survive navigation and reloads; they are not part of JSON exports or backups.
+- **Sync to Jira** — runs the transition (`POST …/transitions`), then the comments one by one (`POST …/comment`, text converted to Atlassian Document Format), then re-fetches the ticket (`GET /rest/api/3/issue/{key}`) into the cache and reloads comments and transitions. Category counts update through the project's status mapping.
+- **Partial failure** — each change is cleared and saved as soon as Jira confirms it, so a retry never repeats a step that already succeeded. The result says exactly what happened, e.g. "Status changed to “Ready for QA”. The comment was not sent: … Unsent changes are kept — click Sync to Jira to retry them."
+- **No duplicates** — before a transition, Clair checks whether the ticket is already in the target status; before re-sending a comment whose earlier attempt may have reached Jira, it looks for the same text among the ticket's recent comments. One sync per ticket at a time.
+- Errors (expired token, missing permission, transition not valid, network, rate limits) use the existing Jira error handling and retry; the token is never shown, cached, logged or exported.
+- `jira.js`: the request helper now accepts empty `204 No Content` responses (returned by transitions).
+
+> Transitions that require extra fields on a Jira screen (for example a resolution) are rejected by Jira; Clair shows Jira's message and keeps the change pending — those fields can't be filled in from Clair.
 
 ### v3.0.0
 
@@ -261,7 +278,7 @@ Jira status names differ between projects, so each linked project has its own ma
 | **Project Insights** | Capture issues, enhancements, and notes per project; track each item through a Dev → QA → Done workflow; filter by developer, status, and assignment state. |
 | **Release Management** | Log releases sorted by release date; advance through a seven-stage status workflow (Draft → Released); generate email-style release announcements; copy notes to clipboard. |
 | **Release Points** | Accordion list grouped into In progress / Completed; progress ring and bar per release point; full checklist on expand with in-place, keyboard-accessible ticking; project filter chips, Expand/Collapse all, search inside checklist items; shows the release each point belongs to; bulk add and bulk assign in the editor; import Jira tickets as checklist items; ticket links show the ticket key. |
-| **Jira** | Dashboard of every Clair project linked to Jira: per-project cards with ticket counts by category and last sync; a details page with a searchable, filterable, sortable, paginated ticket table (counts follow the filters); per-project status mapping into 10 Clair categories with automatic matching; local cache refreshed on demand and kept if a refresh fails. |
+| **Jira** | Dashboard of every Clair project linked to Jira: per-project cards with ticket counts by category and last sync; a details page with a searchable, filterable, sortable, paginated ticket table (counts follow the filters); per-project status mapping into 10 Clair categories with automatic matching; local cache refreshed on demand and kept if a refresh fails; change a ticket's status and add comments, queued as pending changes and sent with **Sync to Jira**. |
 | **Notes** | Organize notes by project; create main folders and 1-level subfolders; write notes with a 10-item Markdown toolbar & Edit/Preview mode toggle; move notes across project/folder tree; debounced search & sort by updated date, creation date, or title. |
 | **Test Case Management** | Three levels: a home page of project cards with pass rates; a project overview with KPIs, results donut, priority/type/assignee breakdowns, modules table, and open failures; and a test scenarios page with a module rail, status chips, filters, expandable rows with autosaving fields, bulk selection, and pagination. Import cases from Excel/CSV; bulk update. |
 | **Developers** | Maintain a developer registry; link developers to projects so they appear in context-sensitive dropdowns on tasks and insights. |
@@ -423,6 +440,8 @@ Requires a Jira connection (Settings → Integrations) and at least one project 
 - **Details** (breadcrumb Jira / Project) — header with **Open in Jira**, **Status mapping**, and **Refresh from Jira**; category tiles; search, issue type, assignee, and sort controls; category chips; the ticket table; rows per page and Prev/Next. Totals and chips reflect the search/type/assignee filters.
 - **Status mapping** — one row per Jira status: name, Jira's own category, ticket count, and a dropdown (**Automatic — *category*** or a fixed category). Saved per linked project; **Reset all to Automatic** clears manual choices.
 
+- **Ticket panel** — click a ticket summary: current Jira status, **Change status** (available transitions only), comments, a comment box, pending changes, and **Sync to Jira** with the result. See [v3.1.0](#v310).
+
 Nothing is fetched until you press Refresh; the page shows the last successful sync and says so when a later refresh failed.
 
 ### Test Case Management
@@ -504,7 +523,8 @@ db.js  (ClairDB — persistence layer)
   ├─ sql.js (SQLite compiled to WebAssembly, see sql-wasm.js/.wasm)
   ├─ schema: projects/tasks/tests/activity/developers/releases/
   │          testCases/modules/releasePoints/noteFolders/notes/jiraSync + meta (prefs, migration state)
-  │          (jiraSync = local Jira ticket cache; not part of JSON export/backup)
+  │          (jiraSync = local Jira ticket cache, jiraPending = unsynced status/comment changes;
+  │           neither is part of JSON export/backup)
   ├─ migrateFromLegacyStorage()  one-time, transactional, verified, idempotent
   ├─ load()/save()/getPref()/setPref()  the only API the rest of the app uses
   └─ loadSnapshot()     read-only copy of the last saved DB, for the background backup
@@ -687,10 +707,10 @@ DEVELOPER ─┬── PROJECT       (developer.projectIds[])
 
 ```
 project-extension/
-├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 3.0.0)
+├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 3.1.0)
 ├── background.js            Service worker — tab lifecycle + scheduled automatic backup
 ├── backup.js                Shared JSON backup format, Backup/ folder path, auto-backup filename
-├── jira.js                  Jira Cloud client (API token auth): test connection, projects, issue search, full issue fetch, project statuses
+├── jira.js                  Jira Cloud client (API token auth): test connection, projects, issue search, full issue fetch, project statuses, transitions, comments (ADF)
 ├── offscreen.html / .js     Hidden page that builds the auto-backup file (blob URL) for the service worker
 ├── index.html               Static shell: sidebar, top bar, modals, form controls
 ├── app.js                   Single-page controller (~12 900 lines)
@@ -750,7 +770,7 @@ In **Settings**, click **Export Data**. A timestamped JSON file is downloaded to
 clair-export-2026-06-20.json
 ```
 
-The export includes: `projects`, `tasks`, `tests` (insights), `developers`, `releases`, `testCases`, `modules`, `releasePoints`, `noteFolders`, `notes`, and `activity`. The Jira ticket cache (`jiraSync`) and Jira credentials are not exported; after restoring on another machine, connect Jira and press Refresh on the Jira page (manual status-mapping choices are not restored).
+The export includes: `projects`, `tasks`, `tests` (insights), `developers`, `releases`, `testCases`, `modules`, `releasePoints`, `noteFolders`, `notes`, and `activity`. The Jira ticket cache (`jiraSync`), unsynced Jira changes (`jiraPending`) and Jira credentials are not exported; after restoring on another machine, connect Jira and press Refresh on the Jira page (manual status-mapping choices are not restored).
 
 ### Automatic Backups
 
@@ -865,6 +885,7 @@ Clair follows a no-build, no-framework approach. Keep contributions consistent w
 - [ ] Project Details: opens from the **Project Details** button in both List and Kanban views; stats match the project's tasks (tasks linked to multiple projects are counted per project, nothing from other projects); release history is newest first; editing a task/release/project from the page updates it immediately; **Projects** returns to the list; works in light and dark and at phone width.
 - [ ] Client Name: create a project with and without a client; it shows on List and Kanban cards, the detail modal, and Project Details; it survives export → import.
 - [ ] Jira: Save with a wrong token shows "rejected the email or API token" and stores nothing; a valid token connects and shows the account/workspace; the token field is empty afterwards; link a project, open a Release Point for it, Import from Jira, search/select/add tickets, save — the card shows each key as a link opening Jira in a new tab plus the assignee; importing the same ticket again in that project is blocked; Disconnect removes the credentials; an exported JSON contains no token.
+- [ ] Jira ticket panel: clicking a summary opens it; the status dropdown lists only transitions Jira allows; choosing one and adding comments marks the ticket Pending without changing anything in Jira; pending changes survive leaving the page and reloading; Sync to Jira applies the status and posts the comments (check in Jira), refreshes the row and comments, and clears the pending state; with a failing comment the status change is kept, the comment stays pending, and Sync again posts it once.
 - [ ] Jira page: only linked projects appear; Refresh fetches every ticket (Epics and Sub-tasks included) and updates the counts and last-synced time; a failed refresh keeps the previous data and says so; View Details shows the table — search, type, assignee, category chips, sort, and pagination work, and the totals follow the filters; keys and the action icon open the ticket in Jira; unrecognised statuses show as Unmapped and can be mapped in Status mapping (saved per project, kept across refresh, Reset all to Automatic clears them); Release Points are unchanged; an exported JSON contains no `jiraSync`; light and dark themes and phone width look right.
 - [ ] Automatic backup: Settings shows Enabled, schedule, last success, and status; saving a new time moves the alarm (`chrome.alarms.get('clair-daily-backup')` in the service worker console); disabling clears it; a backup file appears in `Backup/` and imports successfully; it matches a manual export apart from `exportedAt`.
 

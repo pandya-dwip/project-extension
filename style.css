@@ -10221,6 +10221,39 @@ a.st-btn { text-decoration: none; }
   .jd-map-select { grid-column: 1 / -1; }
 }
 
+/* Jira ticket panel (status transition, comments, Sync to Jira) */
+.jd-summary-btn { all: unset; cursor: pointer; color: var(--text); }
+.jd-summary-btn:hover { color: var(--accent); text-decoration: underline; }
+.jd-summary-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.jd-table tr.jd-row-open > td { background: var(--accent-subtle); }
+.jd-pending-tag { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: var(--radius-pill); background: var(--warning-light); color: var(--warning); font-size: 10.5px; font-weight: 700; vertical-align: middle; }
+.jd-issue-row > td { background: var(--surface-2); padding: 14px 16px !important; }
+.jd-issue { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; align-items: start; }
+.jd-issue-title { margin: 0 0 8px; font-size: 13px; font-weight: 650; color: var(--text); }
+.jd-cmts { display: flex; flex-direction: column; gap: 8px; max-height: 360px; overflow-y: auto; margin-bottom: 10px; }
+.jd-cmt { padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.jd-cmt.pending { border-style: dashed; border-color: var(--warning); background: var(--warning-light); }
+.jd-cmt-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 4px; font-size: 12px; color: var(--text-muted); }
+.jd-cmt-head strong { color: var(--text); font-weight: 600; }
+.jd-cmt-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; color: var(--text-secondary); line-height: 1.5; }
+.jd-draft { width: 100%; box-sizing: border-box; resize: vertical; min-height: 70px; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font-family: var(--font); font-size: 13px; }
+.jd-draft:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
+.jd-issue-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
+.jd-issue-side { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.jd-issue-field { display: flex; flex-direction: column; gap: 5px; }
+.jd-issue-field > span { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); }
+.jd-issue-field strong { color: var(--text); font-size: 13px; margin-right: 6px; }
+.jd-issue-field select { width: 100%; }
+.jd-issue-pending { font-size: 12.5px; color: var(--text-secondary); }
+.jd-issue-warn { padding: 7px 10px; border-radius: var(--radius-sm); background: var(--warning-light); color: var(--warning); font-size: 12px; font-weight: 600; }
+.jd-issue-hint { font-size: 12px; color: var(--text-muted); }
+.jd-issue-error { font-size: 12px; color: var(--danger); }
+.jd-issue-result { padding: 8px 10px; border-radius: var(--radius-sm); font-size: 12px; line-height: 1.45; }
+.jd-issue-result.ok { background: var(--accent-subtle); color: var(--accent); }
+.jd-issue-result.fail { background: var(--danger-light); color: var(--danger); }
+.jd-sync-btn { justify-content: center; }
+@media (max-width: 900px) { .jd-issue { grid-template-columns: minmax(0, 1fr); } }
+
 /* ─── Jira integration ─── */
 .jira-box { margin-top: 12px; display: flex; flex-direction: column; gap: 4px; }
 .jira-box .form-group { margin-bottom: 10px; }

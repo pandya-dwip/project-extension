@@ -83,7 +83,10 @@ const ClairJira = (() => {
         throw new JiraError(`Could not reach ${host}. Check the site URL and your internet connection.`);
       }
       if (res.ok) {
-        try { return await res.json(); } catch (e) { throw new JiraError(`${host} returned an unexpected response. Is this a Jira Cloud site?`, res.status); }
+        let text = '';
+        try { text = await res.text(); } catch (e) { /* treated as empty */ }
+        if (!text) return {}; // e.g. 204 No Content after a transition
+        try { return JSON.parse(text); } catch (e) { throw new JiraError(`${host} returned an unexpected response. Is this a Jira Cloud site?`, res.status); }
       }
       if (res.status === 429 && attempt < 2) {
         const wait = Math.min(10, parseInt(res.headers.get('Retry-After'), 10) || 2 * (attempt + 1));
@@ -271,5 +274,77 @@ const ClairJira = (() => {
     return [...byId.values()];
   };
 
-  return { JIRA_KEY, normalizeSite, getPublicConfig, saveConfig, testConnection, disconnect, listProjects, searchIssues, fetchAllIssues, getProjectStatuses };
+  // ── Single-issue operations (Jira page → ticket panel) ──
+  const issuePath = (key) => `/rest/api/3/issue/${encodeURIComponent(key)}`;
+
+  // One issue, in the same compact shape as fetchAllIssues.
+  const getIssue = async (key) => {
+    const cfg = await requireConfig();
+    return compactIssue(cfg.site, await request(cfg, issuePath(key), { fields: DASH_FIELDS.join(',') }));
+  };
+
+  // Transitions available to this user for this issue right now (workflow-specific).
+  const getTransitions = async (key) => {
+    const cfg = await requireConfig();
+    const data = await request(cfg, `${issuePath(key)}/transitions`);
+    return (data.transitions || []).filter(t => t.isAvailable !== false).map(t => ({
+      id: String(t.id), name: t.name || '',
+      toId: t.to ? String(t.to.id) : '', toName: (t.to && t.to.name) || t.name || ''
+    }));
+  };
+
+  const doTransition = async (key, transitionId) => {
+    const cfg = await requireConfig();
+    await request(cfg, `${issuePath(key)}/transitions`, {}, { method: 'POST', body: { transition: { id: String(transitionId) } } });
+  };
+
+  // Plain text → Atlassian Document Format: blank lines split paragraphs, single
+  // newlines become hard breaks.
+  const toAdf = (text) => ({
+    type: 'doc', version: 1,
+    content: String(text).replace(/\r\n?/g, '\n').split(/\n{2,}/).map(par => {
+      const content = [];
+      par.split('\n').forEach((line, i) => {
+        if (i) content.push({ type: 'hardBreak' });
+        if (line) content.push({ type: 'text', text: line });
+      });
+      return { type: 'paragraph', content };
+    })
+  });
+  // ADF → plain text for display (text nodes, mentions, emoji; breaks and blocks as newlines).
+  const adfText = (node) => {
+    if (!node) return '';
+    if (typeof node === 'string') return node;
+    if (node.type === 'text') return node.text || '';
+    if (node.type === 'hardBreak') return '\n';
+    if (node.type === 'mention' || node.type === 'emoji') return (node.attrs && (node.attrs.text || node.attrs.shortName)) || '';
+    const inner = (node.content || []).map(adfText).join('');
+    if (node.type === 'listItem') return inner.replace(/\n+$/, '') + '\n';
+    return ['paragraph', 'heading', 'codeBlock', 'blockquote', 'bulletList', 'orderedList'].includes(node.type) ? inner + '\n\n' : inner;
+  };
+  const compactComment = (c) => ({
+    id: String(c.id), author: (c.author && c.author.displayName) || 'Unknown',
+    text: adfText(c.body).replace(/\n{3,}/g, '\n\n').replace(/\s+$/, ''), created: c.created || '', updated: c.updated || ''
+  });
+
+  const addComment = async (key, text) => {
+    const cfg = await requireConfig();
+    return compactComment(await request(cfg, `${issuePath(key)}/comment`, {}, { method: 'POST', body: { body: toAdf(text) } }));
+  };
+
+  // All comments, oldest first, following startAt pagination.
+  const getComments = async (key) => {
+    const cfg = await requireConfig();
+    const out = [];
+    for (let startAt = 0, page = 0; page < 200; page++) {
+      const data = await request(cfg, `${issuePath(key)}/comment`, { startAt, maxResults: 100, orderBy: 'created' });
+      const list = data.comments || [];
+      out.push(...list.map(compactComment));
+      startAt += list.length;
+      if (!list.length || startAt >= (data.total || 0)) break;
+    }
+    return out;
+  };
+
+  return { JIRA_KEY, normalizeSite, getPublicConfig, saveConfig, testConnection, disconnect, listProjects, searchIssues, fetchAllIssues, getProjectStatuses, getIssue, getTransitions, doTransition, addComment, getComments, toAdf };
 })();

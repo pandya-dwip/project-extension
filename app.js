@@ -89,6 +89,7 @@ let state = {
   noteFolders: [],
   notes: [],
   jiraSync: [], // one record per Clair project linked to Jira: cached issues, statuses, status mapping
+  jiraPending: [], // unsynced Jira changes per issue: { id: issueId, projectId, key, transition, comments } (separate from the cache)
   activeNoteProjectId: null,
   activeNoteFolderId: null,
   activeNoteId: null,
@@ -131,7 +132,8 @@ const storage = {
       noteFolders: state.noteFolders || [],
       notes: state.notes || [],
       // Jira dashboard cache (not part of JSON exports/backups — see ClairBackup.KEYS)
-      jiraSync: state.jiraSync || []
+      jiraSync: state.jiraSync || [],
+      jiraPending: state.jiraPending || []
     });
   }
 };
@@ -2050,10 +2052,13 @@ const renderJiraDetails = (p) => {
     </section>` : '';
 
   const catPill = (cat) => `<span class="jd-pill" style="--c:${JIRA_CAT_COLOR[cat]}">${JIRA_CAT_LABEL[cat]}</span>`;
-  const rowsHtml = paged.map(i => `
-    <tr>
-      <td><a class="jd-key" href="${escapeHtml(i.url)}" target="_blank" rel="noopener noreferrer" title="Open ${escapeHtml(i.key)} in Jira">${escapeHtml(i.key)}</a></td>
-      <td class="jd-summary">${escapeHtml(i.summary)}</td>
+  const rowsHtml = paged.map(i => {
+    const open = state.jiraIssueOpen === i.id;
+    const np = jiraPendingCount(jiraPendingFor(i.id));
+    return `
+    <tr class="${open ? 'jd-row-open' : ''}">
+      <td><a class="jd-key" href="${escapeHtml(i.url)}" target="_blank" rel="noopener noreferrer" title="Open ${escapeHtml(i.key)} in Jira">${escapeHtml(i.key)}</a>${np ? `<span class="jd-pending-tag" title="${np} change${np === 1 ? '' : 's'} not yet synced to Jira">Pending</span>` : ''}</td>
+      <td class="jd-summary"><button type="button" class="jd-summary-btn" data-action="jira-issue" data-issue="${escapeHtml(i.id)}" aria-expanded="${open}">${escapeHtml(i.summary)}</button></td>
       <td class="jd-nowrap">${escapeHtml(i.type)}</td>
       <td class="jd-nowrap">${escapeHtml(i.status)}</td>
       <td>${catPill(i.cat)}</td>
@@ -2061,7 +2066,8 @@ const renderJiraDetails = (p) => {
       <td class="jd-nowrap">${escapeHtml(i.priority || '—')}</td>
       <td class="jd-nowrap" title="${escapeHtml(i.updated)}">${i.updated ? fmtDate(i.updated) : '—'}</td>
       <td><a class="icon-btn jd-open" href="${escapeHtml(i.url)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${escapeHtml(i.key)} in Jira" title="Open in Jira">${JD_I.ext}</a></td>
-    </tr>`).join('');
+    </tr>${open ? renderJiraIssuePanel(p, rec, i) : ''}`;
+  }).join('');
 
   return `
     <div class="tc-page">
@@ -2137,6 +2143,178 @@ const renderJiraDetails = (p) => {
     </div>`;
 };
 
+// ─── Jira ticket panel: status transitions, comments, Sync to Jira ───
+// Pending changes live in state.jiraPending (own SQLite table, not exported) — never in
+// the ticket cache. Each one is removed only after Jira confirms that operation, and is
+// saved right away, so a partial sync never repeats a step that already succeeded.
+const jiraTicketData = {};          // issue key -> { transitions, transErr, comments, commentsErr, loading, draft, result }
+const jiraIssueSyncing = new Set(); // issue ids being synced (no duplicate requests)
+const jiraPendingFor = (issueId) => (state.jiraPending || []).find(x => x.id === issueId);
+const jiraPendingCount = (pd) => pd ? (pd.transition ? 1 : 0) + (pd.comments || []).length : 0;
+const jiraEnsurePending = (projectId, issue) => {
+  let pd = jiraPendingFor(issue.id);
+  if (!pd) {
+    pd = { id: issue.id, projectId, key: issue.key, transition: null, comments: [] };
+    state.jiraPending = [...(state.jiraPending || []), pd];
+  }
+  return pd;
+};
+const jiraPruneEmptyPending = () => { state.jiraPending = (state.jiraPending || []).filter(x => jiraPendingCount(x)); };
+const jiraNormText = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+const jiraTime = (s) => Date.parse(String(s || '').replace(/([+-]\d\d)(\d\d)$/, '$1:$2')) || 0; // Jira: …+0530
+
+// Re-render without losing the comment box's focus/caret (async loads land while typing).
+const jiraRender = () => {
+  if (state.view !== 'jira') return;
+  const typing = document.activeElement && document.activeElement.id === 'jiraCommentDraft';
+  render();
+  const t = typing && document.getElementById('jiraCommentDraft');
+  if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); }
+};
+
+// Load the issue's available transitions and its comments.
+const jiraLoadTicket = async (key) => {
+  const d = jiraTicketData[key] || (jiraTicketData[key] = {});
+  d.loading = true;
+  jiraRender();
+  const [t, c] = await Promise.allSettled([ClairJira.getTransitions(key), ClairJira.getComments(key)]);
+  d.transitions = t.status === 'fulfilled' ? t.value : null;
+  d.transErr = t.status === 'rejected' ? jiraErrorText(t.reason) : '';
+  d.comments = c.status === 'fulfilled' ? c.value : (d.comments || null);
+  d.commentsErr = c.status === 'rejected' ? jiraErrorText(c.reason) : '';
+  d.loading = false;
+  jiraRender();
+};
+
+// Put a freshly fetched issue into the cache (only data Jira returned — never pending values).
+const jiraCacheIssue = (projectId, fresh) => {
+  const rec = (state.jiraSync || []).find(r => r.id === projectId);
+  if (!rec) return;
+  const idx = rec.issues.findIndex(i => i.id === fresh.id);
+  if (idx >= 0) rec.issues[idx] = fresh; else rec.issues.unshift(fresh);
+  if (fresh.statusId && !rec.statuses.some(s => s.id === fresh.statusId)) rec.statuses.push({ id: fresh.statusId, name: fresh.status, category: fresh.statusCategory });
+};
+
+const jiraSyncIssue = async (issueId) => {
+  if (jiraIssueSyncing.has(issueId)) return;
+  const pd = jiraPendingFor(issueId);
+  if (!pd) return;
+  const key = pd.key;
+  const d = jiraTicketData[key] || (jiraTicketData[key] = {});
+  if ((d.draft || '').trim()) { pd.comments.push({ id: uid(), text: d.draft, attemptedAt: '' }); d.draft = ''; }
+  if (!jiraPendingCount(pd)) return;
+  jiraIssueSyncing.add(issueId);
+  d.result = null;
+  await storage.save();
+  jiraRender();
+  const done = [], failed = [];
+  try {
+    if (pd.transition) {
+      const t = pd.transition;
+      try {
+        // Already in the target status (e.g. an earlier attempt's response was lost)? Don't redo it.
+        const cur = await ClairJira.getIssue(key);
+        if (!(t.toId && cur.statusId === t.toId)) await ClairJira.doTransition(key, t.id);
+        pd.transition = null;
+        done.push(`status changed to “${t.toName}”`);
+        await storage.save();
+      } catch (e) {
+        failed.push(`Status change to “${t.toName}” failed: ${jiraErrorText(e)}`);
+      }
+    }
+    let sent = 0;
+    while (pd.comments.length) {
+      const c = pd.comments[0];
+      try {
+        let already = false;
+        if (c.attemptedAt) { // an earlier attempt may have reached Jira — check before sending again
+          const since = Date.parse(c.attemptedAt) - 10 * 60 * 1000; // allow for clock skew
+          already = (await ClairJira.getComments(key)).some(x => jiraNormText(x.text) === jiraNormText(c.text) && jiraTime(x.created) >= since);
+        }
+        if (!already) {
+          c.attemptedAt = new Date().toISOString();
+          await storage.save();
+          await ClairJira.addComment(key, c.text);
+        }
+        pd.comments.shift();
+        sent++;
+        await storage.save();
+      } catch (e) {
+        failed.push(`${pd.comments.length === 1 ? 'The comment was' : `${pd.comments.length} comments were`} not sent: ${jiraErrorText(e)}`);
+        break; // keep order; the rest stay pending
+      }
+    }
+    if (sent) done.push(`${sent} comment${sent === 1 ? '' : 's'} added`);
+    // Refresh the cached ticket, its comments and transitions from Jira.
+    if (done.length) {
+      try { jiraCacheIssue(pd.projectId, await ClairJira.getIssue(key)); } catch (e) { /* cache stays as last confirmed */ }
+    }
+  } finally {
+    jiraIssueSyncing.delete(issueId);
+    jiraPruneEmptyPending();
+    const doneText = done.length ? done.join(' and ').replace(/^./, ch => ch.toUpperCase()) + '.' : '';
+    d.result = failed.length
+      ? { ok: false, text: `${doneText ? doneText + ' ' : ''}${failed.join(' ')} Unsent changes are kept — click Sync to Jira to retry them.` }
+      : { ok: true, text: doneText || 'Nothing to sync.' };
+    await storage.save();
+    showToast(failed.length ? `${key}: some changes were not synced` : `${key}: synced to Jira`, failed.length ? 'error' : 'success');
+    await jiraLoadTicket(key);
+  }
+};
+
+const renderJiraIssuePanel = (p, rec, i) => {
+  const d = jiraTicketData[i.key] || {};
+  const pd = jiraPendingFor(i.id);
+  const busy = jiraIssueSyncing.has(i.id);
+  const n = jiraPendingCount(pd);
+  const connected = jiraConnected();
+  const when = (s) => s ? `${fmtDate(s)}, ${fmtTime(s)}` : '';
+  const comments = d.comments || [];
+  const commentsHtml = d.commentsErr && !d.comments ? `<div class="jd-issue-error">Comments couldn’t be loaded: ${escapeHtml(d.commentsErr)}</div>`
+    : !d.comments && d.loading ? '<div class="dbx-empty">Loading comments…</div>'
+    : comments.length ? comments.map(c => `
+      <div class="jd-cmt">
+        <div class="jd-cmt-head"><strong>${escapeHtml(c.author)}</strong><span>${when(c.created)}${c.updated && c.updated !== c.created ? ` · edited ${when(c.updated)}` : ''}</span></div>
+        <div class="jd-cmt-body">${escapeHtml(c.text)}</div>
+      </div>`).join('') : '<div class="dbx-empty">No comments yet.</div>';
+  const pendingComments = (pd ? pd.comments : []).map(c => `
+      <div class="jd-cmt pending">
+        <div class="jd-cmt-head"><strong>Pending — not in Jira yet</strong>
+          ${busy ? '' : `<button type="button" class="rpa-link" data-action="jira-drop-comment" data-issue="${escapeHtml(i.id)}" data-cid="${escapeHtml(c.id)}">Remove</button>`}</div>
+        <div class="jd-cmt-body">${escapeHtml(c.text)}</div>
+      </div>`).join('');
+  const trans = d.transitions || [];
+  const sel = pd && pd.transition ? pd.transition.id : '';
+  const transControl = d.transErr ? `<div class="jd-issue-error">Status changes unavailable: ${escapeHtml(d.transErr)}</div>`
+    : !d.transitions ? `<div class="jd-issue-hint">${d.loading ? 'Loading available transitions…' : ''}</div>`
+    : !trans.length ? '<div class="jd-issue-hint">No status changes are available to you for this ticket.</div>'
+    : `<select class="filter-select" data-jira-transition="${escapeHtml(i.id)}" ${busy ? 'disabled' : ''} aria-label="Change Jira status">
+        <option value="">No change</option>
+        ${trans.map(t => `<option value="${escapeHtml(t.id)}" ${sel === t.id ? 'selected' : ''}>${escapeHtml(t.name)}${t.toName && t.toName !== t.name ? ` → ${escapeHtml(t.toName)}` : ''}</option>`).join('')}
+      </select>`;
+  return `
+    <tr class="jd-issue-row"><td colspan="9">
+      <div class="jd-issue">
+        <div class="jd-issue-main">
+          <h4 class="jd-issue-title">Comments <span class="rpa-group-count">${comments.length}</span></h4>
+          <div class="jd-cmts">${commentsHtml}${pendingComments}</div>
+          <textarea id="jiraCommentDraft" class="jd-draft" data-key="${escapeHtml(i.key)}" rows="3" placeholder="Write a comment… (added to pending changes, sent on Sync to Jira)" ${busy ? 'disabled' : ''}>${escapeHtml(d.draft || '')}</textarea>
+          <div class="jd-issue-actions"><button type="button" class="btn-ghost st-btn" data-action="jira-queue-comment" data-issue="${escapeHtml(i.id)}" ${busy ? 'disabled' : ''}>Add comment to pending</button></div>
+        </div>
+        <div class="jd-issue-side">
+          <div class="jd-issue-field"><span>Current Jira status</span><div><strong>${escapeHtml(i.status)}</strong> <span class="jd-pill" style="--c:${JIRA_CAT_COLOR[i.cat]}">${JIRA_CAT_LABEL[i.cat]}</span></div></div>
+          <div class="jd-issue-field"><span>Change status</span>${transControl}</div>
+          ${pd && pd.transition ? `<div class="jd-issue-pending">Selected: <strong>${escapeHtml(pd.transition.toName)}</strong> — not applied yet</div>` : ''}
+          ${pd && pd.comments.length ? `<div class="jd-issue-pending">Pending comments: <strong>${pd.comments.length}</strong></div>` : ''}
+          ${n ? `<div class="jd-issue-warn">${n} change${n === 1 ? '' : 's'} not yet applied to Jira</div>` : ''}
+          <button type="button" class="btn-primary st-btn jd-sync-btn" data-action="jira-sync-issue" data-issue="${escapeHtml(i.id)}" ${busy || !connected || (!n && !(d.draft || '').trim()) ? 'disabled' : ''}>${JD_I.refresh}${busy ? 'Syncing…' : 'Sync to Jira'}</button>
+          ${!connected ? '<div class="jd-issue-hint">Connect Jira in Settings to sync.</div>' : ''}
+          ${d.result ? `<div class="jd-issue-result ${d.result.ok ? 'ok' : 'fail'}">${escapeHtml(d.result.text)}</div>` : ''}
+        </div>
+      </div>
+    </td></tr>`;
+};
+
 const jiraResetFilters = () => { state.jiraFilters = { q: '', cat: '', type: '', assignee: '', sort: 'updated-desc', page: 1, size: (state.jiraFilters && state.jiraFilters.size) || 25 }; };
 
 
@@ -2147,7 +2325,7 @@ const setView = (view) => {
   }
   state.view = view;
   state.overviewProjectId = null;
-  if (view === 'jira') { state.jiraProjectId = null; state.jiraMappingOpen = false; }
+  if (view === 'jira') { state.jiraProjectId = null; state.jiraMappingOpen = false; state.jiraIssueOpen = null; }
   if (view === 'testcases') {
     state.testCasePage = 1;
     const ct = document.getElementById('mainContent');
@@ -5607,6 +5785,7 @@ const clearAllData = async () => {
   state.modules = [];
   state.noteFolders = [];
   state.jiraSync = [];
+  state.jiraPending = [];
   state.notes = [];
   state.activeNoteProjectId = null;
   state.activeNoteFolderId = null;
@@ -5736,7 +5915,7 @@ const attachCardListeners = () => {
       else if (action === 'new-release-pt') openReleasePtModal();
       else if (action === 'open-release-pt') openReleasePointOnPage(cardId);
       else if (action === 'rpa-toggle') toggleRpAccordion(cardId);
-      else if (action === 'jira-view') { state.jiraProjectId = cardId; state.jiraMappingOpen = false; jiraResetFilters(); render(); document.getElementById('mainContent').scrollTop = 0; }
+      else if (action === 'jira-view') { state.jiraProjectId = cardId; state.jiraMappingOpen = false; state.jiraIssueOpen = null; jiraResetFilters(); render(); document.getElementById('mainContent').scrollTop = 0; }
       else if (action === 'jira-home') { state.jiraProjectId = null; state.jiraMappingOpen = false; render(); }
       else if (action === 'jira-refresh') syncJiraProject(cardId);
       else if (action === 'jira-refresh-all') {
@@ -5752,6 +5931,29 @@ const attachCardListeners = () => {
         const rec = (state.jiraSync || []).find(x => x.id === state.jiraProjectId);
         if (rec) { rec.statusMap = {}; storage.save(); showToast('Status mapping reset to Automatic'); render(); }
       }
+      else if (action === 'jira-issue') {
+        const id = btn.dataset.issue;
+        state.jiraIssueOpen = state.jiraIssueOpen === id ? null : id;
+        render();
+        const rec = (state.jiraSync || []).find(r => r.id === state.jiraProjectId);
+        const iss = state.jiraIssueOpen && rec && rec.issues.find(x => x.id === id);
+        if (iss && jiraConnected()) jiraLoadTicket(iss.key);
+      }
+      else if (action === 'jira-queue-comment') {
+        const rec = (state.jiraSync || []).find(r => r.id === state.jiraProjectId);
+        const iss = rec && rec.issues.find(x => x.id === btn.dataset.issue);
+        const d = iss && jiraTicketData[iss.key];
+        if (d && (d.draft || '').trim()) {
+          jiraEnsurePending(rec.id, iss).comments.push({ id: uid(), text: d.draft, attemptedAt: '' });
+          d.draft = '';
+          storage.save(); render();
+        }
+      }
+      else if (action === 'jira-drop-comment') {
+        const pd = jiraPendingFor(btn.dataset.issue);
+        if (pd && !jiraIssueSyncing.has(pd.id)) { pd.comments = pd.comments.filter(c => c.id !== btn.dataset.cid); jiraPruneEmptyPending(); storage.save(); render(); }
+      }
+      else if (action === 'jira-sync-issue') jiraSyncIssue(btn.dataset.issue);
       else if (action === 'jira-close-mapping') { state.jiraMappingOpen = false; render(); }
       else if (action === 'jira-cat') { state.jiraFilters.cat = btn.dataset.cat; state.jiraFilters.page = 1; render(); }
       else if (action === 'jira-clear-filters') { jiraResetFilters(); render(); }
@@ -6322,6 +6524,18 @@ const attachCardListeners = () => {
       state.jiraFilters.page = 1;
       render(); return;
     }
+    const jiraTr = e.target.closest('[data-jira-transition]');
+    if (jiraTr) {
+      const rec = (state.jiraSync || []).find(r => r.id === state.jiraProjectId);
+      const iss = rec && rec.issues.find(x => x.id === jiraTr.dataset.jiraTransition);
+      const t = iss && ((jiraTicketData[iss.key] || {}).transitions || []).find(x => x.id === jiraTr.value);
+      if (iss && !jiraIssueSyncing.has(iss.id)) {
+        const pd = jiraEnsurePending(rec.id, iss);
+        pd.transition = t ? { id: t.id, name: t.name, toId: t.toId, toName: t.toName, from: iss.status } : null;
+        jiraPruneEmptyPending(); storage.save(); render();
+      }
+      return;
+    }
     const jiraMap = e.target.closest('[data-jira-map]');
     if (jiraMap) {
       const rec = (state.jiraSync || []).find(x => x.id === state.jiraProjectId);
@@ -6449,6 +6663,13 @@ const attachCardListeners = () => {
     if (releasePtInput) {
       clearTimeout(pageSearchTimer);
       pageSearchTimer = setTimeout(() => { state.releasePtSearch = releasePtInput.value.toLowerCase(); rerenderPreservingFocus(releasePtInput); }, 180);
+      return;
+    }
+    if (e.target.id === 'jiraCommentDraft') {
+      const d = jiraTicketData[e.target.dataset.key] || (jiraTicketData[e.target.dataset.key] = {});
+      d.draft = e.target.value;
+      const sb = document.querySelector('.jd-sync-btn');
+      if (sb && jiraConnected() && !sb.textContent.includes('Syncing')) sb.disabled = !d.draft.trim() && !document.querySelector('.jd-issue-warn');
       return;
     }
     const jiraSearch = e.target.closest('#jiraTicketSearch');
@@ -12493,6 +12714,7 @@ const init = async () => {
   state.noteFolders = data.noteFolders || [];
   state.notes = data.notes || [];
   state.jiraSync = data.jiraSync || [];
+  state.jiraPending = data.jiraPending || [];
   state.projectsViewMode = await ClairDB.getPref('projects_view_mode', 'list');
   state.theme = await ClairDB.getPref('theme', 'light');
   applyTheme(state.theme);
@@ -13302,6 +13524,7 @@ const init = async () => {
         state.noteFolders = data.noteFolders || [];
         state.notes = data.notes || [];
         state.jiraSync = data.jiraSync || [];
+        state.jiraPending = data.jiraPending || [];
 
         render();
 
