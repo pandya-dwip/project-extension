@@ -2052,6 +2052,300 @@ const syncProjectReleaseDates = () => {
   return changed;
 };
 
+// ─── Dashboard sections ──────────────────────────────────
+const DB_ICONS = {
+  clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 8v5M12 16.5h.01"/><circle cx="12" cy="12" r="9"/></svg>',
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M20 6L9 17l-5-5"/></svg>',
+  rocket: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>',
+  flask: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3v7.2a4 4 0 01-1.3 2.9l-3.4 3.1A2 2 0 005.7 20h12.6a2 2 0 001.4-3.8l-3.4-3.1A4 4 0 0115 10.2V3"/><path d="M7 3h10"/></svg>',
+  list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>',
+  arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M9 18l6-6-6-6"/></svg>'
+};
+// 'YYYY-MM-DD' as a local date (new Date('YYYY-MM-DD') would be UTC midnight).
+const dbLocalDay = (s) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || '');
+  const d = m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date(s);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+// Same header style as the other Dashboard cards (Released, Charts & Metrics).
+const dbCardHead = (icon, title, meta = '') => `
+  <div class="db-card-title dbx-head">
+    <span class="dbx-icon">${icon}</span>
+    <span>${title}</span>
+    ${meta ? `<span class="dbx-meta">${meta}</span>` : ''}
+  </div>`;
+const dbEmpty = (text) => `<div class="dbx-empty">${text}</div>`;
+
+// Recent Tasks: status mix + what needs attention + what just got done.
+const renderDbTaskPulse = () => {
+  const tasks = state.tasks || [];
+  const statusOf = (t) => TASK_STATUS_OPTIONS.includes(t.status) ? t.status : 'To-Do';
+  const segs = [
+    { key: 'Done', label: 'Done', cls: 'done' },
+    { key: 'In Progress', label: 'In Progress', cls: 'progress' },
+    { key: 'To-Do', label: 'To-Do', cls: 'todo' },
+    { key: 'On Hold', label: 'On Hold', cls: 'hold' }
+  ].map(s => ({ ...s, n: tasks.filter(t => statusOf(t) === s.key).length }));
+  const total = tasks.length || 1;
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const attention = tasks
+    .filter(t => statusOf(t) !== 'Done' && t.endDate)
+    .map(t => ({ t, days: Math.round((dbLocalDay(t.endDate) - today) / 86400000) }))
+    .filter(x => x.days <= 3)
+    .sort((a, b) => a.days - b.days);
+  const done = tasks
+    .filter(t => statusOf(t) === 'Done')
+    .sort((a, b) => new Date(b.completedDate || b.updatedAt || b.createdAt) - new Date(a.completedDate || a.updatedAt || a.createdAt));
+
+  const sub = (t) => {
+    const p = getTaskProjectNames(t);
+    const d = getTaskDevNames(t).filter(n => n && n !== '–');
+    return escapeHtml([p.length ? p.join(', ') : 'No project', d.length ? d.join(', ') : 'Unassigned'].join(' · '));
+  };
+  const dueLabel = (d) => d < 0 ? `${-d} day${d === -1 ? '' : 's'} overdue` : d === 0 ? 'Due today' : d === 1 ? 'Due tomorrow' : `Due in ${d} days`;
+  const row = (t, kind, tag, tagCls) => `
+    <button type="button" class="dbx-row" data-action="view-task" data-id="${t.id}" title="Open task">
+      <span class="dbx-row-icon ${kind}">${kind === 'done' ? DB_ICONS.check : DB_ICONS.alert}</span>
+      <span class="dbx-row-main">
+        <span class="dbx-row-title">${escapeHtml(t.title || 'Untitled task')}</span>
+        <span class="dbx-row-sub">${sub(t)}</span>
+      </span>
+      <span class="dbx-tag ${tagCls}">${tag}</span>
+    </button>`;
+
+  const attentionHtml = attention.length
+    ? attention.slice(0, 8).map(x => row(x.t, x.days < 0 ? 'overdue' : 'soon', dueLabel(x.days), x.days < 0 ? 'danger' : 'warning')).join('')
+    : dbEmpty('Nothing overdue or due in the next 3 days. 🎉');
+  const doneHtml = done.length
+    ? done.slice(0, 8).map(t => { const at = t.completedDate || t.updatedAt || t.createdAt; return row(t, 'done', at ? timeAgo(at) : 'Done', 'muted'); }).join('')
+    : dbEmpty('No completed tasks yet.');
+
+  return `
+    <div class="db-card dbx-card">
+      ${dbCardHead(DB_ICONS.clock, 'Recent Tasks', `${tasks.length - segs[0].n} open · ${segs[0].n} done`)}
+      <div class="dbx-pulse">
+        <div class="dbx-stackbar" role="img" aria-label="Task status mix">
+          ${segs.filter(s => s.n).map(s => `<span class="${s.cls}" style="flex:${s.n}" title="${s.label}: ${s.n}"></span>`).join('') || '<span class="empty" style="flex:1"></span>'}
+        </div>
+        <div class="dbx-pulse-stats">
+          ${segs.map(s => `
+            <div class="dbx-pstat">
+              <span class="dbx-dot ${s.cls}"></span>
+              <span class="dbx-pstat-label">${s.label}</span>
+              <span class="dbx-pstat-n">${s.n}</span>
+              <span class="dbx-pstat-pct">${Math.round(s.n / total * 100)}%</span>
+            </div>`).join('')}
+        </div>
+      </div>
+      <div class="dbx-cols">
+        <div class="dbx-col">
+          <div class="dbx-col-head"><span>Needs attention</span><span class="dbx-count ${attention.length ? 'danger' : ''}">${attention.length}</span></div>
+          <div class="dbx-list">${attentionHtml}</div>
+        </div>
+        <div class="dbx-col">
+          <div class="dbx-col-head"><span>Recently completed</span><span class="dbx-count">${done.length}</span></div>
+          <div class="dbx-list">${doneHtml}</div>
+        </div>
+      </div>
+    </div>`;
+};
+
+// ─── Release ↔ Release Point helpers ──────────────────────
+// Release Point versions are stored as the form's labels ("v1.7.0 (Up)",
+// "Android v1.7.3 (Prev)"), while releases store plain versions ("v1.7.0").
+// For display and matching, drop the "(Up)/(Prev)" suffix — it only described the
+// project's version at the moment the box was ticked.
+const rpCleanVersion = (v) => String(v || '').replace(/\s*\((up|prev)\)\s*$/i, '').trim();
+const rpVersionCore = (v) => rpCleanVersion(v).replace(/^(android|ios|web)\s+/i, '').replace(/^v/i, '').toLowerCase();
+const releaseVersionsOf = (r) => (r && r.versions && r.versions.length ? r.versions : (r && r.version ? [r.version] : [])).filter(Boolean);
+const releaseProjectIdsOf = (r) => (r.projectIds && r.projectIds.length ? r.projectIds : (r.projectId ? [r.projectId] : []));
+// One label per version: case-insensitive, and "Android v1.7.3" wins over a bare "v1.7.3".
+const rpVersionLabels = (rp, linkedRelease) => {
+  const isPlatform = (l) => /^(android|ios)\s/i.test(l);
+  const out = [];
+  [...(rp.versions || []), ...releaseVersionsOf(linkedRelease)].map(rpCleanVersion).filter(Boolean).forEach(l => {
+    if (out.some(o => o.toLowerCase() === l.toLowerCase())) return;
+    const bare = out.findIndex(o => !isPlatform(o) && rpVersionCore(o) === rpVersionCore(l));
+    if (isPlatform(l) && bare >= 0) { out[bare] = l; return; }
+    if (!isPlatform(l) && out.some(o => rpVersionCore(o) === rpVersionCore(l))) return;
+    out.push(l);
+  });
+  return out;
+};
+// The release a Release Point belongs to: its Linked Release, otherwise a release of the
+// same project sharing one of its versions (reported as matched: 'version').
+const releaseForPoint = (rp, releases = state.releases || []) => {
+  if (rp.releaseId) {
+    const r = releases.find(x => x.id === rp.releaseId);
+    if (r) return { release: r, matched: 'link' };
+  }
+  const cores = (rp.versions || []).map(rpVersionCore).filter(Boolean);
+  if (!cores.length) return null;
+  const pids = rp.projectIds || (rp.projectId ? [rp.projectId] : []);
+  const r = releases.find(x => releaseProjectIdsOf(x).some(p => pids.includes(p)) && releaseVersionsOf(x).some(v => cores.includes(rpVersionCore(v))));
+  return r ? { release: r, matched: 'version' } : null;
+};
+
+// Active Releases & Plans: stage pipeline, what's in flight (releases with their
+// release points nested), and what shipped last.
+const renderDbReleasePipeline = () => {
+  const releases = state.releases || [];
+  const STAGES = ['Draft', 'Planned', 'In Progress', 'Testing', 'Approved', 'Released'];
+  const count = (s) => releases.filter(r => (r.status || 'Draft') === s).length;
+  const rolledBack = count('Rolled Back');
+  const IN_FLIGHT = ['Planned', 'In Progress', 'Testing', 'Approved'];
+  const pointDone = (rp) => { const items = rp.checklistItems || []; return !!(rp.isCompleted || (items.length && items.every(i => i.done))); };
+  // Group release points under the release they belong to (link, else project+version).
+  const groups = new Map(); // releaseId -> { release, points: [{ rp, matched }] }
+  const unlinked = [];
+  (state.releasePoints || []).forEach(rp => {
+    const m = releaseForPoint(rp, releases);
+    if (!m) { if (!pointDone(rp)) unlinked.push(rp); return; }
+    if (!groups.has(m.release.id)) groups.set(m.release.id, { release: m.release, points: [] });
+    groups.get(m.release.id).points.push({ rp, matched: m.matched });
+  });
+  // In flight = releases at an in-flight stage, plus any other release that still has open checklist work.
+  const inFlightGroups = releases
+    .filter(r => IN_FLIGHT.includes(r.status) || (groups.get(r.id) || { points: [] }).points.some(p => !pointDone(p.rp)))
+    .map(r => groups.get(r.id) || { release: r, points: [] })
+    .sort((a, b) => IN_FLIGHT.indexOf(b.release.status) - IN_FLIGHT.indexOf(a.release.status));
+  const shipped = releases.filter(r => r.status === 'Released' && r.releaseDate)
+    .sort((a, b) => dbLocalDay(b.releaseDate) - dbLocalDay(a.releaseDate)).slice(0, 4);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const daysAgo = (s) => { const d = Math.round((today - dbLocalDay(s)) / 86400000); return d <= 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`; };
+  const projNames = (ids) => (ids || []).map(id => (state.projects.find(p => p.id === id) || {}).name).filter(Boolean).join(', ');
+
+  const pipeline = `
+    <div class="dbx-pipeline">
+      ${STAGES.map(s => { const n = count(s); return `
+        <div class="dbx-stage ${n ? 'has' : ''} ${s === 'Released' ? 'final' : ''}">
+          <span class="dbx-stage-n">${n}</span>
+          <span class="dbx-stage-label">${s}</span>
+        </div>`; }).join('<span class="dbx-stage-link"></span>')}
+    </div>
+    ${rolledBack ? `<div class="dbx-rolled">${rolledBack} rolled back</div>` : ''}`;
+
+  const pointRow = (rp, matched) => {
+    const items = rp.checklistItems || [];
+    const d = items.filter(i => i.done).length;
+    const pct = items.length ? Math.round(d / items.length * 100) : 0;
+    return `
+      <button type="button" class="dbx-point" data-action="open-release-pt" data-id="${rp.id}" title="Open in Release Points">
+        <span class="dbx-point-icon">${DB_ICONS.list}</span>
+        <span class="dbx-point-title">${escapeHtml(rp.title || 'Untitled release point')}${matched === 'version' ? '<em title="Not set as this release point’s Linked Release — matched by project and version">matched by version</em>' : ''}</span>
+        <span class="dbx-point-progress"><span class="dbx-minibar"><span style="width:${pct}%"></span></span><span>${d}/${items.length}</span></span>
+      </button>`;
+  };
+  const groupHtml = ({ release: r, points }) => {
+    const sc = (r.status || 'Draft').toLowerCase().replace(' ', '');
+    return `
+      <div class="dbx-rel">
+        <button type="button" class="dbx-row" data-action="view-release" data-id="${r.id}" title="Open release">
+          <span class="dbx-row-icon release">${DB_ICONS.rocket}</span>
+          <span class="dbx-row-main">
+            <span class="dbx-row-title">${escapeHtml(r.name || 'Untitled release')}</span>
+            <span class="dbx-row-sub">${escapeHtml([projNames(releaseProjectIdsOf(r)), releaseVersionsOf(r).join(', ')].filter(Boolean).join(' · ') || 'Release')}</span>
+          </span>
+          <span class="status-pill ${sc}">${escapeHtml(r.status || 'Draft')}</span>
+        </button>
+        <div class="dbx-rel-points">
+          ${points.length ? points.map(p => pointRow(p.rp, p.matched)).join('') : '<span class="dbx-rel-none">No release point linked</span>'}
+        </div>
+      </div>`;
+  };
+  const inFlightHtml = inFlightGroups.map(groupHtml).join('') + (unlinked.length ? `
+    <div class="dbx-rel dbx-rel-unlinked">
+      <div class="dbx-rel-unlinked-head">Release points not linked to a release <span class="dbx-count">${unlinked.length}</span></div>
+      <div class="dbx-rel-points">${unlinked.map(rp => pointRow(rp)).join('')}</div>
+    </div>` : '');
+
+  const shippedHtml = shipped.length ? `
+    <div class="dbx-col">
+      <div class="dbx-col-head"><span>Recently shipped</span></div>
+      <div class="dbx-list">
+        ${shipped.map(r => `
+          <button type="button" class="dbx-row" data-action="view-release" data-id="${r.id}" title="Open release">
+            <span class="dbx-row-icon done">${DB_ICONS.check}</span>
+            <span class="dbx-row-main">
+              <span class="dbx-row-title">${escapeHtml(r.name || 'Untitled release')}</span>
+              <span class="dbx-row-sub">${escapeHtml(projNames(r.projectIds || (r.projectId ? [r.projectId] : [])) || 'Release')}</span>
+            </span>
+            <span class="dbx-row-when"><strong>${fmtDate(r.releaseDate)}</strong><em>${daysAgo(r.releaseDate)}</em></span>
+          </button>`).join('')}
+      </div>
+    </div>` : '';
+  const inFlightCount = inFlightGroups.length;
+  const meta = [`${inFlightCount} release${inFlightCount === 1 ? '' : 's'} in flight`, unlinked.length ? `${unlinked.length} unlinked` : ''].filter(Boolean).join(' · ');
+
+  return `
+    <div class="db-card dbx-card">
+      ${dbCardHead(DB_ICONS.rocket, 'Active Releases &amp; Plans', meta)}
+      ${pipeline}
+      <div class="dbx-col">
+        <div class="dbx-col-head"><span>In flight</span><span class="dbx-count">${inFlightCount}</span><span class="dbx-col-hint">releases with their release points</span></div>
+        ${inFlightCount || unlinked.length ? `<div class="dbx-list dbx-list-tall dbx-rel-list">${inFlightHtml}</div>` : `
+          <div class="dbx-empty dbx-empty-cta dbx-empty-inline">
+            <span>Nothing in flight right now.</span>
+            <button type="button" class="btn-ghost" data-action="new-release-pt">Plan a release point</button>
+          </div>`}
+      </div>
+      ${shippedHtml}
+    </div>`;
+};
+
+// Test Cases by Project: overall pass rate + one compact row per project.
+const renderDbTestCases = () => {
+  const tcs = state.testCases || [];
+  const kind = (s) => ['Pass', 'Passed'].includes(s) ? 'pass' : ['Fail', 'Failed'].includes(s) ? 'fail' : s === 'Blocked' ? 'blocked' : 'notrun';
+  const blank = () => ({ total: 0, pass: 0, fail: 0, blocked: 0, notrun: 0 });
+  const all = blank();
+  const by = {};
+  tcs.forEach(tc => {
+    const k = kind(tc.status);
+    const key = tc.projectId || '__none__';
+    by[key] = by[key] || blank();
+    [all, by[key]].forEach(o => { o.total++; o[k]++; });
+  });
+  if (!all.total) {
+    return `<div class="db-card dbx-card">${dbCardHead(DB_ICONS.flask, 'Test Cases by Project')}${dbEmpty('No test cases yet.')}</div>`;
+  }
+  const rate = (o) => o.total ? Math.round(o.pass / o.total * 1000) / 10 : 0;
+  const bar = (o) => ['pass', 'fail', 'blocked', 'notrun'].filter(k => o[k]).map(k => `<span class="${k}" style="flex:${o[k]}"></span>`).join('');
+  const rows = Object.entries(by).sort((a, b) => b[1].total - a[1].total).map(([pid, o]) => {
+    const p = state.projects.find(x => x.id === pid);
+    const r = rate(o);
+    return `
+      <button type="button" class="dbx-tc-row" ${p ? `data-action="open-tc-project" data-id="${p.id}"` : 'disabled'} title="${p ? 'Open in Test Case Management' : ''}">
+        <span class="dbx-tc-name">${escapeHtml(p ? p.name : 'Unassigned')}</span>
+        <span class="dbx-stackbar slim">${bar(o)}</span>
+        <span class="dbx-tc-rate ${r >= 95 ? 'good' : r >= 80 ? 'ok' : 'low'}">${r}%</span>
+        <span class="dbx-tc-fail">${o.fail ? `<span class="dbx-tag danger">${o.fail} failed</span>` : ''}</span>
+        <span class="dbx-tc-total">${o.total}</span>
+      </button>`;
+  }).join('');
+  const legend = [['pass', 'Passed'], ['fail', 'Failed'], ['blocked', 'Blocked'], ['notrun', 'Not run']]
+    .map(([k, l]) => `<span class="dbx-legend-item"><span class="dbx-dot ${k}"></span>${l}<strong>${all[k]}</strong></span>`).join('');
+
+  return `
+    <div class="db-card dbx-card">
+      ${dbCardHead(DB_ICONS.flask, 'Test Cases by Project', `${all.total} cases · ${Object.keys(by).length} projects`)}
+      <div class="dbx-tc-summary">
+        <div class="dbx-tc-big"><span class="dbx-tc-big-n">${rate(all)}%</span><span class="dbx-tc-big-l">overall pass rate</span></div>
+        <div class="dbx-tc-summary-right">
+          <span class="dbx-stackbar">${bar(all)}</span>
+          <div class="dbx-legend">${legend}</div>
+        </div>
+      </div>
+      <div class="dbx-tc-table">
+        <div class="dbx-tc-row dbx-tc-headrow"><span>Project</span><span>Results</span><span>Pass</span><span>Failed</span><span>Total</span></div>
+        <div class="dbx-tc-body">${rows}</div>
+      </div>
+    </div>`;
+};
+
 // ─── Dashboard ───────────────────────────────────────────
 const renderDashboard = () => {
   const totalProjects = state.projects.length;
@@ -2061,12 +2355,6 @@ const renderDashboard = () => {
   const totalReleasePts = (state.releasePoints || []).length;
   const completedTasks = state.tasks.filter(t => t.status === 'Done').length;
   const taskPct = totalTasks === 0 ? 0 : Math.round(completedTasks / totalTasks * 100);
-
-  // Active = manual releases In Progress/Testing/Approved + upcoming release points
-  const activeManualReleases = (state.releases || [])
-    .filter(r => ['In Progress', 'Testing', 'Approved'].includes(r.status));
-  const activeReleasePoints = (state.releasePoints || [])
-    .filter(rp => rp.releaseType === 'upcoming' || !rp.isCompleted);
 
   const hero = buildPageHero({
     icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>`,
@@ -2190,199 +2478,6 @@ const renderDashboard = () => {
     </div>
   ` : `<div style="color:var(--text-muted);font-size:13px;font-style:italic;text-align:center;padding:36px 0;">No releases recorded for ${rmName}</div>`;
 
-  // 2. Recent Tasks (Overdue & Due Soon vs Completed Recently)
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const threeDaysLater = new Date(today);
-  threeDaysLater.setDate(today.getDate() + 3);
-
-  const overdueOrDueSoon = [];
-  const recentlyCompleted = [];
-
-  state.tasks.forEach(t => {
-    if (t.status === 'Done') {
-      recentlyCompleted.push(t);
-    } else {
-      if (t.endDate) {
-        const end = new Date(t.endDate);
-        if (end < today) {
-          overdueOrDueSoon.push({ task: t, type: 'Overdue', badgeClass: 'db-badge-danger' });
-        } else if (end <= threeDaysLater) {
-          overdueOrDueSoon.push({ task: t, type: 'Due Soon', badgeClass: 'db-badge-warning' });
-        }
-      }
-    }
-  });
-
-  overdueOrDueSoon.sort((a, b) => {
-    if (a.type !== b.type) return a.type === 'Overdue' ? -1 : 1;
-    return new Date(a.task.endDate) - new Date(b.task.endDate);
-  });
-
-  // Sort recently completed tasks by completedDate desc, falling back to updatedAt/createdAt
-  recentlyCompleted.sort((a, b) => new Date(b.completedDate || b.updatedAt || b.createdAt) - new Date(a.completedDate || a.updatedAt || a.createdAt));
-
-  const pendingTasksLimit = overdueOrDueSoon.slice(0, 10);
-  const completedTasksLimit = recentlyCompleted.slice(0, 10);
-
-  const pendingTasksHtml = pendingTasksLimit.length ? pendingTasksLimit.map(item => {
-    const t = item.task;
-    const projNames = getTaskProjectNames(t);
-    return `
-      <div class="db-item">
-        <div class="db-item-details">
-          <span class="db-item-title">${t.title}</span>
-          <span class="db-item-subtitle">${projNames.length ? projNames.join(', ') : 'No Project'} · ${getTaskDevNames(t).join(', ') || 'Unassigned'}</span>
-        </div>
-        <div class="db-item-right">
-          <span class="db-badge ${item.badgeClass}">${item.type}</span>
-          <span style="font-size:11px;color:var(--text-secondary);white-space:nowrap;">${t.endDate ? fmtDate(t.endDate) : ''}</span>
-        </div>
-      </div>
-    `;
-  }).join('') : '<div style="color:var(--text-muted);font-size:13px;font-style:italic;padding:24px 0;text-align:center;">No overdue or due soon tasks</div>';
-
-  const completedTasksHtml = completedTasksLimit.length ? completedTasksLimit.map(t => {
-    const projNames = getTaskProjectNames(t);
-    const compDate = t.completedDate || t.updatedAt || t.endDate || t.createdAt;
-    return `
-      <div class="db-item">
-        <div class="db-item-details">
-          <span class="db-item-title" style="text-decoration: line-through; color: var(--text-muted);">${t.title}</span>
-          <span class="db-item-subtitle">${projNames.length ? projNames.join(', ') : 'No Project'} · ${getTaskDevNames(t).join(', ') || 'Unassigned'}</span>
-        </div>
-        <div class="db-item-right">
-          <span class="db-badge db-badge-success">Done</span>
-          <span style="font-size:10.5px;color:var(--text-muted);white-space:nowrap;">${compDate ? timeAgo(compDate) : ''}</span>
-        </div>
-      </div>
-    `;
-  }).join('') : '<div style="color:var(--text-muted);font-size:13px;font-style:italic;padding:24px 0;text-align:center;">No tasks completed recently</div>';
-
-  // 3. Active Releases & Plans
-  const activePlansListHtml = [];
-
-  activeManualReleases.forEach(r => {
-    activePlansListHtml.push(`
-      <div class="db-item">
-        <div class="db-item-details">
-          <span class="db-item-title">${r.name} (v${r.version})</span>
-          <span class="db-item-subtitle">Release Plan · Manager: ${r.managerName || 'None'}</span>
-        </div>
-        <div class="db-item-right">
-          <span class="db-badge db-badge-info">${r.status}</span>
-        </div>
-      </div>
-    `);
-  });
-
-  activeReleasePoints.forEach(rp => {
-    const totalItems = rp.checklistItems ? rp.checklistItems.length : 0;
-    const completedItems = rp.checklistItems ? rp.checklistItems.filter(item => item.done).length : 0;
-    const pct = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
-
-    const projNames = [];
-    if (rp.projectId) {
-      const p = state.projects.find(x => x.id === rp.projectId);
-      if (p) projNames.push(p.name);
-    }
-    if (rp.projectIds && Array.isArray(rp.projectIds)) {
-      rp.projectIds.forEach(id => {
-        const p = state.projects.find(x => x.id === id);
-        if (p && !projNames.includes(p.name)) projNames.push(p.name);
-      });
-    }
-
-    activePlansListHtml.push(`
-      <div class="db-item" style="flex-direction: column; align-items: stretch; gap: 8px;">
-        <div style="display: flex; align-items: center; justify-content: space-between;">
-          <div class="db-item-details">
-            <span class="db-item-title">${rp.title}</span>
-            <span class="db-item-subtitle">Release Point · ${projNames.join(', ')}</span>
-          </div>
-          <div class="db-item-right">
-            <span class="db-badge db-badge-warning">Upcoming</span>
-          </div>
-         </div>
-         <div style="display: flex; align-items: center; gap: 8px;">
-           <div style="flex: 1; height: 5px; background: var(--border); border-radius: 99px; overflow: hidden;">
-             <div style="width: ${pct}%; height: 100%; background: var(--accent); border-radius: 99px;"></div>
-           </div>
-           <span style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">${completedItems}/${totalItems} Done</span>
-         </div>
-      </div>
-    `);
-  });
-
-  const activePlansHtml = activePlansListHtml.length ? activePlansListHtml.join('') : '<div style="color:var(--text-muted);font-size:13px;font-style:italic;text-align:center;padding:24px 0;">No active release plans</div>';
-
-  // ── Test Cases by Project (full-width 100% stacked bars) ──
-  const testCases = state.testCases || [];
-  const tcByProj = {};
-  testCases.forEach(tc => {
-    const key = tc.projectId || '__none__';
-    if (!tcByProj[key]) tcByProj[key] = { total: 0, pass: 0, fail: 0 };
-    tcByProj[key].total++;
-    if (['Pass', 'Passed'].includes(tc.status)) tcByProj[key].pass++;
-    if (['Fail', 'Failed'].includes(tc.status)) tcByProj[key].fail++;
-  });
-  const tcRows = Object.entries(tcByProj).sort((a, b) => b[1].total - a[1].total);
-  const tcTotalAll = tcRows.reduce((s, [, d]) => s + d.total, 0);
-  const tcTotalPass = tcRows.reduce((s, [, d]) => s + d.pass, 0);
-  const tcTotalFail = tcRows.reduce((s, [, d]) => s + d.fail, 0);
-  const tcTotalPend = tcTotalAll - tcTotalPass - tcTotalFail;
-
-  const TC_PASS_COLOR = '#2d6a4f';
-  const TC_FAIL_COLOR = '#b91c1c';
-  const TC_PEND_COLOR = '#e8e5df';
-
-  const tcByProjHtml = tcRows.length ? `
-    <div class="db-tc-summary">
-      <div class="db-tc-sum-chip tc-chip-pass">
-        <span class="db-tc-sum-n">${tcTotalPass}</span><span>Passed</span>
-      </div>
-      <div class="db-tc-sum-chip tc-chip-fail">
-        <span class="db-tc-sum-n">${tcTotalFail}</span><span>Failed</span>
-      </div>
-      <div class="db-tc-sum-chip tc-chip-pend">
-        <span class="db-tc-sum-n">${tcTotalPend}</span><span>Pending</span>
-      </div>
-      <div class="db-tc-sum-chip tc-chip-total">
-        <span class="db-tc-sum-n">${tcTotalAll}</span><span>Total</span>
-      </div>
-    </div>
-    <div class="db-tc-rows">
-      ${tcRows.map(([pid, d]) => {
-    const proj = state.projects.find(p => p.id === pid);
-    const name = proj ? proj.name : 'Unassigned';
-    const pp = d.total ? Math.round(d.pass / d.total * 100) : 0;
-    const fp = d.total ? Math.round(d.fail / d.total * 100) : 0;
-    const np = Math.max(0, 100 - pp - fp);
-    const r = (left, right) => `border-radius:${left ? '6px' : '0'} ${right ? '6px' : '0'} ${right ? '6px' : '0'} ${left ? '6px' : '0'}`;
-    return `
-        <div class="db-tc-row2">
-          <div class="db-tc-row2-top">
-            <span class="db-tc-name2" title="${name}">${name}</span>
-            <span class="db-tc-row2-stats">
-              <span class="tc-stat-pass">${d.pass} P</span>
-              <span class="tc-stat-sep">·</span>
-              <span class="tc-stat-fail">${d.fail} F</span>
-              <span class="tc-stat-sep">·</span>
-              <span class="tc-stat-pend">${d.total - d.pass - d.fail} N</span>
-              <span class="tc-stat-total">${d.total}</span>
-            </span>
-          </div>
-          <div class="db-tc-fullbar">
-            ${pp > 0 ? `<div style="width:${pp}%;background:${TC_PASS_COLOR};height:100%;${r(true, fp === 0 && np === 0)};display:flex;align-items:center;justify-content:center;transition:width .3s;">
-              ${pp > 12 ? `<span style="font-size:9px;font-weight:700;color:#fff;letter-spacing:.3px;">${pp}%</span>` : ''}</div>` : ''}
-            ${fp > 0 ? `<div style="width:${fp}%;background:${TC_FAIL_COLOR};height:100%;${r(pp === 0, np === 0)};transition:width .3s;"></div>` : ''}
-            ${np > 0 ? `<div style="width:${np}%;background:${TC_PEND_COLOR};height:100%;${r(pp === 0 && fp === 0, true)};transition:width .3s;"></div>` : ''}
-          </div>
-        </div>`;
-  }).join('')}
-    </div>
-  ` : '<div style="color:var(--text-muted);font-size:12.5px;font-style:italic;padding:20px 0;text-align:center;">No test cases yet</div>';
-
   // ── Chart 1: Tasks completed — selected month by calendar week ──
   if (!state.chartMonth) {
     const _d = new Date();
@@ -2461,44 +2556,6 @@ const renderDashboard = () => {
     </div>`).join('');
 
   // (release chips removed per user request)
-
-  // ── Compact Task Status for Recent Tasks card ──
-  const tsDonutR = 38, tsCx = 46, tsCy = 46, tsSW = 15, tsGap = 2;
-  const tsCirc = 2 * Math.PI * tsDonutR;
-  const tsColors = { 'Done': '#2d6a4f', 'In Progress': '#b45309', 'To-Do': '#1d4ed8', 'On Hold': '#78716c' };
-  const tsData = [
-    { label: 'Done', count: taskDone, color: tsColors['Done'] },
-    { label: 'In Progress', count: taskInProg, color: tsColors['In Progress'] },
-    { label: 'To-Do', count: taskTodo, color: tsColors['To-Do'] },
-    { label: 'On Hold', count: taskHold, color: tsColors['On Hold'] },
-  ];
-  let tsOff = 0;
-  const tsSegs = tsData.filter(d => d.count > 0).map(({ count, color }) => {
-    const dash = Math.max((count / (donutTotal || 1)) * tsCirc - tsGap, 0);
-    const seg = `<circle cx="${tsCx}" cy="${tsCy}" r="${tsDonutR}" fill="none" stroke="${color}" stroke-width="${tsSW}"
-      stroke-dasharray="${dash.toFixed(2)} ${(tsCirc - dash).toFixed(2)}"
-      stroke-dashoffset="${(-tsOff).toFixed(2)}" stroke-linecap="round"
-      transform="rotate(-90 ${tsCx} ${tsCy})"/>`;
-    tsOff += (count / (donutTotal || 1)) * tsCirc;
-    return seg;
-  }).join('');
-  const taskStatusPanel = `
-    <div class="db-ts-panel">
-      <svg viewBox="0 0 92 92" style="width:92px;height:92px;flex-shrink:0;">
-        <circle cx="${tsCx}" cy="${tsCy}" r="${tsDonutR}" fill="none" stroke="var(--border)" stroke-width="${tsSW}"/>
-        ${tsSegs}
-        <text x="${tsCx}" y="${tsCy + 5}" text-anchor="middle" font-size="14" font-weight="800" fill="var(--text)" font-family="inherit">${taskPct}%</text>
-      </svg>
-      <div class="db-ts-legend">
-        ${tsData.map(d => `
-          <div class="db-ts-row">
-            <span class="db-ts-dot" style="background:${d.color};"></span>
-            <span class="db-ts-label">${d.label}</span>
-            <span class="db-ts-count" style="color:${d.color};">${d.count}</span>
-          </div>`).join('')}
-        <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted);">${completedTasks} of ${totalTasks} done</div>
-      </div>
-    </div>`;
 
   // ── Large donut for charts card ──
   const dCx = 65, dCy = 65, dR = 50, dSW = 20, dGap = 2;
@@ -2590,47 +2647,13 @@ const renderDashboard = () => {
         </div>
       </div>
 
-      <!-- Row 2: Recent Tasks (full-width) with Task Status panel -->
-      <div class="db-card">
-        <div class="db-card-title">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;flex-shrink:0;"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-          Recent Tasks
-        </div>
-        <div class="db-tasks-layout">
-          <div class="db-tasks-status">
-            <div class="db-sub-heading">Task Overview</div>
-            ${taskStatusPanel}
-          </div>
-          <div class="db-tasks-col">
-            <div class="db-sub-heading">Overdue &amp; Due Soon</div>
-            <div class="db-list" style="max-height:220px;">${pendingTasksHtml}</div>
-          </div>
-          <div class="db-tasks-col">
-            <div class="db-sub-heading">Recently Completed</div>
-            <div class="db-list" style="max-height:220px;">${completedTasksHtml}</div>
-          </div>
-        </div>
-      </div>
+      <!-- Row 2: Recent Tasks -->
+      ${renderDbTaskPulse()}
 
       <!-- Row 3: Test Cases by Project | Active Releases & Plans -->
       <div class="db-grid">
-
-        <div class="db-card">
-          <div class="db-card-title">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;flex-shrink:0;"><path d="M9 3v7.2a4 4 0 01-1.3 2.9l-3.4 3.1A2 2 0 005.7 20h12.6a2 2 0 001.4-3.8l-3.4-3.1A4 4 0 0115 10.2V3"/><path d="M6 3h12"/></svg>
-            Test Cases by Project
-          </div>
-          <div class="db-tc-list">${tcByProjHtml}</div>
-        </div>
-
-        <div class="db-card">
-          <div class="db-card-title">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;flex-shrink:0;"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-            Active Releases &amp; Plans
-          </div>
-          <div class="db-list">${activePlansHtml}</div>
-        </div>
-
+        ${renderDbTestCases()}
+        ${renderDbReleasePipeline()}
       </div>
     </div>
   `;
@@ -4655,51 +4678,39 @@ const jiraResultHtml = (r) => r.ok ? `
   </div>` : `
   <div class="jira-result fail"><strong>Connection failed.</strong><span>${jiraEsc(r.message)}</span></div>`;
 
-const renderJiraSettings = () => {
-  const head = `
-    <div class="settings-header-wrap">
-      <h3>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
-        Integrations
-      </h3>
-      <p>Connect your own Jira Cloud account to import tickets into Release Points.</p>
-    </div>`;
+// The Jira form (status, site, email, token, actions). Settings wraps it in its section.
+const renderJiraBox = () => {
   if (!jiraAvailable()) {
-    return `<div class="settings-card"><div class="settings-info">${head}<div class="jira-box"><div class="jira-field-hint">Available in the installed extension only.</div></div></div></div>`;
+    return `<div class="jira-box"><div class="jira-field-hint">Available in the installed extension only.</div></div>`;
   }
   const j = state.jira;
   const status = jiraConnected()
     ? `<span class="jira-status on"><i></i>Connected as ${jiraEsc(j.accountName || j.email)} · ${jiraEsc(jiraHost(j.site))}</span>`
     : `<span class="jira-status off"><i></i>Not connected</span>`;
   return `
-    <div class="settings-card">
-      <div class="settings-info">
-        ${head}
-        <div class="jira-box">
-          <div class="jira-head"><span class="jira-title">Jira</span>${status}</div>
-          <div class="form-group">
-            <label for="jiraSite">Jira Site URL</label>
-            <input type="url" id="jiraSite" placeholder="https://yourcompany.atlassian.net" value="${jiraEsc(j ? j.site : '')}" autocomplete="off" spellcheck="false" />
-          </div>
-          <div class="form-group">
-            <label for="jiraEmail">Atlassian Account Email</label>
-            <input type="email" id="jiraEmail" placeholder="you@company.com" value="${jiraEsc(j ? j.email : '')}" autocomplete="off" spellcheck="false" />
-          </div>
-          <div class="form-group">
-            <label for="jiraToken">API Token</label>
-            <input type="password" id="jiraToken" autocomplete="new-password" spellcheck="false"
-              placeholder="${j && j.hasToken ? '•••••••••••••• saved — leave blank to keep' : 'Paste your API token'}" />
-            <a class="jira-help-link" href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener noreferrer">Create an API token in your Atlassian account ↗</a>
-          </div>
-          <div class="jira-actions">
-            <button type="button" class="btn-primary" id="jiraSaveBtn">Save Configuration</button>
-            <button type="button" class="btn-ghost" id="jiraTestBtn" ${jiraConnected() ? '' : 'disabled'}>Test Connection</button>
-            ${j ? `<button type="button" class="btn-ghost jira-disconnect" id="jiraDisconnectBtn">Disconnect Jira</button>` : ''}
-          </div>
-          <div id="jiraResult">${state.jiraResult ? jiraResultHtml(state.jiraResult) : ''}</div>
-          <p class="jira-note">Saved only in this browser's extension storage — not encrypted, and never included in exports or backups. You can revoke the token in your Atlassian account at any time.</p>
-        </div>
+    <div class="jira-box">
+      <div class="jira-head"><span class="jira-title">Connection</span>${status}</div>
+      <div class="form-group">
+        <label for="jiraSite">Jira Site URL</label>
+        <input type="url" id="jiraSite" placeholder="https://yourcompany.atlassian.net" value="${jiraEsc(j ? j.site : '')}" autocomplete="off" spellcheck="false" />
       </div>
+      <div class="form-group">
+        <label for="jiraEmail">Atlassian Account Email</label>
+        <input type="email" id="jiraEmail" placeholder="you@company.com" value="${jiraEsc(j ? j.email : '')}" autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="form-group">
+        <label for="jiraToken">API Token</label>
+        <input type="password" id="jiraToken" autocomplete="new-password" spellcheck="false"
+          placeholder="${j && j.hasToken ? '•••••••••••••• saved — leave blank to keep' : 'Paste your API token'}" />
+        <a class="jira-help-link" href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener noreferrer">Create an API token in your Atlassian account ↗</a>
+      </div>
+      <div class="jira-actions">
+        <button type="button" class="btn-primary" id="jiraSaveBtn">Save Configuration</button>
+        <button type="button" class="btn-ghost" id="jiraTestBtn" ${jiraConnected() ? '' : 'disabled'}>Test Connection</button>
+        ${j ? `<button type="button" class="btn-ghost jira-disconnect" id="jiraDisconnectBtn">Disconnect Jira</button>` : ''}
+      </div>
+      <div id="jiraResult">${state.jiraResult ? jiraResultHtml(state.jiraResult) : ''}</div>
+      <p class="jira-note">Saved only in this browser's extension storage — not encrypted, and never included in exports or backups. You can revoke the token in your Atlassian account at any time.</p>
     </div>`;
 };
 
@@ -5023,9 +5034,37 @@ const wireJiraImportPanel = () => {
   });
 };
 
+// Settings: section menu on the left, one section at a time on the right
+// (state.settingsSection). Every control keeps its original id / data-action, so the
+// existing handlers (theme, default view, module toggles, export/import/report,
+// automatic backup, Jira, clear database) work unchanged.
+const SETTINGS_SECTIONS = [
+  { key: 'general', label: 'General', desc: 'Theme & startup', icon: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>' },
+  { key: 'modules', label: 'Modules', desc: 'Sidebar navigation', icon: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>' },
+  { key: 'data', label: 'Data & Backups', desc: 'Export, import, auto-backup', icon: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/>' },
+  { key: 'integrations', label: 'Integrations', desc: 'Jira Cloud', icon: '<path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>' },
+  { key: 'danger', label: 'Danger Zone', desc: 'Clear all data', icon: '<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01"/>', danger: true }
+];
+
+const stIcon = (paths, extra = '') => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" ${extra}>${paths}</svg>`;
+const stSection = (title, desc, body, extraHead = '') => `
+  <section class="st-section">
+    <div class="st-section-head">
+      <div><h3>${title}</h3>${desc ? `<p>${desc}</p>` : ''}</div>
+      ${extraHead}
+    </div>
+    ${body}
+  </section>`;
+const stRow = (label, desc, control, cls = '') => `
+  <div class="st-row ${cls}">
+    <div class="st-row-text"><span class="st-row-label">${label}</span>${desc ? `<span class="st-row-desc">${desc}</span>` : ''}</div>
+    <div class="st-row-control">${control}</div>
+  </div>`;
+
 const renderSettings = () => {
-  const dbSizeKb = ((JSON.stringify(state).length) / 1024).toFixed(1);
+  const dbSizeKb = ((JSON.stringify(state, (k, v) => v instanceof Set ? [...v] : v).length) / 1024).toFixed(1);
   const hiddenSet = new Set(state.hiddenModules || []);
+  const section = SETTINGS_SECTIONS.some(s => s.key === state.settingsSection) ? state.settingsSection : 'general';
 
   const MODULE_LIST = [
     { key: 'dashboard', label: 'Dashboard', desc: 'Main overview & project metrics', icon: `<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>` },
@@ -5042,212 +5081,106 @@ const renderSettings = () => {
     { key: 'settings', label: 'Settings', desc: 'System preferences & database', locked: true, icon: `<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>` }
   ];
 
-  const settingsHero = buildPageHero({
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>`,
-    gradient: 'linear-gradient(135deg, #0f2027 0%, #203a43 40%, #2c5364 100%)',
-    title: 'System Settings',
-    subtitle: 'Configure module visibility, appearance, system backups, and storage health.',
-    stats: [
-      { label: 'Visible Modules', value: MODULE_LIST.length - hiddenSet.size, color: '#4ade80' },
-      { label: 'Hidden Modules', value: hiddenSet.size, color: '#f87171' },
-      { label: 'DB Size', value: `${dbSizeKb} KB`, color: '#a78bfa' },
-      { label: 'Developers', value: (state.developers || []).length, color: '#60a5fa' }
-    ],
-    progressBar: {
-      pct: Math.min(100, Math.round((parseFloat(dbSizeKb) / 5120) * 100)),
-      label: `${dbSizeKb} KB / 5120 KB storage utilized`,
-      color: 'linear-gradient(90deg, #4ade80, #22c55e)'
-    }
-  });
+  const nav = `
+    <nav class="st-nav" role="tablist" aria-label="Settings sections" aria-orientation="vertical">
+      ${SETTINGS_SECTIONS.map(s => `
+        <button type="button" role="tab" id="st-tab-${s.key}" class="st-nav-item ${s.key === section ? 'active' : ''} ${s.danger ? 'danger' : ''}"
+          data-action="settings-section" data-section="${s.key}" aria-selected="${s.key === section}" aria-controls="st-panel" tabindex="${s.key === section ? '0' : '-1'}">
+          <span class="st-nav-icon">${stIcon(s.icon)}</span>
+          <span class="st-nav-text"><span class="st-nav-label">${s.label}</span><span class="st-nav-desc">${s.desc}</span></span>
+        </button>`).join('')}
+    </nav>`;
 
+  let body = '';
+  if (section === 'general') {
+    const themes = [
+      { key: 'system', label: 'System', desc: 'Follow your OS' },
+      { key: 'light', label: 'Light', desc: 'Bright & crisp' },
+      { key: 'dark', label: 'Dark', desc: 'Easy on the eyes' }
+    ];
+    const views = [['dashboard', 'Dashboard'], ['projects', 'Projects'], ['tasks', 'Tasks'], ['notes', 'Notes'], ['calendar', 'Calendar'], ['tests', 'Project Insights'], ['testcases', 'Test Case Management'], ['releases', 'Release Management'], ['releasepoints', 'Release Points'], ['developers', 'Developer Management'], ['activity', 'Activity']];
+    body = stSection('Appearance', 'Choose how Clair looks. System follows your operating system’s light/dark setting.', `
+      <div class="st-themes" id="themeToggle" role="radiogroup" aria-label="Theme">
+        ${themes.map(t => `
+          <button type="button" class="type-btn st-theme ${state.theme === t.key ? 'active' : ''}" data-theme-choice="${t.key}" role="radio" aria-checked="${state.theme === t.key}">
+            ${(() => {
+              const mock = (k) => `<span class="st-theme-preview ${k}"><span class="p-side"></span><span class="p-main"><span class="p-bar"></span><span class="p-card"></span><span class="p-card short"></span></span></span>`;
+              // System = the light and dark previews split along one diagonal.
+              return t.key === 'system'
+                ? `<span class="st-theme-split" aria-hidden="true">${mock('light')}${mock('dark')}</span>`
+                : `<span aria-hidden="true">${mock(t.key)}</span>`;
+            })()}
+            <span class="st-theme-label">${t.label}<em>${t.desc}</em></span>
+            <span class="st-theme-check" aria-hidden="true">${stIcon('<path d="M20 6L9 17l-5-5"/>', 'stroke-width="3"')}</span>
+          </button>`).join('')}
+      </div>`) +
+      stSection('Startup', '', stRow('Default startup module', 'The page Clair opens on.', `
+        <select id="defaultViewSelect" class="form-select st-select">
+          ${views.map(([v, l]) => `<option value="${v}" ${state.defaultView === v ? 'selected' : ''}>${l}</option>`).join('')}
+        </select>`));
+  } else if (section === 'modules') {
+    const visible = MODULE_LIST.length - hiddenSet.size;
+    body = stSection('Sidebar modules', 'Show or hide modules in the sidebar. Hidden modules keep their data. Settings can’t be hidden.', `
+      <div class="st-list">
+        ${MODULE_LIST.map(mod => {
+          const isVisible = !hiddenSet.has(mod.key);
+          return `
+            <div class="st-row st-module ${mod.locked ? 'locked' : ''} ${isVisible ? '' : 'off'}">
+              <span class="st-module-icon">${stIcon(mod.icon)}</span>
+              <div class="st-row-text"><span class="st-row-label">${escapeHtml(mod.label)}</span><span class="st-row-desc">${escapeHtml(mod.desc)}</span></div>
+              <div class="st-row-control">
+                ${mod.locked ? `<span class="st-badge">${stIcon('<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>')}Always on</span>` : `
+                  <label class="switch-toggle" title="${isVisible ? 'Hide' : 'Show'} ${escapeHtml(mod.label)}">
+                    <input type="checkbox" data-action="toggle-module-visibility" data-module="${mod.key}" ${isVisible ? 'checked' : ''} aria-label="Show ${escapeHtml(mod.label)} in the sidebar" />
+                    <span class="switch-slider"></span>
+                  </label>`}
+              </div>
+            </div>`;
+        }).join('')}
+      </div>`, `<span class="st-pill">${visible} of ${MODULE_LIST.length} visible</span>`);
+  } else if (section === 'data') {
+    const stat = (n, l) => `<div class="st-stat"><strong>${n}</strong><span>${l}</span></div>`;
+    body = stSection('Backup & restore', 'Backups are JSON files in Downloads/Extensions/project-extension/Backup.', `
+      <div class="st-list">
+        ${stRow('Export backup', 'Download everything in Clair as one JSON file.', `<button type="button" class="btn-ghost st-btn" id="settingsExportBtn">${stIcon('<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>')}Export JSON</button>`)}
+        ${stRow('Import backup', 'Restore from a backup file. This replaces the current data.', `<button type="button" class="btn-ghost st-btn" id="settingsImportBtn">${stIcon('<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>')}Import JSON</button>`)}
+        ${stRow('Excel report', 'A formatted workbook of projects, tasks, releases and test cases.', `<button type="button" class="btn-ghost st-btn" id="openExportReportBtn">${stIcon('<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>')}Export report</button>`)}
+      </div>`) +
+      stSection('Automatic backup', 'A daily JSON backup, made in the background — Clair doesn’t need to be open.', renderAutoBackupSettings()) +
+      stSection('Storage', 'Clair keeps everything locally in this browser (SQLite in IndexedDB).', `
+        <div class="st-stats">
+          ${stat((state.projects || []).length, 'Projects')}
+          ${stat((state.tasks || []).length, 'Tasks')}
+          ${stat((state.releasePoints || []).length, 'Release points')}
+          ${stat((state.testCases || []).length, 'Test cases')}
+          ${stat((state.developers || []).length, 'Developers')}
+          ${stat(`${dbSizeKb} KB`, 'Data size')}
+        </div>`);
+  } else if (section === 'integrations') {
+    body = stSection('Jira Cloud', 'Connect your own Jira account to import tickets into Release Points. Link Clair projects to Jira projects from the project form.', renderJiraBox(),
+      `<span class="st-brand">${stIcon('<path d="M12 2L2 12l10 10 10-10L12 2z"/><path d="M12 8l-4 4 4 4 4-4-4-4z"/>')}</span>`);
+  } else {
+    body = stSection('Danger zone', '', `
+      <div class="st-list st-danger-list">
+        ${stRow('Clear database', 'Permanently delete every project, task, release and test case in Clair. A backup file is exported first.', `<button type="button" class="btn-danger st-btn" id="clearDataBtn">${stIcon('<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>')}Clear database</button>`)}
+      </div>`);
+  }
+
+  const current = SETTINGS_SECTIONS.find(s => s.key === section);
   return `
-    ${settingsHero}
-
-    <div class="settings-container settings-full-width" style="margin-top: 20px;">
-
-      <!-- 1. Module Management -->
-      <div class="settings-card" style="margin-bottom: 20px;">
-        <div class="settings-info">
-          <div class="settings-header-wrap">
-            <h3>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
-              Module Management
-            </h3>
-            <p>Customize your sidebar navigation by showing or hiding specific modules. Settings cannot be hidden.</p>
-          </div>
-
-          <div class="module-toggle-grid">
-            ${MODULE_LIST.map(mod => {
-    const isVisible = !hiddenSet.has(mod.key);
-    const isLocked = mod.locked === true;
-
-    return `
-                <div class="module-toggle-card${isLocked ? ' locked' : ''}">
-                  <div class="module-toggle-left">
-                    <div class="module-toggle-icon">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">${mod.icon}</svg>
-                    </div>
-                    <div class="module-toggle-meta">
-                      <span class="module-toggle-title">${escapeHtml(mod.label)}</span>
-                      <span class="module-toggle-desc">${escapeHtml(mod.desc)}</span>
-                    </div>
-                  </div>
-                  <div>
-                    ${isLocked ? `
-                      <span class="module-badge-locked">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 11px; height: 11px;"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-                        System Core
-                      </span>
-                    ` : `
-                      <label class="switch-toggle" title="Toggle module visibility">
-                        <input type="checkbox" data-action="toggle-module-visibility" data-module="${mod.key}" ${isVisible ? 'checked' : ''} />
-                        <span class="switch-slider"></span>
-                      </label>
-                    `}
-                  </div>
-                </div>
-              `;
-  }).join('')}
-          </div>
+    <div class="st-page">
+      <div class="st-header">
+        <h2>Settings</h2>
+        <p>Preferences, data and integrations for Clair on this browser.</p>
+      </div>
+      <div class="st-layout">
+        ${nav}
+        <div class="st-panel" id="st-panel" role="tabpanel" aria-labelledby="st-tab-${section}">
+          <div class="st-panel-title">${stIcon(current.icon)}<span>${current.label}</span></div>
+          ${body}
         </div>
       </div>
-
-      <div class="settings-grid-2col">
-        <!-- 2. Appearance & Startup Settings -->
-        <div class="settings-card">
-          <div class="settings-info">
-            <div class="settings-header-wrap">
-              <h3>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-                Appearance &amp; Default View
-              </h3>
-              <p>Choose theme preferences and your default startup screen.</p>
-            </div>
-
-            <div style="display: flex; flex-direction: column; gap: 16px; margin-top: 10px;">
-              <div>
-                <label style="font-size: 12px; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 8px;">Color Theme</label>
-                <div class="project-type-toggle" id="themeToggle" role="radiogroup" aria-label="Theme">
-                  <button type="button" class="type-btn${state.theme === 'system' ? ' active' : ''}" data-theme-choice="system" role="radio" aria-checked="${state.theme === 'system'}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-                    System
-                  </button>
-                  <button type="button" class="type-btn${state.theme === 'light' ? ' active' : ''}" data-theme-choice="light" role="radio" aria-checked="${state.theme === 'light'}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-                    Light
-                  </button>
-                  <button type="button" class="type-btn${state.theme === 'dark' ? ' active' : ''}" data-theme-choice="dark" role="radio" aria-checked="${state.theme === 'dark'}">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
-                    Dark
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label style="font-size: 12px; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 6px;">Default Startup Module</label>
-                <select id="defaultViewSelect" class="form-select">
-                  <option value="dashboard" ${state.defaultView === 'dashboard' ? 'selected' : ''}>Dashboard</option>
-                  <option value="projects" ${state.defaultView === 'projects' ? 'selected' : ''}>Projects</option>
-                  <option value="tasks" ${state.defaultView === 'tasks' ? 'selected' : ''}>Tasks</option>
-                  <option value="notes" ${state.defaultView === 'notes' ? 'selected' : ''}>Notes</option>
-                  <option value="calendar" ${state.defaultView === 'calendar' ? 'selected' : ''}>Calendar</option>
-                  <option value="tests" ${state.defaultView === 'tests' ? 'selected' : ''}>Project Insights</option>
-                  <option value="testcases" ${state.defaultView === 'testcases' ? 'selected' : ''}>Test Case Management</option>
-                  <option value="releases" ${state.defaultView === 'releases' ? 'selected' : ''}>Release Management</option>
-                  <option value="releasepoints" ${state.defaultView === 'releasepoints' ? 'selected' : ''}>Release Points</option>
-                  <option value="developers" ${state.defaultView === 'developers' ? 'selected' : ''}>Developer Management</option>
-                  <option value="activity" ${state.defaultView === 'activity' ? 'selected' : ''}>Activity</option>
-                </select>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 3. Data Portability & Reports -->
-        <div class="settings-card">
-          <div class="settings-info">
-            <div class="settings-header-wrap">
-              <h3>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
-                Data Portability &amp; Reports
-              </h3>
-              <p>Export backups, restore data JSON, or export Excel reports.</p>
-            </div>
-            
-            <div class="portability-btn-group" style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
-              <button class="btn-ghost" id="settingsExportBtn" style="justify-content: flex-start;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 15px; height: 15px; margin-right: 8px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                Export System Backup (JSON)
-              </button>
-              <button class="btn-ghost" id="settingsImportBtn" style="justify-content: flex-start;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 15px; height: 15px; margin-right: 8px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                Import System Backup (JSON)
-              </button>
-              <button class="btn-ghost" id="openExportReportBtn" style="justify-content: flex-start;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 15px; height: 15px; margin-right: 8px;"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-                Export Full Report (Excel)
-              </button>
-            </div>
-            ${renderAutoBackupSettings()}
-          </div>
-        </div>
-
-        <!-- 4. Database Overview Metrics -->
-        <div class="settings-card">
-          <div class="settings-info">
-            <div class="settings-header-wrap">
-              <h3>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-                System Database Metrics
-              </h3>
-              <p>Record counters &amp; local storage statistics.</p>
-            </div>
-            
-            <div class="settings-stats-grid">
-              <div class="settings-stat-box">
-                <span class="stat-num num-projects">${(state.projects || []).length}</span>
-                <span class="stat-lbl">Projects</span>
-              </div>
-              <div class="settings-stat-box">
-                <span class="stat-num num-tasks">${(state.tasks || []).length}</span>
-                <span class="stat-lbl">Tasks</span>
-              </div>
-              <div class="settings-stat-box">
-                <span class="stat-num num-tests">${(state.tests || []).length}</span>
-                <span class="stat-lbl">Tests</span>
-              </div>
-              <div class="settings-stat-box">
-                <span class="stat-num num-db">${dbSizeKb} KB</span>
-                <span class="stat-lbl">DB Size</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Integrations: Jira -->
-        ${renderJiraSettings()}
-
-        <!-- 5. Danger Zone -->
-        <div class="settings-card danger-zone">
-          <div class="settings-info">
-            <div class="settings-header-wrap" style="border-bottom-color: rgba(192, 57, 43, 0.15);">
-              <h3 style="color: var(--danger);">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01"/></svg>
-                Danger Zone
-              </h3>
-              <p>Wipe all database records. A backup file is automatically exported first.</p>
-            </div>
-            
-            <button class="btn-danger" id="clearDataBtn" style="width: 100%; justify-content: center; margin-top: 10px;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 16px; height: 16px; margin-right: 8px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
-              Clear Database
-            </button>
-          </div>
-        </div>
-      </div>
-
-    </div>
-  `;
+    </div>`;
 };
 
 const clearAllData = async () => {
@@ -5391,6 +5324,49 @@ const attachCardListeners = () => {
       const cardId = id || (card ? card.dataset.id : null);
 
       if (action === 'new-project') openProjectModal();
+      else if (action === 'new-release-pt') openReleasePtModal();
+      else if (action === 'open-release-pt') openReleasePointOnPage(cardId);
+      else if (action === 'rpa-toggle') toggleRpAccordion(cardId);
+      else if (action === 'settings-section') {
+        state.settingsSection = btn.dataset.section;
+        render();
+        const tab = document.getElementById(`st-tab-${state.settingsSection}`);
+        if (tab) tab.focus();
+      }
+      else if (action === 'rpa-expand-all' || action === 'rpa-collapse-all') {
+        const open = action === 'rpa-expand-all';
+        document.querySelectorAll('.rpa-item').forEach(el => toggleRpAccordion(el.dataset.id, open));
+      }
+      else if (action === 'rp-project-chip') {
+        const pid = btn.dataset.pid || '';
+        state.releasePtFilters.project = state.releasePtFilters.project === pid ? '' : pid;
+        render();
+      }
+      else if (action === 'open-tc-project' || action === 'tc-open-project') tcGo(cardId, 'overview');
+      else if (action === 'tc-home') tcGo(null);
+      else if (action === 'tc-overview') tcGo(state.activeTestCaseProjectId, 'overview');
+      else if (action === 'tc-open-scenarios') tcGo(state.activeTestCaseProjectId, 'scenarios', null);
+      else if (action === 'tc-open-module') tcGo(state.activeTestCaseProjectId, 'scenarios', cardId === 'none' ? '__none__' : cardId);
+      else if (action === 'tc-open-failures') {
+        state.testCaseFilters = { status: 'Failed', priority: '', type: '' };
+        state.testCaseSearch = '';
+        tcGo(state.activeTestCaseProjectId, 'scenarios', null);
+      }
+      else if (action === 'tc-add-case') openTestCaseModal();
+      else if (action === 'view-testcase') openDetailModal('testcase', cardId);
+      else if (action === 'tc-status-chip') {
+        state.testCaseFilters.status = btn.dataset.status || '';
+        state.testCasePage = 1;
+        render();
+      }
+      else if (action === 'tc-row-toggle') {
+        // In selection mode the scenario title selects the row, like the rest of the row.
+        const set = state.testCaseSelectionMode
+          ? (state.selectedTestCaseIds = state.selectedTestCaseIds || new Set())
+          : (state.tcExpanded = state.tcExpanded || new Set());
+        if (set.has(cardId)) set.delete(cardId); else set.add(cardId);
+        render();
+      }
       else if (action === 'open-project-overview') openProjectOverview(cardId);
       else if (action === 'close-project-overview') closeProjectOverview();
       else if (action === 'po-task-filter') { state.overviewTaskFilter = btn.dataset.filter; render(); }
@@ -5681,6 +5657,22 @@ const attachCardListeners = () => {
     }
 
     // Check if clicked a testcase card
+    // Test scenarios table: clicking a row (not one of its controls) selects it in
+    // selection mode, otherwise expands/collapses its details.
+    const tcsRow = e.target.closest('.tcs-row');
+    if (tcsRow && !e.target.closest('input, select, textarea, button, a, label')) {
+      const tid = tcsRow.dataset.id;
+      if (state.testCaseSelectionMode) {
+        if (!state.selectedTestCaseIds) state.selectedTestCaseIds = new Set();
+        if (state.selectedTestCaseIds.has(tid)) state.selectedTestCaseIds.delete(tid); else state.selectedTestCaseIds.add(tid);
+      } else {
+        if (!state.tcExpanded) state.tcExpanded = new Set();
+        if (state.tcExpanded.has(tid)) state.tcExpanded.delete(tid); else state.tcExpanded.add(tid);
+      }
+      render();
+      return;
+    }
+
     const testCaseCard = e.target.closest('.testcase-card, .testcase-row');
     if (testCaseCard) {
       if (e.target.closest('[data-action]') || e.target.closest('a') || e.target.closest('input[type="checkbox"]') || e.target.closest('.table-inline-input') || e.target.closest('.table-inline-select') || e.target.closest('.table-inline-textarea')) return;
@@ -5892,6 +5884,7 @@ const attachCardListeners = () => {
       state.releasePtFilters[rptSelect.dataset.rptfilter] = rptSelect.value;
       render();
     }
+    if (e.target.id === 'tcHomeSort') { state.tcHomeSort = e.target.value; render(); return; }
     const tcSelect = e.target.closest('[data-tcfilter]');
     if (tcSelect) {
       state.testCaseFilters[tcSelect.dataset.tcfilter] = tcSelect.value;
@@ -6007,6 +6000,12 @@ const attachCardListeners = () => {
     if (releasePtInput) {
       clearTimeout(pageSearchTimer);
       pageSearchTimer = setTimeout(() => { state.releasePtSearch = releasePtInput.value.toLowerCase(); rerenderPreservingFocus(releasePtInput); }, 180);
+      return;
+    }
+    const tcHomeInput = e.target.closest('#tcHomeSearchInput');
+    if (tcHomeInput) {
+      clearTimeout(pageSearchTimer);
+      pageSearchTimer = setTimeout(() => { state.tcHomeSearch = tcHomeInput.value; rerenderPreservingFocus(tcHomeInput); }, 180);
       return;
     }
     const tcInput = e.target.closest('#testCaseSearchInput');
@@ -7425,282 +7424,49 @@ const getProjectVersions = (project) => {
   return versions;
 };
 
-const renderReleasePoints = () => {
-  let rps = state.releasePoints || [];
-  const q = state.releasePtSearch ? state.releasePtSearch.toLowerCase() : '';
-
-  // stats (computed before filtering)
-  const total = rps.length;
-  const completed = rps.filter(r => r.isCompleted).length;
-  const inProgress = rps.filter(r => !r.isCompleted && r.checklistItems && r.checklistItems.some(i => i.done)).length;
-  const upcoming = rps.filter(r => r.releaseType === 'upcoming').length;
-  const released = rps.filter(r => r.releaseType === 'released').length;
-  const totalChecks = rps.reduce((s, r) => s + (r.checklistItems || []).length, 0);
-  const doneChecks = rps.reduce((s, r) => s + (r.checklistItems || []).filter(i => i.done).length, 0);
-  const overallPct = totalChecks === 0 ? 0 : Math.round((doneChecks / totalChecks) * 100);
-
-  // apply filters
-  let filtered = [...rps];
-  if (q) {
-    filtered = filtered.filter(r =>
-      r.title.toLowerCase().includes(q) ||
-      (r.projectIds || (r.projectId ? [r.projectId] : [])).some(pid =>
-        (state.projects.find(p => p.id === pid) || { name: '' }).name.toLowerCase().includes(q)
-      ) ||
-      (r.versions || []).some(v => v.toLowerCase().includes(q))
-    );
-  }
-  if (state.releasePtFilters.project) {
-    filtered = filtered.filter(r =>
-      (r.projectIds || (r.projectId ? [r.projectId] : [])).includes(state.releasePtFilters.project)
-    );
-  }
-  if (state.releasePtFilters.releaseType) filtered = filtered.filter(r => r.releaseType === state.releasePtFilters.releaseType);
-  if (state.releasePtFilters.completion === 'completed') filtered = filtered.filter(r => r.isCompleted);
-  else if (state.releasePtFilters.completion === 'incomplete') filtered = filtered.filter(r => !r.isCompleted);
-
-  const projectOptions = state.projects.map(p =>
-    `<option value="${p.id}" ${state.releasePtFilters.project === p.id ? 'selected' : ''}>${p.name}</option>`
-  ).join('');
-
-  // Recent activity - last 4 updated rps
-  const recentRps = [...rps].sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt)).slice(0, 4);
-
-  // Per-project breakdown for sidebar
-  const projBreakdown = state.projects.map(p => {
-    const pts = rps.filter(r =>
-      (r.projectIds || (r.projectId ? [r.projectId] : [])).includes(p.id)
-    );
-    const done = pts.filter(r => r.isCompleted).length;
-    return pts.length ? { name: p.name, total: pts.length, done } : null;
-  }).filter(Boolean);
-
-  const hero = buildPageHero({
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>`,
-    gradient: 'linear-gradient(135deg, #0f2027 0%, #203a43 40%, #2c5364 100%)',
-    title: 'Release Points',
-    subtitle: 'Track release readiness checklists for your projects and versions.',
-    stats: [
-      { label: 'Total', value: total },
-      { label: 'Done', value: completed, color: '#4ade80' },
-      { label: 'Upcoming', value: upcoming, color: '#fb923c' },
-      { label: 'Checks Done', value: `${overallPct}%` }
-    ],
-    progressBar: { pct: overallPct, label: `${doneChecks} / ${totalChecks} checks completed`, color: 'linear-gradient(90deg, #4ade80, #22c55e)' }
-  });
-
-  return `
-    ${hero}
-
-    <!-- Top Dashboard Row -->
-    <div class="rp-dashboard-row">
-      
-      <!-- Card 1: Status Breakdown -->
-      <div class="rp-dashboard-card">
-        <div class="rp-sidebar-label">Status Breakdown</div>
-        <div class="rp-dashboard-status-grid">
-          <div class="rp-dashboard-status-item">
-            <span class="rp-sidebar-dot green"></span>
-            <span class="rp-status-name">Completed</span>
-            <strong class="rp-status-count">${completed}</strong>
-          </div>
-          <div class="rp-dashboard-status-item">
-            <span class="rp-sidebar-dot blue"></span>
-            <span class="rp-status-name">In Progress</span>
-            <strong class="rp-status-count">${inProgress}</strong>
-          </div>
-          <div class="rp-dashboard-status-item">
-            <span class="rp-sidebar-dot amber"></span>
-            <span class="rp-status-name">Not Started</span>
-            <strong class="rp-status-count">${total - completed - inProgress}</strong>
-          </div>
-          <div class="rp-dashboard-status-item">
-            <span class="rp-sidebar-dot orange"></span>
-            <span class="rp-status-name">Yet to Release</span>
-            <strong class="rp-status-count">${upcoming}</strong>
-          </div>
-          <div class="rp-dashboard-status-item">
-            <span class="rp-sidebar-dot indigo"></span>
-            <span class="rp-status-name">Released</span>
-            <strong class="rp-status-count">${released}</strong>
-          </div>
-        </div>
-      </div>
-
-      <!-- Card 2: Projects Progress -->
-      <div class="rp-dashboard-card">
-        <div class="rp-sidebar-label">By Project</div>
-        <div class="rp-dashboard-projects-list">
-          ${projBreakdown.length ? projBreakdown.map(pb => `
-            <div class="rp-sidebar-proj-row">
-              <div class="rp-sidebar-proj-name">${pb.name}</div>
-              <div class="rp-sidebar-proj-bar-wrap">
-                <div class="rp-sidebar-proj-bar">
-                  <div class="rp-sidebar-proj-fill" style="width:${pb.total === 0 ? 0 : Math.round(pb.done / pb.total * 100)}%;"></div>
-                </div>
-                <span class="rp-sidebar-proj-count">${pb.done}/${pb.total}</span>
-              </div>
-            </div>
-          `).join('') : '<div style="color:var(--text-muted);font-size:12.5px;font-style:italic;text-align:center;padding:12px 0;">No active projects</div>'}
-        </div>
-      </div>
-
-      <!-- Card 3: Recently Updated -->
-      <div class="rp-dashboard-card">
-        <div class="rp-sidebar-label">Recently Updated</div>
-        <div class="rp-dashboard-recent-list">
-          ${recentRps.length ? recentRps.map(rp => {
-    const items = rp.checklistItems || [];
-    const done = items.filter(i => i.done).length;
-    const pct = items.length === 0 ? 0 : Math.round(done / items.length * 100);
-    return `
-              <div class="rp-sidebar-recent-row">
-                <div class="rp-sidebar-recent-title">${rp.title}</div>
-                <div class="rp-sidebar-recent-meta">${pct}% completed · ${timeAgo(rp.updatedAt || rp.createdAt)}</div>
-              </div>`;
-  }).join('') : '<div style="color:var(--text-muted);font-size:12.5px;font-style:italic;text-align:center;padding:12px 0;">No updates yet</div>'}
-        </div>
-      </div>
-
-    </div>
-
-    <!-- Filters & Content -->
-    <div class="rp-main-content">
-
-      <!-- Filters Bar -->
-      <div class="filters-bar" style="margin-bottom:16px;">
-        <div class="page-search-wrap">
-          <svg class="page-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-          <input type="text" class="page-search-input" id="releasePtSearchInput" placeholder="Search release points…" value="${state.releasePtSearch || ''}" />
-          ${state.releasePtSearch ? `<button class="page-search-clear" id="clearReleasePtSearch">✕</button>` : ''}
-        </div>
-        <select class="filter-select" data-rptfilter="project">
-          <option value="">All Projects</option>
-          ${projectOptions}
-        </select>
-        <select class="filter-select" data-rptfilter="releaseType">
-          <option value="">All Types</option>
-          <option value="upcoming" ${state.releasePtFilters.releaseType === 'upcoming' ? 'selected' : ''}>⏳ Upcoming</option>
-          <option value="released" ${state.releasePtFilters.releaseType === 'released' ? 'selected' : ''}>✓ Released</option>
-        </select>
-        <select class="filter-select" data-rptfilter="completion">
-          <option value="">All Statuses</option>
-          <option value="completed" ${state.releasePtFilters.completion === 'completed' ? 'selected' : ''}>✅ Completed</option>
-          <option value="incomplete" ${state.releasePtFilters.completion === 'incomplete' ? 'selected' : ''}>⏳ Incomplete</option>
-        </select>
-        ${(state.releasePtFilters.project || state.releasePtFilters.releaseType || state.releasePtFilters.completion) ? `
-          <button class="btn-ghost" id="clearReleasePtFilters" style="font-size:12px;padding:6px 10px;">✕ Clear</button>
-        ` : ''}
-        <span class="section-count" style="margin-left:auto;">${filtered.length} item${filtered.length !== 1 ? 's' : ''}</span>
-      </div>
-
-      ${filtered.length === 0 ? `
-        <div class="rp-empty-page">
-          <div class="rp-empty-icon-wrap">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M9 11l3 3L22 4"/>
-              <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
-            </svg>
-          </div>
-          <h3>${q || state.releasePtFilters.project ? 'No release points match' : 'No release points yet'}</h3>
-          <p>${q || state.releasePtFilters.project ? 'Try adjusting your search or filters.' : 'Click "Add Release Point" beside the Add Project button to create your first release checklist.'}</p>
-          ${!q && !state.releasePtFilters.project ? `
-            <button class="btn-accent" id="emptyAddReleasePtBtn" style="margin-top:16px;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px;"><path d="M12 5v14M5 12h14"/></svg>
-              Add Release Point
-            </button>
-          ` : ''}
-        </div>
-      ` : `
-        <div class="rp-card-grid">
-          ${filtered.map(rp => renderReleasePtCard(rp, q)).join('')}
-        </div>
-      `}
-    </div>
-  `;
-};
-
-
-const buildProgressRing = (done, total) => {
-  const r = 22;
-  const circ = 2 * Math.PI * r;
-  const pct = total === 0 ? 0 : done / total;
-  const offset = circ * (1 - pct);
-  const isComplete = total > 0 && done === total;
-  return `
-    <div class="rp-progress-ring-container">
-      <svg class="rp-ring-svg" viewBox="0 0 52 52">
-        <circle class="rp-ring-track" cx="26" cy="26" r="${r}" />
-        <circle class="rp-ring-fill ${isComplete ? 'complete' : ''}"
-          cx="26" cy="26" r="${r}"
-          stroke-dasharray="${circ.toFixed(2)}"
-          stroke-dashoffset="${offset.toFixed(2)}" />
-      </svg>
-      <div class="rp-ring-label">
-        <strong>${done}</strong>
-        <span>/ ${total}</span>
-      </div>
-    </div>
-  `;
-};
-
-const renderReleasePtCard = (rp, q = '') => {
-  const projectIds = rp.projectIds || (rp.projectId ? [rp.projectId] : []);
-  const projects = projectIds.map(pid => state.projects.find(p => p.id === pid)).filter(Boolean);
-  const projectPills = projects.map(p => `
-    <span class="test-pill test-proj" style="font-size:10px;padding:2px 6px;">${highlight(p.name, q)}</span>
-  `).join('') || '<span class="test-pill test-proj" style="font-size:10px;padding:2px 6px;background:var(--border);color:var(--text-muted);">No Project</span>';
-
-  const linkedRelease = rp.releaseId ? state.releases.find(r => r.id === rp.releaseId) : null;
-
+// ─── Release Points (accordion) ──────────────────────────
+// One collapsible row per Release Point, grouped into In progress / Completed.
+// Open rows live in state.rpExpanded (a Set) so they survive re-renders; the first
+// render opens every incomplete Release Point. Checklist rows keep the
+// .rp-checklist-item markup that the toggle / inline-edit handlers rely on.
+const rpProjectIdsOf = (rp) => rp.projectIds || (rp.projectId ? [rp.projectId] : []);
+const rpStats = (rp) => {
   const items = rp.checklistItems || [];
-  const doneCount = items.filter(i => i.done).length;
-  const totalCount = items.length;
-  const isCompleted = rp.isCompleted || (totalCount > 0 && doneCount === totalCount);
+  const done = items.filter(i => i.done).length;
+  const complete = !!rp.isCompleted || (items.length > 0 && done === items.length);
+  return { items, done, total: items.length, pct: items.length ? Math.round(done / items.length * 100) : 0, complete };
+};
+const rpMiniRing = (pct, complete) => {
+  const r = 15, c = 2 * Math.PI * r;
+  return `
+    <span class="rpa-ring ${complete ? 'complete' : ''}" data-rpa="ring">
+      <svg viewBox="0 0 36 36"><circle class="track" cx="18" cy="18" r="${r}"/><circle class="fill" cx="18" cy="18" r="${r}" stroke-dasharray="${c.toFixed(2)}" stroke-dashoffset="${(c * (1 - pct / 100)).toFixed(2)}"/></svg>
+      <span class="rpa-ring-icon">${complete ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>' : `${pct}`}</span>
+    </span>`;
+};
 
-  // Build dev pills
-  const devPills = (rp.developerIds || []).map(id => {
-    const dev = state.developers.find(d => d.id === id);
-    return dev ? `<span class="rp-dev-pill">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-      ${dev.name}
-    </span>` : '';
-  }).join('');
-
+const renderRpChecklistItems = (rp) => {
   const renderTicketInline = (ticket) => {
     if (!ticket) return '';
-    const isUrl = /^(https?:\/\/|www\.)[^\s/$.?#].[^\s]*$/i.test(ticket.trim());
-    const href = isUrl ? (ticket.trim().startsWith('www.') ? 'https://' + ticket.trim() : ticket.trim()) : null;
-    if (href) {
-      let display = ticket.trim();
-      try {
-        const url = new URL(href);
-        // Show the last path segment (e.g. the ticket key "CIMTRACK-123" out
-        // of a Jira "/browse/CIMTRACK-123" link) rather than a fixed-length
-        // slice of "hostname + path", which just chopped off mid-domain
-        // before ever reaching the actually useful part. The full URL is
-        // still shown on hover via the title attribute and is what's opened.
-        const segments = url.pathname.split('/').filter(Boolean);
-        display = segments.length
-          ? decodeURIComponent(segments[segments.length - 1])
-          : url.hostname.replace('www.', '');
-      } catch (e) { }
-      return `
-        <a href="${href}" target="_blank" rel="noopener noreferrer" class="rp-item-ticket link" title="View Ticket: ${escapeHtml(ticket)}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
-          <span>${display}</span>
-        </a>
-      `;
-    } else {
-      return `
-        <span class="rp-item-ticket text" title="Ticket: ${ticket}">
-          <span>${ticket}</span>
-        </span>
-      `;
-    }
+    const t = ticket.trim();
+    const isUrl = /^(https?:\/\/|www\.)[^\s/$.?#].[^\s]*$/i.test(t);
+    if (!isUrl) return `<span class="rp-item-ticket text" title="Ticket: ${escapeHtml(t)}"><span>${escapeHtml(t)}</span></span>`;
+    const href = t.startsWith('www.') ? 'https://' + t : t;
+    let display = t;
+    try {
+      // Show the last path segment (e.g. the Jira key "CIMTRACK-123" of a /browse/ link).
+      const url = new URL(href);
+      const segments = url.pathname.split('/').filter(Boolean);
+      display = segments.length ? decodeURIComponent(segments[segments.length - 1]) : url.hostname.replace('www.', '');
+    } catch (e) { /* keep raw */ }
+    return `
+      <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="rp-item-ticket link" title="View Ticket: ${escapeHtml(t)}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
+        <span>${escapeHtml(display)}</span>
+      </a>`;
   };
 
-  const checklistHtml = items.map(item => {
+  return (rp.checklistItems || []).map(item => {
     if (state.inlineEditing && state.inlineEditing.rpId === rp.id && state.inlineEditing.itemId === item.id) {
       return `
         <div class="rp-checklist-item editing" data-rp-id="${rp.id}" data-item-id="${item.id}">
@@ -7709,115 +7475,272 @@ const renderReleasePtCard = (rp, q = '') => {
             <input type="text" class="rp-inline-edit-ticket" value="${escapeHtml(item.ticket || '')}" placeholder="Ticket / Link..." />
             <select class="rp-inline-edit-dev">
               <option value="">Unassigned</option>
-              ${state.developers.map(d => `<option value="${d.id}" ${item.developerId === d.id ? 'selected' : ''}>${d.name}</option>`).join('')}
+              ${state.developers.map(d => `<option value="${d.id}" ${item.developerId === d.id ? 'selected' : ''}>${escapeHtml(d.name)}</option>`).join('')}
             </select>
           </div>
           <div class="rp-inline-edit-actions">
             <button class="rp-inline-save-btn" data-action="save-checklist-item-inline" data-rp-id="${rp.id}" data-item-id="${item.id}" aria-label="Save" title="Save">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-              <span>Save</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg><span>Save</span>
             </button>
             <button class="rp-inline-cancel-btn" data-action="cancel-checklist-item-inline" aria-label="Cancel" title="Cancel">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              <span>Cancel</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span>Cancel</span>
             </button>
           </div>
-        </div>
-      `;
+        </div>`;
     }
-
     const dev = item.developerId ? state.developers.find(d => d.id === item.developerId) : null;
-    const ticketHtml = item.ticket ? renderTicketInline(item.ticket) : '';
     // A Clair developer wins; otherwise show the Jira assignee of an imported ticket.
     const assigneeName = dev ? dev.name : (item.jiraAssignee || '');
+    const ticketHtml = item.ticket ? renderTicketInline(item.ticket) : '';
     const devHtml = assigneeName ? `
       <span class="rp-item-dev" title="${dev ? 'Assigned to' : 'Jira assignee:'} ${escapeHtml(assigneeName)}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
         <span>${escapeHtml(assigneeName)}</span>
-      </span>
-    ` : '';
-
+      </span>` : '';
     return `
-      <div class="rp-checklist-item ${item.done ? 'done' : ''}" data-action="toggle-checklist-item" data-rp-id="${rp.id}" data-item-id="${item.id}">
+      <div class="rp-checklist-item ${item.done ? 'done' : ''}" data-action="toggle-checklist-item" data-rp-id="${rp.id}" data-item-id="${item.id}" role="checkbox" aria-checked="${item.done ? 'true' : 'false'}" tabindex="0">
         <div class="rp-check-circle">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
         </div>
         <div class="rp-checklist-item-content">
           <span class="rp-checklist-item-text">${escapeHtml(item.text)}</span>
-          ${(ticketHtml || devHtml) ? `
-            <div class="rp-checklist-item-meta">
-              ${ticketHtml}
-              ${devHtml}
-            </div>
-          ` : ''}
+          ${(ticketHtml || devHtml) ? `<div class="rp-checklist-item-meta">${ticketHtml}${devHtml}</div>` : ''}
         </div>
-        <button class="rp-item-edit-btn" data-action="edit-checklist-item-inline" data-rp-id="${rp.id}" data-item-id="${item.id}" aria-label="Edit Item" title="Edit Item">
+        <button class="rp-item-edit-btn" data-action="edit-checklist-item-inline" data-rp-id="${rp.id}" data-item-id="${item.id}" aria-label="Edit item" title="Edit item">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
         </button>
-      </div>
-    `;
+      </div>`;
   }).join('');
+};
 
-  const cardClass = isCompleted ? 'rp-card rp-completed' : (rp.releaseType === 'released' ? 'rp-card rp-released' : 'rp-card');
+const renderReleasePtAccordion = (rp, q = '', forceOpen = false) => {
+  const s = rpStats(rp);
+  const open = forceOpen || state.rpExpanded.has(rp.id);
+  const projects = rpProjectIdsOf(rp).map(pid => state.projects.find(p => p.id === pid)).filter(Boolean);
+  const linkedRelease = rp.releaseId ? state.releases.find(r => r.id === rp.releaseId) : null;
+  // Each version once: the release's "v1.7.0" and the point's own "v1.7.0 (Up)" are the same version.
+  const versions = rpVersionLabels(rp, linkedRelease);
+  const belongsTo = releaseForPoint(rp);
+  // People: Release Point developers plus anyone assigned to an item.
+  const people = [...new Set([...(rp.developerIds || []), ...s.items.map(i => i.developerId).filter(Boolean)])]
+    .map(id => state.developers.find(d => d.id === id)).filter(Boolean);
+  const avatars = people.slice(0, 4).map(d => {
+    const initials = (d.name || '').split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'DV';
+    return `<span class="rpa-avatar" style="background:${getAvatarGradient(d.name)}" title="${escapeHtml(d.name)}">${escapeHtml(initials)}</span>`;
+  }).join('') + (people.length > 4 ? `<span class="rpa-avatar more" title="${escapeHtml(people.slice(4).map(d => d.name).join(', '))}">+${people.length - 4}</span>` : '');
+  const bodyId = `rpa-body-${rp.id}`;
 
   return `
-    <div class="${cardClass}" data-id="${rp.id}">
-      <div class="rp-card-left">
-        <div class="rp-card-header">
-          <div class="rp-card-title-wrap">
-            <div class="rp-card-title">${highlight(rp.title, q)}</div>
-            <div class="rp-card-badges">
-              ${projectPills}
-              <span class="rp-type-badge ${rp.releaseType || 'upcoming'}">
-                ${rp.releaseType === 'released' ? '✓ Released' : '⏳ Upcoming'}
-              </span>
-              ${linkedRelease ? `<span class="release-version" style="font-size:10px;padding:2px 6px;">${linkedRelease.version}</span>` : ''}
-              ${(rp.versions || []).map(v => `<span class="release-version" style="font-size:10px;padding:2px 6px;">${v}</span>`).join('')}
-            </div>
-          </div>
-          <div class="card-actions" style="opacity:1;display:flex;gap:4px;">
-            <button class="icon-btn" data-action="edit-release-pt" data-id="${rp.id}" aria-label="Edit" title="Edit">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-            </button>
-            <button class="icon-btn danger" data-action="delete-release-pt" data-id="${rp.id}" aria-label="Delete" title="Delete">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
-            </button>
-          </div>
-        </div>
-
-        ${devPills ? `<div class="rp-dev-pills" style="margin-top:4px;">${devPills}</div>` : ''}
-
-        <!-- Progress Ring -->
-        <div class="rp-progress-wrap" style="margin-top:12px;">
-          ${buildProgressRing(doneCount, totalCount)}
-          <div class="rp-progress-info">
-            <div class="rp-progress-text">${doneCount} of ${totalCount} complete</div>
-            <div class="rp-progress-sub">${isCompleted ? '🎉 All checks passed!' : totalCount === 0 ? 'No checklist items yet' : `${totalCount - doneCount} item${(totalCount - doneCount) !== 1 ? 's' : ''} remaining`}</div>
-          </div>
-        </div>
-
-        ${isCompleted ? `
-          <div class="rp-completed-banner" style="margin-top:12px;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-            Release point completed!
-          </div>
-        ` : ''}
-
-        <div class="rp-card-footer" style="margin-top:auto;padding-top:12px;">
-          <span class="card-time">Updated ${timeAgo(rp.updatedAt || rp.createdAt)}</span>
+    <article class="rpa-item ${open ? 'open' : ''} ${s.complete ? 'is-complete' : ''}" data-id="${rp.id}">
+      <div class="rpa-head">
+        <button type="button" class="rpa-summary" data-action="rpa-toggle" data-id="${rp.id}" aria-expanded="${open}" aria-controls="${bodyId}">
+          <span class="rpa-chev" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 18l6-6-6-6"/></svg></span>
+          ${rpMiniRing(s.pct, s.complete)}
+          <span class="rpa-main">
+            <span class="rpa-title">${highlight(escapeHtml(rp.title), q)}</span>
+            <span class="rpa-tags">
+              ${projects.map(p => `<span class="rpa-proj">${highlight(escapeHtml(p.name), q)}</span>`).join('') || '<span class="rpa-proj none">No project</span>'}
+              <span class="rpa-type ${rp.releaseType === 'released' ? 'released' : 'upcoming'}">${rp.releaseType === 'released' ? 'Released' : 'Upcoming'}</span>
+              ${versions.map(v => `<span class="rpa-ver">${highlight(escapeHtml(v), q)}</span>`).join('')}
+              ${belongsTo ? `<span class="rpa-rel ${belongsTo.matched}" title="${belongsTo.matched === 'link' ? 'Linked release' : 'Matched to this release by project and version (no Linked Release set)'}">${DB_ICONS.rocket}${escapeHtml(belongsTo.release.name || 'Release')}</span>` : ''}
+            </span>
+          </span>
+          <span class="rpa-progress">
+            <span class="rpa-bar"><span data-rpa="bar" style="width:${s.pct}%"></span></span>
+            <span class="rpa-count" data-rpa="count">${s.done}/${s.total}</span>
+          </span>
+          <span class="rpa-people">${avatars}</span>
+          <span class="rpa-updated">${timeAgo(rp.updatedAt || rp.createdAt)}</span>
+        </button>
+        <div class="rpa-actions">
+          <button class="icon-btn" data-action="edit-release-pt" data-id="${rp.id}" aria-label="Edit release point" title="Edit">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <button class="icon-btn danger" data-action="delete-release-pt" data-id="${rp.id}" aria-label="Delete release point" title="Delete">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+          </button>
         </div>
       </div>
-
-      <div class="rp-card-right">
-        <div class="rp-checklist-title">Checklist items</div>
-        ${totalCount > 0 ? `
-          <div class="rp-card-checklist">
-            ${checklistHtml}
+      <div class="rpa-body" id="${bodyId}" role="region" aria-label="${escapeHtml(rp.title)} checklist">
+        <div class="rpa-body-inner">
+          <div class="rpa-meta">
+            ${linkedRelease ? `<span><em>Linked release</em>${escapeHtml(linkedRelease.name || '')}</span>` : ''}
+            ${people.length ? `<span><em>Developers</em>${escapeHtml(people.map(d => d.name).join(', '))}</span>` : ''}
+            <span><em>Progress</em><span data-rpa="summary">${s.complete ? 'All checks passed' : s.total ? `${s.total - s.done} of ${s.total} remaining` : 'No checklist items yet'}</span></span>
+            <span><em>Updated</em>${fmtDate(rp.updatedAt || rp.createdAt)}</span>
           </div>
-        ` : `<div style="color:var(--text-muted);font-size:12.5px;font-style:italic;padding:4px 0;">No checklist items. Click Edit to add items.</div>`}
+          ${s.total ? `<div class="rpa-checklist">${renderRpChecklistItems(rp)}</div>`
+            : `<div class="rpa-noitems">No checklist items yet. <button type="button" class="rpa-link" data-action="edit-release-pt" data-id="${rp.id}">Add items</button></div>`}
+        </div>
       </div>
-    </div>
-  `;
+    </article>`;
+};
+
+const renderReleasePoints = () => {
+  const rps = state.releasePoints || [];
+  if (!state.rpExpanded) state.rpExpanded = new Set(rps.filter(rp => !rpStats(rp).complete).map(rp => rp.id));
+  const q = (state.releasePtSearch || '').toLowerCase().trim();
+  const f = state.releasePtFilters;
+
+  // Overall stats (before filtering)
+  const stats = rps.map(rpStats);
+  const total = rps.length;
+  const completed = stats.filter(s => s.complete).length;
+  const upcoming = rps.filter(r => r.releaseType !== 'released').length;
+  const totalChecks = stats.reduce((a, s) => a + s.total, 0);
+  const doneChecks = stats.reduce((a, s) => a + s.done, 0);
+  const overallPct = totalChecks ? Math.round(doneChecks / totalChecks * 100) : 0;
+
+  // Filters. Search also looks inside checklist items (text, ticket, Jira key) and opens matches.
+  const itemMatches = (rp) => (rp.checklistItems || []).some(i =>
+    (i.text || '').toLowerCase().includes(q) || (i.ticket || '').toLowerCase().includes(q) || (i.jiraKey || '').toLowerCase().includes(q));
+  let list = rps.filter(rp => {
+    if (q && !(
+      (rp.title || '').toLowerCase().includes(q) ||
+      rpProjectIdsOf(rp).some(pid => ((state.projects.find(p => p.id === pid) || {}).name || '').toLowerCase().includes(q)) ||
+      (rp.versions || []).some(v => (v || '').toLowerCase().includes(q)) ||
+      itemMatches(rp))) return false;
+    if (f.project && !rpProjectIdsOf(rp).includes(f.project)) return false;
+    if (f.releaseType && (rp.releaseType || 'upcoming') !== f.releaseType) return false;
+    const c = rpStats(rp).complete;
+    if (f.completion === 'completed' && !c) return false;
+    if (f.completion === 'incomplete' && c) return false;
+    return true;
+  });
+  const active = list.filter(rp => !rpStats(rp).complete);
+  const done = list.filter(rp => rpStats(rp).complete);
+
+  // Project chips: projects that have Release Points, with done/total.
+  const chipData = state.projects.map(p => {
+    const mine = rps.filter(rp => rpProjectIdsOf(rp).includes(p.id));
+    return mine.length ? { p, total: mine.length, done: mine.filter(rp => rpStats(rp).complete).length } : null;
+  }).filter(Boolean);
+  const chips = `
+    <div class="rpa-chips" role="toolbar" aria-label="Filter by project">
+      <button type="button" class="rpa-chip ${!f.project ? 'active' : ''}" data-action="rp-project-chip" data-pid="">All projects <span>${total}</span></button>
+      ${chipData.map(c => `
+        <button type="button" class="rpa-chip ${f.project === c.p.id ? 'active' : ''}" data-action="rp-project-chip" data-pid="${c.p.id}">
+          ${escapeHtml(c.p.name)} <span>${c.done}/${c.total}</span>
+        </button>`).join('')}
+    </div>`;
+
+  const group = (title, items, cls) => items.length ? `
+    <section class="rpa-group ${cls}">
+      <div class="rpa-group-head"><span class="rpa-group-dot"></span>${title}<span class="rpa-group-count">${items.length}</span></div>
+      <div class="rpa-list">${items.map(rp => renderReleasePtAccordion(rp, q, !!q && itemMatches(rp))).join('')}</div>
+    </section>` : '';
+
+  const filtersActive = !!(q || f.project || f.releaseType || f.completion);
+  const ringR = 26, ringC = 2 * Math.PI * ringR;
+
+  return `
+    <div class="rpa-page">
+      <section class="rpa-hero">
+        <div class="rpa-hero-main">
+          <span class="rpa-hero-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></span>
+          <div>
+            <h2 class="rpa-hero-title">Release Points</h2>
+            <p class="rpa-hero-sub">Release readiness checklists for your projects and versions.</p>
+          </div>
+        </div>
+        <div class="rpa-hero-stats">
+          <div class="rpa-hstat"><strong>${total}</strong><span>Total</span></div>
+          <div class="rpa-hstat"><strong class="warn">${total - completed}</strong><span>In progress</span></div>
+          <div class="rpa-hstat"><strong class="ok">${completed}</strong><span>Completed</span></div>
+          <div class="rpa-hstat"><strong>${upcoming}</strong><span>Upcoming</span></div>
+          <div class="rpa-hero-ring" title="${doneChecks} of ${totalChecks} checks done">
+            <svg viewBox="0 0 64 64"><circle class="track" cx="32" cy="32" r="${ringR}"/><circle class="fill" cx="32" cy="32" r="${ringR}" stroke-dasharray="${ringC.toFixed(2)}" stroke-dashoffset="${(ringC * (1 - overallPct / 100)).toFixed(2)}"/></svg>
+            <span><strong>${overallPct}%</strong><em>${doneChecks}/${totalChecks} checks</em></span>
+          </div>
+        </div>
+      </section>
+
+      <div class="rpa-toolbar">
+        <div class="page-search-wrap rpa-search">
+          <svg class="page-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          <input type="text" class="page-search-input" id="releasePtSearchInput" placeholder="Search titles, items, tickets…" value="${escapeHtml(state.releasePtSearch || '')}" />
+          ${state.releasePtSearch ? `<button class="page-search-clear" id="clearReleasePtSearch" aria-label="Clear search">✕</button>` : ''}
+        </div>
+        <select class="filter-select" data-rptfilter="releaseType" aria-label="Release type">
+          <option value="">All types</option>
+          <option value="upcoming" ${f.releaseType === 'upcoming' ? 'selected' : ''}>Upcoming</option>
+          <option value="released" ${f.releaseType === 'released' ? 'selected' : ''}>Released</option>
+        </select>
+        <select class="filter-select" data-rptfilter="completion" aria-label="Completion">
+          <option value="">All statuses</option>
+          <option value="incomplete" ${f.completion === 'incomplete' ? 'selected' : ''}>In progress</option>
+          <option value="completed" ${f.completion === 'completed' ? 'selected' : ''}>Completed</option>
+        </select>
+        ${filtersActive ? `<button class="btn-ghost rpa-tool-btn" id="clearReleasePtFilters">Clear filters</button>` : ''}
+        <div class="rpa-toolbar-right">
+          <span class="rpa-showing">${list.length} of ${total}</span>
+          <div class="rpa-expand-group">
+            <button type="button" class="rpa-tool-btn" data-action="rpa-expand-all" title="Expand all">Expand all</button>
+            <button type="button" class="rpa-tool-btn" data-action="rpa-collapse-all" title="Collapse all">Collapse all</button>
+          </div>
+          <button type="button" class="btn-primary rpa-new" data-action="new-release-pt">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            New Release Point
+          </button>
+        </div>
+      </div>
+      ${chipData.length ? chips : ''}
+
+      ${list.length ? group('In progress', active, 'active') + group('Completed', done, 'done') : `
+        <div class="rpa-empty">
+          <span class="rpa-empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></span>
+          <h3>${filtersActive ? 'No release points match' : 'No release points yet'}</h3>
+          <p>${filtersActive ? 'Try a different search or clear the filters.' : 'Create a release readiness checklist for an upcoming version.'}</p>
+          ${filtersActive ? '' : `<button type="button" class="btn-primary" data-action="new-release-pt" style="margin-top:14px;">New Release Point</button>`}
+        </div>`}
+    </div>`;
+};
+
+// Expand/collapse without re-rendering (keeps scroll position and focus).
+const toggleRpAccordion = (id, open) => {
+  if (!state.rpExpanded) state.rpExpanded = new Set();
+  const el = document.querySelector(`.rpa-item[data-id="${id}"]`);
+  const isOpen = el ? el.classList.contains('open') : state.rpExpanded.has(id);
+  const next = open === undefined ? !isOpen : open;
+  if (next) state.rpExpanded.add(id); else state.rpExpanded.delete(id);
+  if (el) {
+    el.classList.toggle('open', next);
+    const btn = el.querySelector('.rpa-summary');
+    if (btn) btn.setAttribute('aria-expanded', String(next));
+  }
+};
+
+// Jump from elsewhere (e.g. the Dashboard) to one Release Point, opened and visible.
+const openReleasePointOnPage = (id) => {
+  if (!(state.releasePoints || []).some(rp => rp.id === id)) return;
+  if (!state.rpExpanded) state.rpExpanded = new Set();
+  state.rpExpanded.add(id);
+  state.releasePtSearch = '';
+  state.releasePtFilters = { project: '', releaseType: '', completion: '' };
+  setView('releasepoints');
+  const el = document.querySelector(`.rpa-item[data-id="${id}"]`);
+  if (el) { el.scrollIntoView({ block: 'start', behavior: 'instant' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1600); }
+};
+
+// In-place update after ticking a checklist item (no re-render, so the row stays
+// where it is even when it becomes complete; it moves group on the next render).
+const patchReleasePtCard = (rp) => {
+  const el = document.querySelector(`.rpa-item[data-id="${rp.id}"]`);
+  if (!el) { render(); return; }
+  const s = rpStats(rp);
+  (rp.checklistItems || []).forEach(item => {
+    const itemEl = el.querySelector(`.rp-checklist-item[data-item-id="${item.id}"]`);
+    if (itemEl) { itemEl.classList.toggle('done', !!item.done); itemEl.setAttribute('aria-checked', item.done ? 'true' : 'false'); }
+  });
+  el.classList.toggle('is-complete', s.complete);
+  const ring = el.querySelector('[data-rpa="ring"]');
+  if (ring) ring.outerHTML = rpMiniRing(s.pct, s.complete);
+  const bar = el.querySelector('[data-rpa="bar"]');
+  if (bar) bar.style.width = `${s.pct}%`;
+  const count = el.querySelector('[data-rpa="count"]');
+  if (count) count.textContent = `${s.done}/${s.total}`;
+  const summary = el.querySelector('[data-rpa="summary"]');
+  if (summary) summary.textContent = s.complete ? 'All checks passed' : s.total ? `${s.total - s.done} of ${s.total} remaining` : 'No checklist items yet';
 };
 
 // ─── Release Project Version Modal & Automation ─────────────
@@ -7987,50 +7910,6 @@ const releaseProjectVersion = async (projectId, platform, releaseVer = null) => 
 };
 
 // ─── Toggle Checklist Item ────────────────────────────────
-const patchReleasePtCard = (rp) => {
-  const cardEl = document.querySelector(`.rp-card[data-id="${rp.id}"]`);
-  if (!cardEl) { render(); return; }
-
-  const items = rp.checklistItems || [];
-  const doneCount = items.filter(i => i.done).length;
-  const totalCount = items.length;
-  const isCompleted = rp.isCompleted;
-
-  // Update card class
-  cardEl.className = isCompleted ? 'rp-card rp-completed' : (rp.releaseType === 'released' ? 'rp-card rp-released' : 'rp-card');
-
-  // Toggle done class on the specific checklist item
-  items.forEach(item => {
-    const itemEl = cardEl.querySelector(`[data-item-id="${item.id}"]`);
-    if (itemEl) itemEl.classList.toggle('done', !!item.done);
-  });
-
-  // Update progress ring + text
-  const progressWrap = cardEl.querySelector('.rp-progress-wrap');
-  if (progressWrap) {
-    progressWrap.innerHTML = `
-      ${buildProgressRing(doneCount, totalCount)}
-      <div class="rp-progress-info">
-        <div class="rp-progress-text">${doneCount} of ${totalCount} complete</div>
-        <div class="rp-progress-sub">${isCompleted ? '🎉 All checks passed!' : totalCount === 0 ? 'No checklist items yet' : `${totalCount - doneCount} item${(totalCount - doneCount) !== 1 ? 's' : ''} remaining`}</div>
-      </div>
-    `;
-  }
-
-  // Add or remove completion banner
-  const existingBanner = cardEl.querySelector('.rp-completed-banner');
-  if (isCompleted && !existingBanner) {
-    progressWrap && progressWrap.insertAdjacentHTML('afterend', `
-      <div class="rp-completed-banner" style="margin-top:12px;">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-        Release point completed!
-      </div>
-    `);
-  } else if (!isCompleted && existingBanner) {
-    existingBanner.remove();
-  }
-};
-
 const toggleReleasePtChecklistItem = async (rpId, itemId) => {
   const rp = (state.releasePoints || []).find(r => r.id === rpId);
   if (!rp) return;
@@ -8088,16 +7967,14 @@ const populateReleasePtReleases = (projectIdOrIds, selectedReleaseId = '') => {
     select.innerHTML = `<option value="">— Select Release —</option>`;
     return;
   }
-  let projectReleases = [];
-  pids.forEach(pid => {
-    const pReleases = (state.releases || []).filter(r => r.projectId === pid);
-    projectReleases = projectReleases.concat(pReleases);
-  });
+  // Any release that includes one of the selected projects (not just its first project).
+  const projectReleases = (state.releases || []).filter(r => releaseProjectIdsOf(r).some(id => pids.includes(id)));
   select.innerHTML = `<option value="">— Select Release —</option>` +
     projectReleases.map(r => {
-      const proj = state.projects.find(p => p.id === r.projectId);
+      const proj = state.projects.find(p => p.id === releaseProjectIdsOf(r).find(id => pids.includes(id)));
       const prefix = proj ? `${proj.name}: ` : '';
-      return `<option value="${r.id}" ${selectedReleaseId === r.id ? 'selected' : ''}>${prefix}${r.name} (${r.version})</option>`;
+      const vers = releaseVersionsOf(r).join(', ');
+      return `<option value="${r.id}" ${selectedReleaseId === r.id ? 'selected' : ''}>${escapeHtml(prefix + (r.name || 'Untitled release') + (vers ? ` (${vers})` : ''))}</option>`;
     }).join('');
 };
 
@@ -8346,6 +8223,7 @@ const saveReleasePoint = async () => {
   syncChecklistItemsFromDOM();
 
   const id = document.getElementById('releasePtId').value;
+  let savedRpId = id;
   const title = document.getElementById('releasePtTitle').value.trim();
   const projectChecks = document.querySelectorAll('input[name="rpProjectCheck"]:checked');
   const projectIds = Array.from(projectChecks).map(cb => cb.value);
@@ -8380,13 +8258,18 @@ const saveReleasePoint = async () => {
     showToast('Release point updated');
   } else {
     if (!state.releasePoints) state.releasePoints = [];
+    const newId = uid();
     state.releasePoints.unshift({
-      id: uid(), title, projectId, projectIds, releaseId, releaseType, versions,
+      id: newId, title, projectId, projectIds, releaseId, releaseType, versions,
       developerIds, checklistItems, isCompleted, createdAt: now, updatedAt: now
     });
     logActivity(`Created release point "${title}"`, 'project');
     showToast('Release point created');
+    savedRpId = newId;
   }
+  // Show what was just saved: keep it open in the Release Points accordion.
+  if (!state.rpExpanded) state.rpExpanded = new Set();
+  state.rpExpanded.add(savedRpId);
 
   await storage.save();
   closeModals();
@@ -8640,637 +8523,527 @@ const prepopulateMockData = () => {
   }
 };
 
-const renderSingleTestCaseRow = (tc, index, projModules, developers, selectedTestCaseIds) => {
-  const statusCls = tc.status ? tc.status.toLowerCase() : 'untested';
-  const priorityCls = tc.priority ? tc.priority.toLowerCase() : 'medium';
-  const severityCls = tc.severity ? tc.severity.toLowerCase().split(' ')[0] : 'medium';
+// ─── Test Case Management ────────────────────────────────
+// Three levels:
+//   home      (no project)            → summary + project cards
+//   overview  (project, tcPage 'overview')  → KPIs, charts, modules, open failures
+//   scenarios (project, tcPage 'scenarios') → module rail + scenario table
+// The scenario table keeps the original hooks (table-inline-* fields with
+// data-field/data-id autosave, .testcase-select-checkbox, #selectAllTcCb,
+// data-tcfilter selects, #tcPageSizeSelect, .module-item, selection bar ids), so the
+// existing delegated handlers keep doing the editing, filtering and paging.
+const TC_STATUSES = ['Passed', 'Failed', 'Blocked', 'Untested'];
+const tcCounts = (cases) => {
+  const c = { total: cases.length, passed: 0, failed: 0, blocked: 0, untested: 0, automated: 0 };
+  cases.forEach(tc => {
+    if (tc.status === 'Passed') c.passed++;
+    else if (tc.status === 'Failed') c.failed++;
+    else if (tc.status === 'Blocked') c.blocked++;
+    else c.untested++; // 'Untested' and anything unexpected
+    if (tc.type === 'Automated') c.automated++;
+  });
+  c.rate = c.total ? Math.round(c.passed / c.total * 1000) / 10 : 0;
+  return c;
+};
+const tcRateCls = (r, total) => !total ? 'none' : r >= 95 ? 'good' : r >= 80 ? 'ok' : 'low';
+const tcBar = (c, cls = '') => `<span class="dbx-stackbar ${cls}">${[['pass', c.passed], ['fail', c.failed], ['blocked', c.blocked], ['notrun', c.untested]].filter(([, n]) => n).map(([k, n]) => `<span class="${k}" style="flex:${n}" title="${({ pass: 'Passed', fail: 'Failed', blocked: 'Blocked', notrun: 'Untested' })[k]}: ${n}"></span>`).join('')}</span>`;
+const tcRing = (rate, total, size = 44) => {
+  const r = size / 2 - 4, circ = 2 * Math.PI * r;
+  return `
+    <span class="tc-ring ${tcRateCls(rate, total)}" style="width:${size}px;height:${size}px">
+      <svg viewBox="0 0 ${size} ${size}"><circle class="track" cx="${size / 2}" cy="${size / 2}" r="${r}"/><circle class="fill" cx="${size / 2}" cy="${size / 2}" r="${r}" stroke-dasharray="${circ.toFixed(2)}" stroke-dashoffset="${(circ * (1 - (total ? rate : 0) / 100)).toFixed(2)}"/></svg>
+      <span>${total ? Math.round(rate) + '%' : '—'}</span>
+    </span>`;
+};
+const tcDonut = (c) => {
+  const segs = [['pass', c.passed], ['fail', c.failed], ['blocked', c.blocked], ['notrun', c.untested]].filter(([, n]) => n);
+  const r = 46, circ = 2 * Math.PI * r;
+  let off = 0;
+  const arcs = segs.map(([k, n]) => {
+    const len = c.total ? n / c.total * circ : 0;
+    const gap = segs.length > 1 ? Math.min(2, len / 3) : 0;
+    const s = `<circle class="seg ${k}" cx="60" cy="60" r="${r}" stroke-dasharray="${Math.max(len - gap, 0).toFixed(2)} ${(circ - Math.max(len - gap, 0)).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}"/>`;
+    off += len;
+    return s;
+  }).join('');
+  return `
+    <div class="tc-donut">
+      <svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="${r}"/>${arcs}</svg>
+      <div class="tc-donut-center"><strong>${c.rate}%</strong><span>pass rate</span></div>
+    </div>`;
+};
+// Only real YYYY-MM-DD dates count (some imported cases hold free text there).
+const tcLastRun = (cases) => cases.map(tc => tc.executionDate).filter(d => /^\d{4}-\d{2}-\d{2}/.test(d || '') && !isNaN(new Date(d))).sort().pop() || '';
+// "https://…/browse/CIMTRACK-655" → "CIMTRACK-655"; plain IDs unchanged.
+const tcDefectLabel = (d) => { const s = String(d || '').trim(); const m = s.match(/([A-Z][A-Z0-9_]*-\d+)\s*$/i); return /^https?:\/\//i.test(s) && m ? m[1] : s; };
+const tcCrumbs = (items) => `
+  <nav class="tc-crumbs" aria-label="Breadcrumb">
+    ${items.map((it, i) => i < items.length - 1
+      ? `<button type="button" class="tc-crumb" data-action="${it.action}">${it.label}</button><span class="tc-crumb-sep" aria-hidden="true">/</span>`
+      : `<span class="tc-crumb current" aria-current="page">${it.label}</span>`).join('')}
+  </nav>`;
+const TC_I = {
+  flask: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3v7.2a4 4 0 01-1.3 2.9l-3.4 3.1A2 2 0 005.7 20h12.6a2 2 0 001.4-3.8l-3.4-3.1A4 4 0 0115 10.2V3"/><path d="M7 3h10"/></svg>',
+  upload: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>',
+  list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
+  arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
+  edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>',
+  chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 18l6-6-6-6"/></svg>',
+  eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+  folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>'
+};
 
-  const isChecked = selectedTestCaseIds && selectedTestCaseIds.has(tc.id);
-  const rowSelectedClass = isChecked ? 'selected' : '';
+// ── Level 1: home ──
+const renderTcHome = () => {
+  const all = tcCounts(state.testCases);
+  const q = (state.tcHomeSearch || '').toLowerCase().trim();
+  const sort = state.tcHomeSort || 'cases';
+  const rows = state.projects.map(p => {
+    const cases = state.testCases.filter(tc => tc.projectId === p.id);
+    return { p, cases, c: tcCounts(cases), modules: state.modules.filter(m => m.projectId === p.id).length, last: tcLastRun(cases) };
+  }).filter(r => !q || r.p.name.toLowerCase().includes(q));
+  const withCases = rows.filter(r => r.c.total);
+  const empty = rows.filter(r => !r.c.total);
+  const sorters = { cases: (a, b) => b.c.total - a.c.total, rate: (a, b) => a.c.rate - b.c.rate, failed: (a, b) => b.c.failed - a.c.failed, name: (a, b) => a.p.name.localeCompare(b.p.name) };
+  withCases.sort(sorters[sort] || sorters.cases);
+  const ringR = 26, ringC = 2 * Math.PI * ringR;
 
-  const modulesOptions = `<option value="">— None —</option>` +
-    projModules.map(m => `<option value="${m.id}" ${tc.moduleId === m.id ? 'selected' : ''}>${m.name}</option>`).join('');
-
-  const developersOptions = `<option value="">— Unassigned —</option>` +
-    developers.map(d => `<option value="${d.name}" ${tc.assignee === d.name ? 'selected' : ''}>${d.name}</option>`).join('');
+  const card = (r) => `
+    <button type="button" class="tch-card" data-action="tc-open-project" data-id="${r.p.id}">
+      <span class="tch-card-top">
+        <span class="tch-card-name">${highlight(escapeHtml(r.p.name), q)}</span>
+        ${tcRing(r.c.rate, r.c.total)}
+      </span>
+      <span class="tch-card-meta">${r.c.total} cases · ${r.modules} module${r.modules === 1 ? '' : 's'}${r.last ? ` · last run ${fmtDate(r.last)}` : ''}</span>
+      ${tcBar(r.c)}
+      <span class="tch-card-counts">
+        <span><i class="dbx-dot pass"></i>${r.c.passed}</span>
+        <span><i class="dbx-dot fail"></i>${r.c.failed}</span>
+        <span><i class="dbx-dot blocked"></i>${r.c.blocked}</span>
+        <span><i class="dbx-dot notrun"></i>${r.c.untested}</span>
+        ${r.c.failed ? `<span class="dbx-tag danger">${r.c.failed} failing</span>` : r.c.total && r.c.passed === r.c.total ? '<span class="dbx-tag ok">All passing</span>' : ''}
+      </span>
+    </button>`;
 
   return `
-    <tr class="testcase-row ${rowSelectedClass}" data-id="${tc.id}">
-      <td style="text-align: center; vertical-align: middle;">
-        <input type="checkbox" class="testcase-select-checkbox" data-id="${tc.id}" ${isChecked ? 'checked' : ''} style="cursor: pointer;" />
-      </td>
-      <td style="text-align: center; vertical-align: middle; color: var(--text-muted); font-weight: 500;">${index + 1}</td>
-      <td style="vertical-align: middle;"><strong class="testcase-id">${tc.id}</strong></td>
-      
-      <!-- Module Dropdown -->
-      <td style="vertical-align: middle;">
-        <select class="table-inline-select" data-field="moduleId" data-id="${tc.id}">
-          ${modulesOptions}
+    <div class="tc-page">
+      <section class="rpa-hero">
+        <div class="rpa-hero-main">
+          <span class="rpa-hero-icon">${TC_I.flask}</span>
+          <div>
+            <h2 class="rpa-hero-title">Test Cases</h2>
+            <p class="rpa-hero-sub">Test coverage and results across your projects.</p>
+          </div>
+        </div>
+        <div class="rpa-hero-stats">
+          <div class="rpa-hstat"><strong>${all.total}</strong><span>Total</span></div>
+          <div class="rpa-hstat"><strong class="ok">${all.passed}</strong><span>Passed</span></div>
+          <div class="rpa-hstat"><strong class="bad">${all.failed}</strong><span>Failed</span></div>
+          <div class="rpa-hstat"><strong class="warn">${all.blocked}</strong><span>Blocked</span></div>
+          <div class="rpa-hstat"><strong>${all.untested}</strong><span>Untested</span></div>
+          <div class="rpa-hero-ring" title="${all.passed} of ${all.total} passed">
+            <svg viewBox="0 0 64 64"><circle class="track" cx="32" cy="32" r="${ringR}"/><circle class="fill" cx="32" cy="32" r="${ringR}" stroke-dasharray="${ringC.toFixed(2)}" stroke-dashoffset="${(ringC * (1 - all.rate / 100)).toFixed(2)}"/></svg>
+            <span><strong>${all.rate}%</strong><em>pass rate</em></span>
+          </div>
+        </div>
+      </section>
+
+      <div class="rpa-toolbar">
+        <div class="page-search-wrap rpa-search">
+          <svg class="page-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          <input type="text" class="page-search-input" id="tcHomeSearchInput" placeholder="Search projects…" value="${escapeHtml(state.tcHomeSearch || '')}" />
+        </div>
+        <select class="filter-select" id="tcHomeSort" aria-label="Sort projects">
+          <option value="cases" ${sort === 'cases' ? 'selected' : ''}>Most test cases</option>
+          <option value="failed" ${sort === 'failed' ? 'selected' : ''}>Most failures</option>
+          <option value="rate" ${sort === 'rate' ? 'selected' : ''}>Lowest pass rate</option>
+          <option value="name" ${sort === 'name' ? 'selected' : ''}>Name</option>
         </select>
-      </td>
+        <div class="rpa-toolbar-right">
+          <button type="button" class="btn-ghost rpa-tool-btn st-btn" id="openExcelImportModalBtn">${TC_I.upload}Import Excel</button>
+          <button type="button" class="btn-primary rpa-new" data-action="tc-add-case">${TC_I.plus}Add Test Case</button>
+        </div>
+      </div>
 
-      <!-- Scenario Input -->
-      <td style="vertical-align: middle;">
-        <textarea class="table-inline-textarea scenario-cell" data-field="scenario" data-id="${tc.id}" rows="2">${tc.scenario || tc.title || ''}</textarea>
-      </td>
+      ${withCases.length ? `
+        <section class="rpa-group">
+          <div class="rpa-group-head"><span class="rpa-group-dot" style="background:var(--accent)"></span>Projects with test cases<span class="rpa-group-count">${withCases.length}</span></div>
+          <div class="tch-grid">${withCases.map(card).join('')}</div>
+        </section>` : ''}
+      ${empty.length ? `
+        <section class="rpa-group">
+          <div class="rpa-group-head"><span class="rpa-group-dot" style="background:var(--status-planned)"></span>No test cases yet<span class="rpa-group-count">${empty.length}</span></div>
+          <div class="tch-empty-list">
+            ${empty.map(r => `<button type="button" class="tch-empty-chip" data-action="tc-open-project" data-id="${r.p.id}">${TC_I.folder}<span>${highlight(escapeHtml(r.p.name), q)}</span><em>Add tests</em></button>`).join('')}
+          </div>
+        </section>` : ''}
+      ${!rows.length ? `<div class="rpa-empty"><h3>No projects match “${escapeHtml(state.tcHomeSearch)}”</h3><p>Try a different name.</p></div>` : ''}
+    </div>`;
+};
 
-      <!-- Simplified Scenario Input -->
-      <td style="vertical-align: middle;">
-        <textarea class="table-inline-textarea" data-field="simplifiedScenario" data-id="${tc.id}" rows="2">${tc.simplifiedScenario || ''}</textarea>
-      </td>
+// ── Level 2: project overview ──
+const renderTcOverview = (proj) => {
+  const cases = state.testCases.filter(tc => tc.projectId === proj.id);
+  const c = tcCounts(cases);
+  const mods = state.modules.filter(m => m.projectId === proj.id);
+  const last = tcLastRun(cases);
+  const head = `
+    ${tcCrumbs([{ label: 'Test Cases', action: 'tc-home' }, { label: escapeHtml(proj.name) }])}
+    <section class="tco-head">
+      <div class="tco-head-main">
+        <h2>${escapeHtml(proj.name)}</h2>
+        <p>${c.total} test case${c.total === 1 ? '' : 's'} · ${mods.length} module${mods.length === 1 ? '' : 's'}${last ? ` · last run ${fmtDate(last)}` : ''}</p>
+      </div>
+      <div class="tco-head-actions">
+        <button type="button" class="btn-ghost st-btn" id="openExcelImportModalBtn">${TC_I.upload}Import Excel</button>
+        <button type="button" class="btn-ghost st-btn" data-action="tc-add-case">${TC_I.plus}Add Test Case</button>
+        ${c.total ? `<button type="button" class="btn-primary st-btn tco-open" data-action="tc-open-scenarios">${TC_I.list}Open test scenarios${TC_I.arrow}</button>` : ''}
+      </div>
+    </section>`;
 
-      <!-- Status Dropdown -->
-      <td style="text-align: center; vertical-align: middle;">
-        <select class="table-inline-select select-status-${statusCls}" style="font-weight:600;" data-field="status" data-id="${tc.id}">
-          <option value="Untested" ${tc.status === 'Untested' ? 'selected' : ''}>Untested</option>
-          <option value="Passed" ${tc.status === 'Passed' ? 'selected' : ''}>Passed</option>
-          <option value="Failed" ${tc.status === 'Failed' ? 'selected' : ''}>Failed</option>
-          <option value="Blocked" ${tc.status === 'Blocked' ? 'selected' : ''}>Blocked</option>
-        </select>
-      </td>
+  if (!c.total) {
+    return `<div class="tc-page">${head}
+      <div class="rpa-empty">
+        <span class="rpa-empty-icon">${TC_I.flask}</span>
+        <h3>No test cases in ${escapeHtml(proj.name)} yet</h3>
+        <p>Import them from an Excel sheet or add them one at a time.</p>
+        <div class="tco-empty-actions">
+          <button type="button" class="btn-primary st-btn" data-action="tc-add-case">${TC_I.plus}Add Test Case</button>
+        </div>
+      </div></div>`;
+  }
 
-      <!-- Priority Dropdown -->
-      <td style="text-align: center; vertical-align: middle;">
-        <select class="table-inline-select select-priority-${priorityCls}" style="font-weight:600;" data-field="priority" data-id="${tc.id}">
-          <option value="Critical" ${tc.priority === 'Critical' ? 'selected' : ''}>Critical</option>
-          <option value="High" ${tc.priority === 'High' ? 'selected' : ''}>High</option>
-          <option value="Medium" ${tc.priority === 'Medium' ? 'selected' : ''}>Medium</option>
-          <option value="Low" ${tc.priority === 'Low' ? 'selected' : ''}>Low</option>
-        </select>
-      </td>
+  const kpi = (n, l, cls = '') => `<div class="po-stat ${cls}"><span class="po-stat-num">${n}</span><span class="po-stat-label">${l}</span></div>`;
+  const breakdown = (title, groups) => {
+    const max = Math.max(1, ...groups.map(g => g.c.total));
+    return `
+      <div class="tco-card">
+        <h3 class="tco-card-title">${title}</h3>
+        <div class="tco-bars">
+          ${groups.filter(g => g.c.total).map(g => `
+            <div class="tco-bar-row" title="${escapeHtml(g.label)}: ${g.c.passed} passed, ${g.c.failed} failed, ${g.c.blocked} blocked, ${g.c.untested} untested">
+              <span class="tco-bar-label">${escapeHtml(g.label)}</span>
+              <span class="tco-bar-track"><span style="width:${g.c.total / max * 100}%">${tcBar(g.c, 'slim')}</span></span>
+              <span class="tco-bar-n">${g.c.total}</span>
+            </div>`).join('') || '<div class="dbx-empty">No data</div>'}
+        </div>
+      </div>`;
+  };
+  const by = (field, values, labelOf = v => v) => values.map(v => ({ label: labelOf(v), c: tcCounts(cases.filter(tc => (tc[field] || '') === v)) }));
+  const assignees = [...new Set(cases.map(tc => tc.assignee || ''))];
+  const assigneeGroups = assignees.map(a => ({ label: a || 'Unassigned', c: tcCounts(cases.filter(tc => (tc.assignee || '') === a)) }))
+    .sort((a, b) => b.c.total - a.c.total).slice(0, 6);
 
-      <!-- Severity Dropdown -->
-      <td style="text-align: center; vertical-align: middle;">
-        <select class="table-inline-select select-severity-${severityCls}" style="font-weight:600;" data-field="severity" data-id="${tc.id}">
-          <option value="S1 - Blocker" ${tc.severity === 'S1 - Blocker' ? 'selected' : ''}>S1 - Blocker</option>
-          <option value="S2 - Critical" ${tc.severity === 'S2 - Critical' ? 'selected' : ''}>S2 - Critical</option>
-          <option value="S3 - Major" ${tc.severity === 'S3 - Major' ? 'selected' : ''}>S3 - Major</option>
-          <option value="S4 - Minor" ${tc.severity === 'S4 - Minor' ? 'selected' : ''}>S4 - Minor</option>
-        </select>
-      </td>
+  const moduleRows = [...mods.map(m => ({ id: m.id, name: m.name, cases: cases.filter(tc => tc.moduleId === m.id) })),
+    { id: '', name: 'No module', cases: cases.filter(tc => !tc.moduleId || !mods.some(m => m.id === tc.moduleId)) }]
+    .filter(r => r.id || r.cases.length);
+  const failures = cases.filter(tc => tc.status === 'Failed' || tc.status === 'Blocked')
+    .sort((a, b) => (b.executionDate || '').localeCompare(a.executionDate || '') || (a.severity || 'S9').localeCompare(b.severity || 'S9'));
+  const modName = (id) => (mods.find(m => m.id === id) || {}).name || 'No module';
 
-      <!-- Type Dropdown -->
-      <td style="text-align: center; vertical-align: middle;">
-        <select class="table-inline-select" data-field="type" data-id="${tc.id}">
-          <option value="Manual" ${tc.type === 'Manual' ? 'selected' : ''}>Manual</option>
-          <option value="Automated" ${tc.type === 'Automated' ? 'selected' : ''}>Automated</option>
-          <option value="API" ${tc.type === 'API' ? 'selected' : ''}>API</option>
-          <option value="Security" ${tc.type === 'Security' ? 'selected' : ''}>Security</option>
-          <option value="Performance" ${tc.type === 'Performance' ? 'selected' : ''}>Performance</option>
-          <option value="Regression" ${tc.type === 'Regression' ? 'selected' : ''}>Regression</option>
-        </select>
-      </td>
+  return `
+    <div class="tc-page">
+      ${head}
+      <div class="po-stats tco-kpis">
+        ${kpi(c.total, 'Test cases')}
+        ${kpi(c.passed, 'Passed', 'tone-done')}
+        ${kpi(c.failed, 'Failed', 'tone-fail')}
+        ${kpi(c.blocked, 'Blocked', 'tone-hold')}
+        ${kpi(c.untested, 'Untested', 'tone-todo')}
+        ${kpi(`${c.rate}%`, 'Pass rate', 'tone-done')}
+        ${kpi(`${c.total ? Math.round(c.automated / c.total * 100) : 0}%`, 'Automated', 'tone-team')}
+      </div>
 
-      <!-- Assignee Dropdown -->
-      <td style="vertical-align: middle;">
-        <select class="table-inline-select" data-field="assignee" data-id="${tc.id}">
-          ${developersOptions}
-        </select>
-      </td>
+      <div class="tco-grid">
+        <div class="tco-card tco-status">
+          <h3 class="tco-card-title">Results</h3>
+          <div class="tco-status-body">
+            ${tcDonut(c)}
+            <div class="tco-legend">
+              ${[['pass', 'Passed', c.passed], ['fail', 'Failed', c.failed], ['blocked', 'Blocked', c.blocked], ['notrun', 'Untested', c.untested]].map(([k, l, n]) => `
+                <div class="tco-legend-row"><i class="dbx-dot ${k}"></i><span>${l}</span><strong>${n}</strong><em>${c.total ? Math.round(n / c.total * 100) : 0}%</em></div>`).join('')}
+            </div>
+          </div>
+        </div>
+        ${breakdown('By priority', by('priority', ['Critical', 'High', 'Medium', 'Low']))}
+        ${breakdown('By type', by('type', ['Manual', 'Automated', 'API', 'Security', 'Performance', 'Regression']))}
+        ${breakdown('By assignee', assigneeGroups)}
+      </div>
 
-      <!-- Execution Date -->
-      <td style="vertical-align: middle;">
-        <input type="date" class="table-inline-input" data-field="executionDate" data-id="${tc.id}" value="${tc.executionDate || ''}" />
-      </td>
+      <section class="tco-card">
+        <div class="tco-card-head">
+          <h3 class="tco-card-title">Modules <span class="rpa-group-count">${mods.length}</span></h3>
+          <button type="button" class="btn-ghost st-btn" id="openAddModuleModalBtn">${TC_I.plus}Add Module</button>
+        </div>
+        <div class="tco-mod-table">
+          <div class="tco-mod-row tco-mod-headrow"><span>Module</span><span>Results</span><span>Pass</span><span>Failed</span><span>Cases</span><span></span></div>
+          ${moduleRows.map(r => {
+            const mc = tcCounts(r.cases);
+            return `
+              <div class="tco-mod-row">
+                <button type="button" class="tco-mod-name" data-action="tc-open-module" data-id="${r.id || 'none'}" title="View scenarios in ${escapeHtml(r.name)}">${TC_I.folder}<span>${escapeHtml(r.name)}</span></button>
+                ${tcBar(mc, 'slim')}
+                <span class="dbx-tc-rate ${tcRateCls(mc.rate, mc.total)}">${mc.total ? mc.rate + '%' : '—'}</span>
+                <span>${mc.failed ? `<span class="dbx-tag danger">${mc.failed} failed</span>` : ''}</span>
+                <span class="tco-mod-n">${mc.total}</span>
+                <span class="tco-mod-actions">
+                  ${r.id ? `
+                    <button class="icon-btn" data-action="edit-module" data-id="${r.id}" aria-label="Rename module" title="Rename module">${TC_I.edit}</button>
+                    <button class="icon-btn danger" data-action="delete-module" data-id="${r.id}" aria-label="Delete module" title="Delete module">${TC_I.trash}</button>` : ''}
+                </span>
+              </div>`;
+          }).join('') || '<div class="dbx-empty">No modules yet. Group related scenarios with “Add Module”.</div>'}
+        </div>
+      </section>
 
-      <!-- Defect ID -->
-      <td style="vertical-align: middle;">
-        <input type="text" class="table-inline-input" data-field="defectId" data-id="${tc.id}" value="${tc.defectId || ''}" />
-      </td>
+      <section class="tco-card">
+        <div class="tco-card-head">
+          <h3 class="tco-card-title">Open failures <span class="rpa-group-count">${failures.length}</span></h3>
+          ${failures.length ? `<button type="button" class="btn-ghost st-btn" data-action="tc-open-failures">View all in scenarios${TC_I.arrow}</button>` : ''}
+        </div>
+        ${failures.length ? `<div class="tco-fail-list">
+          ${failures.slice(0, 8).map(tc => `
+            <button type="button" class="tco-fail" data-action="view-testcase" data-id="${escapeHtml(tc.id)}">
+              <span class="tco-fail-id">${escapeHtml(tc.id)}</span>
+              <span class="tco-fail-main">
+                <span class="tco-fail-title">${escapeHtml(tc.scenario || tc.title || '')}</span>
+                <span class="tco-fail-sub">${escapeHtml([modName(tc.moduleId), tc.assignee, tc.defectId ? `Defect ${tcDefectLabel(tc.defectId)}` : ''].filter(Boolean).join(' · '))}</span>
+              </span>
+              <span class="tcs-pill ${(tc.status || '').toLowerCase()}">${escapeHtml(tc.status)}</span>
+              ${tc.severity ? `<span class="tco-sev">${escapeHtml(tc.severity.split(' ')[0])}</span>` : ''}
+            </button>`).join('')}
+        </div>` : `<div class="dbx-empty">Nothing failing or blocked. 🎉</div>`}
+      </section>
+    </div>`;
+};
 
-      <!-- Description -->
-      <td style="vertical-align: middle;">
-        <textarea class="table-inline-textarea" data-field="description" data-id="${tc.id}" rows="2">${tc.description || ''}</textarea>
-      </td>
-
-      <!-- Steps -->
-      <td style="vertical-align: middle;">
-        <textarea class="table-inline-textarea" data-field="steps" data-id="${tc.id}" rows="3">${tc.steps || ''}</textarea>
-      </td>
-
-      <!-- Expected -->
-      <td style="vertical-align: middle;">
-        <textarea class="table-inline-textarea" data-field="expected" data-id="${tc.id}" rows="2">${tc.expected || ''}</textarea>
-      </td>
-
-      <!-- Actual -->
-      <td style="vertical-align: middle;">
-        <textarea class="table-inline-textarea" data-field="actual" data-id="${tc.id}" rows="2">${tc.actual || ''}</textarea>
-      </td>
-
-      <!-- Comments -->
-      <td style="vertical-align: middle;">
-        <textarea class="table-inline-textarea" data-field="comments" data-id="${tc.id}" rows="2">${tc.comments || ''}</textarea>
-      </td>
-
-      <!-- Actions Column (Delete button only) -->
-      <td style="text-align: center; vertical-align: middle;">
-        <button class="icon-btn danger" data-action="delete-testcase" data-id="${tc.id}" aria-label="Delete Test Case" title="Delete Test Case" style="width: 24px; height: 24px; padding: 2px;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="width:12px; height:12px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+// ── Level 3: test scenarios ──
+const renderTcScenarioRow = (tc, index, projModules) => {
+  const id = escapeHtml(tc.id);
+  const open = state.tcExpanded && state.tcExpanded.has(tc.id);
+  const checked = state.selectedTestCaseIds && state.selectedTestCaseIds.has(tc.id);
+  const st = (tc.status || 'Untested').toLowerCase();
+  const sel = (field, options, value, cls = '') => `
+    <select class="table-inline-select tcs-select ${cls}" data-field="${field}" data-id="${id}" aria-label="${field}">
+      ${options.map(([v, l]) => `<option value="${escapeHtml(v)}" ${value === v ? 'selected' : ''}>${escapeHtml(l)}</option>`).join('')}
+    </select>`;
+  const area = (field, label, rows = 3) => `
+    <label class="tcs-field"><span>${label}</span><textarea class="table-inline-textarea" data-field="${field}" data-id="${id}" rows="${rows}">${escapeHtml(field === 'scenario' ? (tc.scenario || tc.title || '') : (tc[field] || ''))}</textarea></label>`;
+  const modName = (projModules.find(m => m.id === tc.moduleId) || {}).name || 'No module';
+  return `
+    <tr class="tcs-row ${open ? 'open' : ''} ${checked ? 'selected' : ''} st-${st}" data-id="${id}">
+      <td class="tcs-c-check"><input type="checkbox" class="testcase-select-checkbox" data-id="${id}" ${checked ? 'checked' : ''} aria-label="Select ${id}" /></td>
+      <td class="tcs-c-id"><span class="tcs-id" title="Row ${index + 1}">${id}</span></td>
+      <td class="tcs-c-scn">
+        <button type="button" class="tcs-toggle" data-action="tc-row-toggle" data-id="${id}" aria-expanded="${open}" title="${open ? 'Hide' : 'Show'} details">
+          <span class="tcs-chev">${TC_I.chev}</span>
+          <span class="tcs-scn">
+            <span class="tcs-scn-title">${escapeHtml(tc.scenario || tc.title || 'Untitled scenario')}</span>
+            <span class="tcs-scn-sub"><span class="tcs-scn-mod">${escapeHtml(modName)}</span>${tc.simplifiedScenario ? ` · ${escapeHtml(tc.simplifiedScenario)}` : ''}</span>
+          </span>
         </button>
       </td>
+      <td class="tcs-c-st">${sel('status', TC_STATUSES.map(s => [s, s]), tc.status || 'Untested', `tcs-pill ${st}`)}</td>
+      <td class="tcs-c-pr">${sel('priority', [['Critical', 'Critical'], ['High', 'High'], ['Medium', 'Medium'], ['Low', 'Low']], tc.priority || 'Medium', `tcs-prio ${(tc.priority || 'medium').toLowerCase()}`)}</td>
+      <td class="tcs-c-as">${sel('assignee', [['', 'Unassigned'], ...state.developers.map(d => [d.name, d.name])], tc.assignee || '')}</td>
+      <td class="tcs-c-dt"><input type="date" class="table-inline-input tcs-date" data-field="executionDate" data-id="${id}" value="${/^\d{4}-\d{2}-\d{2}$/.test(tc.executionDate || '') ? escapeHtml(tc.executionDate) : ''}" aria-label="Execution date" /></td>
+      <td class="tcs-c-act">
+        <button class="icon-btn" data-action="view-testcase" data-id="${id}" aria-label="Open details" title="Open details">${TC_I.eye}</button>
+        <button class="icon-btn danger" data-action="delete-testcase" data-id="${id}" aria-label="Delete test case" title="Delete">${TC_I.trash}</button>
+      </td>
     </tr>
-  `;
+    ${open ? `
+      <tr class="tcs-detail" data-id="${id}">
+        <td colspan="8">
+          <div class="tcs-detail-props">
+            <label class="tcs-field"><span>Module</span>${sel('moduleId', [['', '— None —'], ...projModules.map(m => [m.id, m.name])], tc.moduleId || '', 'tcs-boxed')}</label>
+            <label class="tcs-field"><span>Severity</span>${sel('severity', [['S1 - Blocker', 'S1 – Blocker'], ['S2 - Critical', 'S2 – Critical'], ['S3 - Major', 'S3 – Major'], ['S4 - Minor', 'S4 – Minor']], tc.severity || 'S3 - Major', 'tcs-boxed')}</label>
+            <label class="tcs-field"><span>Type</span>${sel('type', ['Manual', 'Automated', 'API', 'Security', 'Performance', 'Regression'].map(t => [t, t]), tc.type || 'Manual', 'tcs-boxed')}</label>
+            <label class="tcs-field"><span>Defect ID</span><input type="text" class="table-inline-input" data-field="defectId" data-id="${id}" value="${escapeHtml(tc.defectId || '')}" placeholder="e.g. CIMTRACK-812" /></label>
+          </div>
+          <div class="tcs-detail-grid">
+            ${area('scenario', 'Scenario', 2)}
+            ${area('simplifiedScenario', 'Simplified scenario', 2)}
+            ${area('description', 'Description')}
+            ${area('steps', 'Steps', 4)}
+            ${area('expected', 'Expected result')}
+            ${area('actual', 'Actual result')}
+            ${area('comments', 'Comments', 2)}
+          </div>
+          <div class="tcs-detail-foot">Changes save automatically · Updated ${timeAgo(tc.updatedAt || tc.createdAt || new Date().toISOString())}</div>
+        </td>
+      </tr>` : ''}`;
+};
+
+const renderTcScenarios = (proj) => {
+  const projectCases = state.testCases.filter(tc => tc.projectId === proj.id);
+  const mods = state.modules.filter(m => m.projectId === proj.id);
+  const modCount = (id) => projectCases.filter(tc => tc.moduleId === id).length;
+  const noneCount = projectCases.filter(tc => !tc.moduleId || !mods.some(m => m.id === tc.moduleId)).length;
+  if (!state.tcExpanded) state.tcExpanded = new Set();
+
+  // Module, search and dropdown filters (same fields as before).
+  let list = projectCases;
+  const mid = state.activeTestCaseModuleId;
+  if (mid === '__none__') list = list.filter(tc => !tc.moduleId || !mods.some(m => m.id === tc.moduleId));
+  else if (mid) list = list.filter(tc => tc.moduleId === mid);
+  const moduleScoped = list;
+  const q = (state.testCaseSearch || '').toLowerCase();
+  if (q) {
+    list = list.filter(tc => ['id', 'scenario', 'title', 'simplifiedScenario', 'description', 'steps', 'expected', 'actual', 'assignee', 'defectId', 'comments']
+      .some(f => String(tc[f] || '').toLowerCase().includes(q)));
+  }
+  const f = state.testCaseFilters;
+  const searchScoped = list;
+  if (f.status) list = list.filter(tc => (TC_STATUSES.includes(tc.status) ? tc.status : 'Untested') === f.status);
+  if (f.priority) list = list.filter(tc => tc.priority === f.priority);
+  if (f.type) list = list.filter(tc => tc.type === f.type);
+  state.lastFilteredCases = list;
+
+  // Pagination (same state as before).
+  const pageAll = state.testCasePageSize === 'all';
+  const pageSize = pageAll ? Math.max(list.length, 1) : state.testCasePageSize;
+  const totalPages = pageAll ? 1 : Math.max(1, Math.ceil(list.length / pageSize));
+  if (state.testCasePage > totalPages) state.testCasePage = totalPages;
+  if (state.testCasePage < 1) state.testCasePage = 1;
+  const start = pageAll ? 0 : (state.testCasePage - 1) * pageSize;
+  const end = pageAll ? list.length : Math.min(start + pageSize, list.length);
+  const paged = list.slice(start, end);
+
+  const statusChipCounts = tcCounts(searchScoped.filter(tc => (!f.priority || tc.priority === f.priority) && (!f.type || tc.type === f.type)));
+  const chips = [['', 'All', statusChipCounts.total], ['Passed', 'Passed', statusChipCounts.passed], ['Failed', 'Failed', statusChipCounts.failed], ['Blocked', 'Blocked', statusChipCounts.blocked], ['Untested', 'Untested', statusChipCounts.untested]];
+  const selectedCount = state.selectedTestCaseIds ? state.selectedTestCaseIds.size : 0;
+  const filtersActive = !!(q || f.status || f.priority || f.type);
+  const activeModName = mid === '__none__' ? 'No module' : mid ? ((mods.find(m => m.id === mid) || {}).name || 'Module') : 'All cases';
+
+  const modItem = (idAttr, name, n, active, actions = '') => `
+    <div class="module-item tcs-mod ${active ? 'active' : ''}" data-module-id="${idAttr}" role="button" tabindex="0">
+      <span class="tcs-mod-name" title="${escapeHtml(name)}">${TC_I.folder}<span>${escapeHtml(name)}</span></span>
+      <span class="tcs-mod-n">${n}</span>
+      ${actions}
+    </div>`;
+  const pageSizeOptions = [5, 10, 25, 50, 100, 150].map(n => `<option value="${n}" ${state.testCasePageSize === n ? 'selected' : ''}>${n}</option>`).join('') + `<option value="all" ${pageAll ? 'selected' : ''}>All</option>`;
+
+  return `
+    <div class="tc-page">
+      ${tcCrumbs([{ label: 'Test Cases', action: 'tc-home' }, { label: escapeHtml(proj.name), action: 'tc-overview' }, { label: 'Test scenarios' }])}
+      <section class="tco-head">
+        <div class="tco-head-main">
+          <h2>Test scenarios</h2>
+          <p>${escapeHtml(proj.name)} · ${projectCases.length} test case${projectCases.length === 1 ? '' : 's'}</p>
+        </div>
+        <div class="tco-head-actions">
+          <button type="button" class="btn-ghost st-btn" id="openExcelImportModalBtn">${TC_I.upload}Import Excel</button>
+          <button type="button" class="btn-ghost st-btn" id="openBulkUpdateModalBtn">${TC_I.edit}Bulk Update</button>
+          <button type="button" class="btn-primary st-btn" data-action="tc-add-case">${TC_I.plus}Add Test Case</button>
+        </div>
+      </section>
+
+      <div class="tcs-layout">
+        <aside class="tcs-rail" aria-label="Modules">
+          <div class="tcs-rail-head"><span>Modules</span><button type="button" class="tcs-rail-add" id="openAddModuleModalBtn" title="Add module" aria-label="Add module">${TC_I.plus}</button></div>
+          ${modItem('root', 'All cases', projectCases.length, !mid)}
+          ${mods.map(m => modItem(m.id, m.name, modCount(m.id), mid === m.id, `
+            <span class="module-item-actions tcs-mod-actions">
+              <button class="module-item-btn" data-action="edit-module" data-id="${m.id}" aria-label="Rename module" title="Rename">${TC_I.edit}</button>
+              <button class="module-item-btn danger" data-action="delete-module" data-id="${m.id}" aria-label="Delete module" title="Delete">${TC_I.trash}</button>
+            </span>`)).join('')}
+          ${noneCount ? modItem('__none__', 'No module', noneCount, mid === '__none__') : ''}
+        </aside>
+
+        <div class="tcs-main">
+          <div class="tcs-toolbar">
+            <div class="page-search-wrap tcs-search">
+              <svg class="page-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+              <input type="text" class="page-search-input" id="testCaseSearchInput" placeholder="Search ID, scenario, steps, defect…" value="${escapeHtml(state.testCaseSearch || '')}" />
+              ${state.testCaseSearch ? `<button class="page-search-clear" id="clearTestCaseSearch" aria-label="Clear search">✕</button>` : ''}
+            </div>
+            <select class="filter-select" id="filterTCPriority" data-tcfilter="priority" aria-label="Priority">
+              <option value="">All priorities</option>
+              ${['Critical', 'High', 'Medium', 'Low'].map(v => `<option value="${v}" ${f.priority === v ? 'selected' : ''}>${v}</option>`).join('')}
+            </select>
+            <select class="filter-select" id="filterTCType" data-tcfilter="type" aria-label="Type">
+              <option value="">All types</option>
+              ${['Manual', 'Automated', 'API', 'Security', 'Performance', 'Regression'].map(v => `<option value="${v}" ${f.type === v ? 'selected' : ''}>${v}</option>`).join('')}
+            </select>
+            <button class="btn-ghost rpa-tool-btn ${state.testCaseSelectionMode ? 'tcs-on' : ''}" id="toggleTestCaseSelectionModeBtn">${state.testCaseSelectionMode ? 'Cancel selection' : 'Select cases'}</button>
+            ${filtersActive ? `<button class="btn-ghost rpa-tool-btn" id="clearTestCaseFilters">Clear filters</button>` : ''}
+          </div>
+          <div class="tcs-chips" role="toolbar" aria-label="Filter by status">
+            ${chips.map(([v, l, n]) => `<button type="button" class="rpa-chip tcs-chip ${v ? v.toLowerCase() : 'all'} ${(f.status || '') === v ? 'active' : ''}" data-action="tc-status-chip" data-status="${v}">${l} <span>${n}</span></button>`).join('')}
+            <span class="tcs-scope">${escapeHtml(activeModName)} · showing ${list.length} of ${moduleScoped.length}</span>
+          </div>
+
+          ${state.testCaseSelectionMode ? `
+            <div class="tcs-selbar">
+              <strong>${selectedCount} selected</strong>
+              <button class="btn-ghost rpa-tool-btn" id="selectAllTestCasesBtn">Select all ${list.length}</button>
+              <button class="btn-ghost rpa-tool-btn" id="clearTestCaseSelectionBtn" ${selectedCount ? '' : 'disabled'}>Clear</button>
+              <button class="btn-danger st-btn" id="bulkDeleteTestCasesBtn" ${selectedCount ? '' : 'disabled'}>${TC_I.trash}Delete selected</button>
+              <button class="btn-ghost rpa-tool-btn" id="cancelTestCaseSelectionBtn">Done</button>
+            </div>` : ''}
+
+          <div class="tcs-table-wrap" id="testCasesContainer">
+            <table class="tcs-table">
+              <thead>
+                <tr>
+                  <th class="tcs-c-check"><input type="checkbox" id="selectAllTcCb" aria-label="Select all filtered" ${selectedCount > 0 && list.length && list.every(tc => state.selectedTestCaseIds.has(tc.id)) ? 'checked' : ''} /></th>
+                  <th>ID</th><th>Scenario</th><th>Status</th><th>Priority</th><th>Assignee</th><th>Executed</th><th></th>
+                </tr>
+              </thead>
+              <tbody id="testCasesTableBody">
+                ${paged.map((tc, i) => renderTcScenarioRow(tc, start + i, mods)).join('') || `
+                  <tr><td colspan="8"><div class="dbx-empty tcs-noresults">${filtersActive ? 'No test cases match these filters.' : 'No test cases in this module yet.'}</div></td></tr>`}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="tc-pagination-bar">
+            <div class="tc-pagination-size"><label for="tcPageSizeSelect">Rows per page</label><select class="filter-select" id="tcPageSizeSelect">${pageSizeOptions}</select></div>
+            <div class="tc-pagination-info">${list.length ? `Showing ${start + 1}–${end} of ${list.length}` : 'No results'}</div>
+            <div class="tc-pagination-nav">
+              <button class="btn-ghost" id="tcPrevPageBtn" ${state.testCasePage <= 1 ? 'disabled' : ''}>‹ Prev</button>
+              <span class="tc-pagination-page">Page ${state.testCasePage} of ${totalPages}</span>
+              <button class="btn-ghost" id="tcNextPageBtn" ${state.testCasePage >= totalPages ? 'disabled' : ''}>Next ›</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
 };
 
 const renderTestCaseManagement = () => {
-  // Handle case where there are no projects at all
   if (state.projects.length === 0) {
-    return `
-      ${emptyState(
+    return emptyState(
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>',
       'No projects found',
       'You need to create a project first before creating modules or test cases.',
       '<button class="btn-primary" data-action="new-project" style="margin-top: 12px;">Create Project</button>'
-    )}
-    `;
-  }
-
-  // A previously-selected project may have been deleted since; fall back to "All Projects".
-  if (state.activeTestCaseProjectId && !state.projects.some(p => p.id === state.activeTestCaseProjectId)) {
-    state.activeTestCaseProjectId = null;
-  }
-
-  const activeProjId = state.activeTestCaseProjectId || null;
-  const activeProj = activeProjId ? state.projects.find(p => p.id === activeProjId) : null;
-
-  // 1. Pre-group test cases by moduleId and projectId for O(1) lookups
-  const moduleCasesMap = {}; // moduleId -> array of test cases (only meaningful within a selected project)
-  const projectCounts = {}; // projectId -> count, across ALL projects (for the dropdown/overview cards)
-
-  state.testCases.forEach(tc => {
-    projectCounts[tc.projectId] = (projectCounts[tc.projectId] || 0) + 1;
-    if (activeProjId && tc.projectId === activeProjId) {
-      const mid = tc.moduleId || '';
-      if (!moduleCasesMap[mid]) {
-        moduleCasesMap[mid] = [];
-      }
-      moduleCasesMap[mid].push(tc);
-    }
-  });
-
-  // "All Projects" scopes to every test case; a specific project scopes to just its own.
-  const projectCases = activeProjId ? state.testCases.filter(tc => tc.projectId === activeProjId) : state.testCases;
-
-  const isModuleSelected = (moduleId) => {
-    let mCases;
-    if (moduleId === 'all') {
-      mCases = projectCases;
-    } else {
-      mCases = moduleCasesMap[moduleId] || [];
-    }
-    if (mCases.length === 0) return false;
-    return mCases.every(tc => state.selectedTestCaseIds && state.selectedTestCaseIds.has(tc.id));
-  };
-
-  // ─── Filter logic (only relevant once a specific project is selected) ───
-  let filteredCases = projectCases;
-
-  // Module filter
-  if (activeProjId && state.activeTestCaseModuleId !== null) {
-    filteredCases = moduleCasesMap[state.activeTestCaseModuleId] || [];
-  }
-
-  const allCount = projectCases.length;
-
-  // Search filter
-  const q = state.testCaseSearch.toLowerCase();
-  if (q) {
-    filteredCases = filteredCases.filter(tc =>
-      tc.id.toLowerCase().includes(q) ||
-      (tc.scenario || tc.title || '').toLowerCase().includes(q) ||
-      (tc.simplifiedScenario || '').toLowerCase().includes(q) ||
-      (tc.description || '').toLowerCase().includes(q) ||
-      (tc.steps || '').toLowerCase().includes(q) ||
-      (tc.expected || '').toLowerCase().includes(q) ||
-      (tc.actual || '').toLowerCase().includes(q) ||
-      (tc.assignee || '').toLowerCase().includes(q) ||
-      (tc.defectId || '').toLowerCase().includes(q) ||
-      (tc.comments || '').toLowerCase().includes(q)
     );
   }
+  // A previously-selected project may have been deleted since; fall back to home.
+  const proj = state.activeTestCaseProjectId ? state.projects.find(p => p.id === state.activeTestCaseProjectId) : null;
+  if (!proj) { state.activeTestCaseProjectId = null; return renderTcHome(); }
+  return state.tcPage === 'scenarios' ? renderTcScenarios(proj) : renderTcOverview(proj);
+};
 
-  // Dropdown filters
-  if (state.testCaseFilters.status) {
-    filteredCases = filteredCases.filter(tc => tc.status === state.testCaseFilters.status);
+// Navigation within Test Case Management.
+const tcGo = (projectId, page = 'overview', moduleId = null) => {
+  if (projectId !== state.activeTestCaseProjectId) {
+    if (state.selectedTestCaseIds) state.selectedTestCaseIds.clear();
+    state.testCaseSelectionMode = false;
+    state.testCaseSearch = '';
+    state.testCaseFilters = { status: '', priority: '', type: '' };
   }
-  if (state.testCaseFilters.priority) {
-    filteredCases = filteredCases.filter(tc => tc.priority === state.testCaseFilters.priority);
-  }
-  if (state.testCaseFilters.type) {
-    filteredCases = filteredCases.filter(tc => tc.type === state.testCaseFilters.type);
-  }
-  state.lastFilteredCases = filteredCases;
-
-  // ─── Calculate stats for the hero + charts — scoped to whatever is currently selected ───
-  const scopeCases = (activeProjId && state.activeTestCaseModuleId !== null) ? (moduleCasesMap[state.activeTestCaseModuleId] || []) : projectCases;
-
-  const total = scopeCases.length;
-  let passed = 0, failed = 0, blocked = 0, untested = 0, automated = 0;
-  scopeCases.forEach(tc => {
-    if (tc.status === 'Passed') passed++;
-    else if (tc.status === 'Failed') failed++;
-    else if (tc.status === 'Blocked') blocked++;
-    else if (tc.status === 'Untested') untested++;
-
-    if (tc.type === 'Automated') automated++;
-  });
-
-  const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
-  const autoRate = total > 0 ? Math.round((automated / total) * 100) : 0;
-
-  // Donut SVG Math
-  const circumference = 2 * Math.PI * 30; // 188.49
-  const strokeDash = `${(passRate / 100) * circumference} ${circumference}`;
-
-  // Status breakdown bar chart math (Passed / Failed / Blocked / Untested)
-  const maxStatusVal = Math.max(passed, failed, blocked, untested, 1);
-  const barPct = (v) => Math.round((v / maxStatusVal) * 100);
-
-  // Project dropdown HTML (top-right; "All Projects" first, then each project, with search)
-  const projectDropdownOptionsHtml = `
-    <button type="button" class="tc-project-option ${!activeProjId ? 'active' : ''}" data-tc-project-select="" data-search-name="all projects">
-      <span>All Projects</span>
-      <span class="tc-project-option-count">${state.testCases.length}</span>
-    </button>
-  ` + state.projects.map(p => `
-    <button type="button" class="tc-project-option ${activeProjId === p.id ? 'active' : ''}" data-tc-project-select="${p.id}" data-search-name="${p.name.toLowerCase()}">
-      <span>${p.name}</span>
-      <span class="tc-project-option-count">${projectCounts[p.id] || 0}</span>
-    </button>
-  `).join('');
-
-  const projectDropdownHtml = `
-    <div class="tc-project-dropdown" id="tcProjectDropdown">
-      <button type="button" class="tc-project-dropdown-trigger" id="tcProjectDropdownTrigger" aria-haspopup="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
-        <span>${activeProj ? activeProj.name : 'All Projects'}</span>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;opacity:.6;"><polyline points="6 9 12 15 18 9"/></svg>
-      </button>
-      <div class="tc-project-dropdown-panel">
-        <div class="tc-project-search-wrap">
-          <input type="text" id="tcProjectDropdownSearch" placeholder="Search projects…" autocomplete="off" />
-        </div>
-        <div class="tc-project-option-list">
-          ${projectDropdownOptionsHtml}
-        </div>
-      </div>
-    </div>
-  `;
-
-  // Modules List HTML (only built/used when a specific project is selected)
-  const projModules = activeProjId ? state.modules.filter(m => m.projectId === activeProjId) : [];
-  const rootActive = state.activeTestCaseModuleId === null ? 'active' : '';
-
-  const modulesHtml = `
-    <div class="module-item ${rootActive}" data-module-id="root">
-      <div class="module-item-left">
-        ${state.testCaseSelectionMode ? `<input type="checkbox" class="module-select-checkbox" data-module-id="all" ${isModuleSelected('all') ? 'checked' : ''} style="margin-right: 6px; cursor: pointer;" />` : ''}
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
-        </svg>
-        <span class="module-item-name">All Cases</span>
-      </div>
-      <span class="project-tab-count">${allCount}</span>
-    </div>
-  ` + projModules.map(m => {
-    const mCount = (moduleCasesMap[m.id] || []).length;
-    const isActive = m.id === state.activeTestCaseModuleId ? 'active' : '';
-    const isModChecked = isModuleSelected(m.id) ? 'checked' : '';
-    return `
-      <div class="module-item ${isActive}" data-module-id="${m.id}">
-        <div class="module-item-left">
-          ${state.testCaseSelectionMode ? `<input type="checkbox" class="module-select-checkbox" data-module-id="${m.id}" ${isModChecked} style="margin-right: 6px; cursor: pointer;" />` : ''}
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
-          </svg>
-          <span class="module-item-name" title="${m.name}">${m.name}</span>
-        </div>
-        <div class="module-item-right">
-          <span class="project-tab-count">${mCount}</span>
-          <div class="module-item-actions">
-            <button class="module-item-btn" data-action="edit-module" data-id="${m.id}" aria-label="Edit Module" title="Edit Module">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px; height:10px;"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-            </button>
-            <button class="module-item-btn danger" data-action="delete-module" data-id="${m.id}" aria-label="Delete Module" title="Delete Module">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px; height:10px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
-            </button>
-          </div>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  // Stats and progress row
-  const passWidth = total > 0 ? (passed / total) * 100 : 0;
-  const failWidth = total > 0 ? (failed / total) * 100 : 0;
-  const blockWidth = total > 0 ? (blocked / total) * 100 : 0;
-  const untestWidth = total > 0 ? (untested / total) * 100 : 0;
-
-  // Pagination
-  const pageSizeIsAll = state.testCasePageSize === 'all';
-  const pageSize = pageSizeIsAll ? Math.max(filteredCases.length, 1) : state.testCasePageSize;
-  const totalPages = pageSizeIsAll ? 1 : Math.max(1, Math.ceil(filteredCases.length / pageSize));
-  if (state.testCasePage > totalPages) state.testCasePage = totalPages;
-  if (state.testCasePage < 1) state.testCasePage = 1;
-  const pageStart = pageSizeIsAll ? 0 : (state.testCasePage - 1) * pageSize;
-  const pageEnd = pageSizeIsAll ? filteredCases.length : Math.min(pageStart + pageSize, filteredCases.length);
-  const pagedCases = filteredCases.slice(pageStart, pageEnd);
-
-  const tableRowsHtml = pagedCases.map((tc, i) => {
-    return renderSingleTestCaseRow(tc, pageStart + i, projModules, state.developers, state.selectedTestCaseIds);
-  }).join('') || `
-    <tr>
-      <td colspan="19" style="text-align: center; padding: 40px 20px; color: var(--text-secondary);">
-        <h3>No test cases found</h3>
-        <p>Try clearing filters or click "Add Test Case" to create one.</p>
-      </td>
-    </tr>
-  `;
-
-  const pageSizeOptions = [5, 10, 25, 50, 100, 150].map(n =>
-    `<option value="${n}" ${state.testCasePageSize === n ? 'selected' : ''}>${n}</option>`
-  ).join('') + `<option value="all" ${pageSizeIsAll ? 'selected' : ''}>All</option>`;
-
-  const paginationBarHtml = `
-    <div class="tc-pagination-bar">
-      <div class="tc-pagination-size">
-        <label for="tcPageSizeSelect">Rows per page</label>
-        <select class="filter-select" id="tcPageSizeSelect">${pageSizeOptions}</select>
-      </div>
-      <div class="tc-pagination-info">
-        ${filteredCases.length === 0 ? 'No results' : `Showing ${pageStart + 1}–${pageEnd} of ${filteredCases.length}`}
-      </div>
-      <div class="tc-pagination-nav">
-        <button class="btn-ghost" id="tcPrevPageBtn" ${state.testCasePage <= 1 ? 'disabled' : ''}>‹ Prev</button>
-        <span class="tc-pagination-page">Page ${state.testCasePage} of ${totalPages}</span>
-        <button class="btn-ghost" id="tcNextPageBtn" ${state.testCasePage >= totalPages ? 'disabled' : ''}>Next ›</button>
-      </div>
-    </div>
-  `;
-
-  const selectedCount = state.selectedTestCaseIds ? state.selectedTestCaseIds.size : 0;
-  const selectionBarHtml = state.testCaseSelectionMode ? `
-    <div class="selection-action-bar" style="background: var(--accent-light); border: 1px solid rgba(45, 106, 79, 0.15); display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; border-radius: var(--radius-sm); margin-bottom: 16px;">
-      <div style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color: var(--accent);">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px; height:16px; color: var(--accent);">
-          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-          <path d="M9 11l3 3 5-5"/>
-        </svg>
-        <span>${selectedCount} test cases selected</span>
-      </div>
-      <div style="display:flex; gap:8px; align-items: center;">
-        <button class="btn-ghost" id="selectAllTestCasesBtn" style="font-size:12px; padding:6px 12px; height: 28px; line-height: 1; border: 1px solid var(--border); font-weight: 500; background: var(--surface); color: var(--text);">Select All</button>
-        <button class="btn-ghost" id="clearTestCaseSelectionBtn" style="font-size:12px; padding:6px 12px; height: 28px; line-height: 1; border: 1px solid var(--border); font-weight: 500; background: var(--surface); color: var(--text-secondary);" ${selectedCount === 0 ? 'disabled style="opacity: 0.5; cursor: not-allowed; background: var(--surface);"' : ''}>Clear All</button>
-        <button class="btn-primary" id="bulkDeleteTestCasesBtn" style="font-size:12px; padding:6px 12px; background:#c0392b; border-color:#c0392b; color:#fff; height: 28px; line-height: 1; font-weight: 500;" ${selectedCount === 0 ? 'disabled style="background:#e8c4c4; border-color:#e8c4c4; color:#fff; cursor: not-allowed;"' : ''}>Delete Selected</button>
-        <span style="color: var(--border); margin: 0 4px;">|</span>
-        <button class="btn-ghost" id="cancelTestCaseSelectionBtn" style="font-size:12px; padding:6px 12px; height: 28px; line-height: 1; color: var(--text-muted); font-weight: 500; border: 1px solid transparent; background: transparent;">Exit</button>
-      </div>
-    </div>
-  ` : '';
-
-  // Build hero banner stats
-  const tcHero = buildPageHero({
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12l2 2 4-4"/></svg>`,
-    gradient: 'linear-gradient(135deg, #0f2027 0%, #203a43 40%, #2c5364 100%)',
-    title: 'Test Case Management',
-    subtitle: 'Manage, execute and track test cases across your project modules.',
-    stats: [
-      { label: 'Total Cases', value: total },
-      { label: 'Passed', value: passed, color: '#4ade80' },
-      { label: 'Failed', value: failed, color: '#f87171' },
-      { label: 'Blocked', value: blocked, color: '#fb923c' },
-      { label: 'Untested', value: untested, color: '#94a3b8' },
-      { label: 'Pass Rate', value: `${passRate}%`, color: passRate >= 80 ? '#4ade80' : passRate >= 50 ? '#fbbf24' : '#f87171' },
-    ],
-    progressBar: { pct: passRate, label: `${passed} / ${total} passed`, color: 'linear-gradient(90deg, #4ade80, #22c55e)' }
-  });
-
-  // "All Projects" overview cards — replaces the table entirely when no specific project is selected
-  const projectsOverviewHtml = state.projects.map(p => {
-    const pCases = state.testCases.filter(tc => tc.projectId === p.id);
-    const pPassed = pCases.filter(tc => tc.status === 'Passed').length;
-    const pFailed = pCases.filter(tc => tc.status === 'Failed').length;
-    const pBlocked = pCases.filter(tc => tc.status === 'Blocked').length;
-    const pUntested = pCases.filter(tc => tc.status === 'Untested').length;
-    const pPassRate = pCases.length > 0 ? Math.round((pPassed / pCases.length) * 100) : 0;
-    return `
-      <div class="tc-project-overview-card" data-tc-project-select="${p.id}">
-        <div class="tc-project-overview-top">
-          <span class="tc-project-overview-name">${p.name}</span>
-          <span class="tc-project-overview-total">${pCases.length} ${pCases.length === 1 ? 'case' : 'cases'}</span>
-        </div>
-        <div class="tc-project-overview-stats">
-          <div class="tc-project-overview-stat"><span class="status-dot passed"></span>Passed <strong>${pPassed}</strong></div>
-          <div class="tc-project-overview-stat"><span class="status-dot failed"></span>Failed <strong>${pFailed}</strong></div>
-          <div class="tc-project-overview-stat"><span class="status-dot blocked"></span>Blocked <strong>${pBlocked}</strong></div>
-          <div class="tc-project-overview-stat"><span class="status-dot untested"></span>Untested <strong>${pUntested}</strong></div>
-        </div>
-        <div class="tc-project-overview-passrate">
-          <div class="tc-project-overview-bar"><div style="width:${pPassRate}%"></div></div>
-          <span>${pPassRate}% pass rate</span>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  const chartsRowHtml = `
-    <div class="testcases-charts-row">
-      <!-- Pass Rate Donut Chart -->
-      <div class="chart-card">
-        <span class="chart-card-title">Test Pass Rate</span>
-        <div class="chart-container">
-          <div style="position:relative; width:90px; height:90px; display:grid; place-items:center;">
-            <svg class="donut-svg">
-              <circle cx="45" cy="45" r="30" fill="none" stroke="var(--border)" stroke-width="12"></circle>
-              <circle class="donut-segment" cx="45" cy="45" r="30" fill="none" stroke="#2d6a4f" stroke-dasharray="${strokeDash}" stroke-dashoffset="0"></circle>
-            </svg>
-            <div class="donut-center">
-              <span class="donut-val">${passRate}%</span>
-              <span class="donut-lbl">Passed</span>
-            </div>
-          </div>
-          <div class="chart-legend">
-            <div class="legend-item">
-              <span class="legend-color" style="background:#2d6a4f;"></span>
-              <span>Passed</span>
-              <span class="legend-val">${passed}</span>
-            </div>
-            <div class="legend-item">
-              <span class="legend-color" style="background:#c0392b;"></span>
-              <span>Failed</span>
-              <span class="legend-val">${failed}</span>
-            </div>
-            <div class="legend-item">
-              <span class="legend-color" style="background:#ef6c00;"></span>
-              <span>Blocked</span>
-              <span class="legend-val">${blocked}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Status Breakdown Bar Chart -->
-      <div class="chart-card">
-        <span class="chart-card-title">Status Breakdown</span>
-        <div class="tc-bar-chart">
-          <div class="tc-bar-col">
-            <span class="tc-bar-value">${passed}</span>
-            <div class="tc-bar-track"><div class="tc-bar-fill passed" style="height:${barPct(passed)}%" title="Passed: ${passed}"></div></div>
-            <span class="tc-bar-label"><span class="status-dot passed"></span>Passed</span>
-          </div>
-          <div class="tc-bar-col">
-            <span class="tc-bar-value">${failed}</span>
-            <div class="tc-bar-track"><div class="tc-bar-fill failed" style="height:${barPct(failed)}%" title="Failed: ${failed}"></div></div>
-            <span class="tc-bar-label"><span class="status-dot failed"></span>Failed</span>
-          </div>
-          <div class="tc-bar-col">
-            <span class="tc-bar-value">${blocked}</span>
-            <div class="tc-bar-track"><div class="tc-bar-fill blocked" style="height:${barPct(blocked)}%" title="Blocked: ${blocked}"></div></div>
-            <span class="tc-bar-label"><span class="status-dot blocked"></span>Blocked</span>
-          </div>
-          <div class="tc-bar-col">
-            <span class="tc-bar-value">${untested}</span>
-            <div class="tc-bar-track"><div class="tc-bar-fill untested" style="height:${barPct(untested)}%" title="Untested: ${untested}"></div></div>
-            <span class="tc-bar-label"><span class="status-dot untested"></span>Untested</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-
-  const filtersBarHtml = `
-    <div class="filters-bar" style="margin-bottom: 0;">
-      <div class="page-search-wrap">
-        <svg class="page-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-          <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
-        </svg>
-        <input type="text" class="page-search-input" id="testCaseSearchInput" placeholder="Search test cases…" value="${state.testCaseSearch || ''}" />
-        ${state.testCaseSearch ? `<button class="page-search-clear" id="clearTestCaseSearch">✕</button>` : ''}
-      </div>
-
-      <select class="filter-select" id="filterTCStatus" data-tcfilter="status">
-        <option value="">All Run Statuses</option>
-        <option value="Passed" ${state.testCaseFilters.status === 'Passed' ? 'selected' : ''}>Passed</option>
-        <option value="Failed" ${state.testCaseFilters.status === 'Failed' ? 'selected' : ''}>Failed</option>
-        <option value="Blocked" ${state.testCaseFilters.status === 'Blocked' ? 'selected' : ''}>Blocked</option>
-        <option value="Untested" ${state.testCaseFilters.status === 'Untested' ? 'selected' : ''}>Untested</option>
-      </select>
-
-      <select class="filter-select" id="filterTCPriority" data-tcfilter="priority">
-        <option value="">All Priorities</option>
-        <option value="Critical" ${state.testCaseFilters.priority === 'Critical' ? 'selected' : ''}>Critical</option>
-        <option value="High" ${state.testCaseFilters.priority === 'High' ? 'selected' : ''}>High</option>
-        <option value="Medium" ${state.testCaseFilters.priority === 'Medium' ? 'selected' : ''}>Medium</option>
-        <option value="Low" ${state.testCaseFilters.priority === 'Low' ? 'selected' : ''}>Low</option>
-      </select>
-
-      <select class="filter-select" id="filterTCType" data-tcfilter="type">
-        <option value="">All Types</option>
-        <option value="Manual" ${state.testCaseFilters.type === 'Manual' ? 'selected' : ''}>Manual</option>
-        <option value="Automated" ${state.testCaseFilters.type === 'Automated' ? 'selected' : ''}>Automated</option>
-      </select>
-
-      <button class="btn-ghost" id="openExcelImportModalBtn" style="padding: 6px 12px; font-size: 12.5px; border-radius: var(--radius-sm); font-weight:500;">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px; height:13px; margin-right:4px;">
-          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
-        </svg>
-        Import Excel
-      </button>
-
-      <button class="btn-ghost" id="openBulkUpdateModalBtn" style="padding: 6px 12px; font-size: 12.5px; border-radius: var(--radius-sm); font-weight:500; margin-left: 6px;">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px; height:13px; margin-right:4px;">
-          <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
-        </svg>
-        Bulk Update
-      </button>
-
-      <button class="btn-ghost ${state.testCaseSelectionMode ? 'active' : ''}" id="toggleTestCaseSelectionModeBtn" style="padding: 6px 12px; font-size: 12.5px; border-radius: var(--radius-sm); font-weight:500; margin-left: 6px; ${state.testCaseSelectionMode ? 'background: var(--accent-light); color: var(--accent); border-color: var(--accent); font-weight: 600;' : ''}">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px; height:13px; margin-right:4px;">
-          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-          <path d="M9 11l3 3 5-5"/>
-        </svg>
-        ${state.testCaseSelectionMode ? 'Cancel Selection' : 'Select Cases'}
-      </button>
-
-      ${(state.testCaseSearch || state.testCaseFilters.status || state.testCaseFilters.priority || state.testCaseFilters.type) ? `
-        <button class="btn-ghost" id="clearTestCaseFilters" style="font-size:12px; padding:6px 10px;">Clear filters</button>
-      ` : ''}
-    </div>
-  `;
-
-  const tableHtml = `
-    <div class="testcases-table-wrapper" id="testCasesContainer">
-      <table class="testcases-table">
-        <thead>
-          <tr>
-            <th style="width: 40px; text-align: center; vertical-align: middle;">
-              <input type="checkbox" id="selectAllTcCb" style="cursor: pointer;" ${state.selectedTestCaseIds && state.selectedTestCaseIds.size > 0 && state.selectedTestCaseIds.size === filteredCases.length ? 'checked' : ''} />
-            </th>
-            <th style="width: 60px; text-align: center; vertical-align: middle;">Sr No.</th>
-            <th style="min-width: 100px; vertical-align: middle;">ID</th>
-            <th style="min-width: 150px; vertical-align: middle;">Module</th>
-            <th style="min-width: 250px; vertical-align: middle;">Scenario</th>
-            <th style="min-width: 180px; vertical-align: middle;">Simplified Scenario</th>
-            <th style="min-width: 110px; text-align: center; vertical-align: middle;">Status</th>
-            <th style="min-width: 90px; text-align: center; vertical-align: middle;">Priority</th>
-            <th style="min-width: 90px; text-align: center; vertical-align: middle;">Severity</th>
-            <th style="min-width: 90px; text-align: center; vertical-align: middle;">Type</th>
-            <th style="min-width: 120px; vertical-align: middle;">Assignee</th>
-            <th style="min-width: 130px; vertical-align: middle;">Execution Date</th>
-            <th style="min-width: 100px; vertical-align: middle;">Defect ID</th>
-            <th style="min-width: 250px; vertical-align: middle;">Description</th>
-            <th style="min-width: 250px; vertical-align: middle;">Steps</th>
-            <th style="min-width: 250px; vertical-align: middle;">Expected Result</th>
-            <th style="min-width: 250px; vertical-align: middle;">Actual Result</th>
-            <th style="min-width: 200px; vertical-align: middle;">Comments</th>
-            <th style="min-width: 80px; text-align: center; vertical-align: middle;">Actions</th>
-          </tr>
-        </thead>
-        <tbody id="testCasesTableBody">
-          ${tableRowsHtml}
-        </tbody>
-      </table>
-    </div>
-    ${paginationBarHtml}
-  `;
-
-  const modulesInlineHtml = activeProjId ? `
-    <div class="tc-modules-inline">
-      <span class="tc-modules-inline-label">Modules</span>
-      <div class="modules-horizontal-list" id="testCaseModulesList">
-        ${modulesHtml}
-      </div>
-      <button class="add-module-pill-btn" id="openAddModuleModalBtn" aria-label="New Module" title="New Module">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:12px; height:12px; margin-right:4px;"><path d="M12 5v14M5 12h14"/></svg>
-        Add Module
-      </button>
-    </div>
-  ` : '';
-
-  // Return full workspace markup
-  return `
-    ${tcHero}
-    <div class="tc-toolbar-row">
-      ${modulesInlineHtml}
-      ${projectDropdownHtml}
-    </div>
-
-    <div class="testcases-workspace">
-      <section class="testcases-main-panel">
-        ${activeProjId ? `
-          ${selectionBarHtml}
-          ${chartsRowHtml}
-          ${filtersBarHtml}
-          ${tableHtml}
-        ` : `
-          <div class="tc-projects-overview-grid">
-            ${projectsOverviewHtml}
-          </div>
-        `}
-      </section>
-    </div>
-  `;
+  state.activeTestCaseProjectId = projectId || null;
+  state.tcPage = page;
+  state.activeTestCaseModuleId = moduleId;
+  state.testCasePage = 1;
+  if (state.view !== 'testcases') setView('testcases'); else render();
+  const ct = document.getElementById('mainContent');
+  if (ct) ct.scrollTo({ top: 0, behavior: 'instant' });
 };
 
 // ─── Test Case Management Dropdown Helpers ───────────────────
@@ -12720,6 +12493,27 @@ const init = async () => {
       closeModals();
       const tcDd = document.getElementById('tcProjectDropdown');
       if (tcDd) tcDd.classList.remove('open');
+    }
+    // Settings section menu: arrow keys move between sections (vertical tab list).
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key) && e.target.closest && e.target.closest('.st-nav')) {
+      e.preventDefault();
+      const keys = SETTINGS_SECTIONS.map(s => s.key);
+      const i = keys.indexOf(state.settingsSection || 'general');
+      const next = e.key === 'Home' ? 0 : e.key === 'End' ? keys.length - 1 : (i + (e.key === 'ArrowDown' ? 1 : -1) + keys.length) % keys.length;
+      state.settingsSection = keys[next];
+      render();
+      const tab = document.getElementById(`st-tab-${keys[next]}`);
+      if (tab) tab.focus();
+    }
+    // Test scenario module rail items are focusable: Enter/Space opens the module.
+    if ((e.key === ' ' || e.key === 'Enter') && e.target.matches && e.target.matches('.tcs-mod')) {
+      e.preventDefault();
+      e.target.click();
+    }
+    // Release Point checklist rows are focusable checkboxes: Space/Enter toggles.
+    if ((e.key === ' ' || e.key === 'Enter') && e.target.matches && e.target.matches('.rp-checklist-item[data-action="toggle-checklist-item"]')) {
+      e.preventDefault();
+      toggleReleasePtChecklistItem(e.target.dataset.rpId, e.target.dataset.itemId);
     }
   });
 
