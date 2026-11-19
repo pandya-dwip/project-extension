@@ -2,7 +2,7 @@
 // Replaces chrome.storage.local / localStorage as the app's persistence mechanism.
 // All other code talks to storage exclusively through window.ClairDB.
 const ClairDB = (() => {
-  const TABLES = ['projects', 'tasks', 'tests', 'activity', 'developers', 'releases', 'testCases', 'modules', 'releasePoints', 'noteFolders', 'notes', 'jiraSync', 'jiraPending'];
+  const TABLES = ['projects', 'tasks', 'tests', 'activity', 'developers', 'releases', 'testCases', 'modules', 'releasePoints', 'noteFolders', 'notes', 'jiraSync', 'jiraPending', 'jiraQa'];
   const SCHEMA_VERSION = 1;
   const IDB_NAME = 'clair_sqlite';
   const IDB_STORE = 'files';
@@ -197,6 +197,20 @@ const ClairDB = (() => {
     }
   }
 
+  // Re-read the database another context (tab or background worker) saved, replacing
+  // this context's in-memory copy. Without it, load() returns this context's own copy.
+  async function reload() {
+    await init();
+    await saveChain;
+    const bytes = await idbGetFile();
+    if (!bytes) return;
+    const fresh = new SQL.Database(new Uint8Array(bytes));
+    const old = db;
+    db = fresh;
+    ensureSchema();
+    try { old.close(); } catch (e) { /* already closed */ }
+  }
+
   async function load() {
     await init();
     const out = {};
@@ -207,8 +221,17 @@ const ClairDB = (() => {
   const tabId = Math.random().toString(36).substring(2);
   const syncChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('clair_db_sync') : null;
 
+  // Saves run one after another; reload() waits for them so it never swaps the database
+  // out from under a save that is still persisting.
+  let saveChain = Promise.resolve();
+  function save(payload) {
+    const run = saveChain.then(() => saveNow(payload));
+    saveChain = run.catch(() => {});
+    return run;
+  }
+
   // Whole-state save, matching the app's existing "flush entire arrays" behavior.
-  async function save(payload) {
+  async function saveNow(payload) {
     await init();
     db.run('BEGIN TRANSACTION');
     try {
@@ -249,6 +272,7 @@ const ClairDB = (() => {
   return {
     init,
     load,
+    reload,
     loadSnapshot,
     save,
     getPref,

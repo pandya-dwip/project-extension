@@ -349,5 +349,24 @@ const ClairJira = (() => {
     return out;
   };
 
-  return { JIRA_KEY, normalizeSite, getPublicConfig, saveConfig, testConnection, disconnect, listProjects, searchIssues, fetchAllIssues, getProjectStatuses, getIssue, getTransitions, doTransition, addComment, getComments, toAdf };
+  // Status changes of an issue (from its changelog, every page), oldest first:
+  // [{ historyId, created, fromId, fromName, toId, toName }].
+  const getStatusChanges = async (key) => {
+    const cfg = await requireConfig();
+    const out = [];
+    for (let startAt = 0, page = 0; page < 200; page++) {
+      const data = await request(cfg, `${issuePath(key)}/changelog`, { startAt, maxResults: 100 });
+      const values = data.values || [];
+      values.forEach(h => (h.items || []).forEach(it => {
+        if (it.fieldId === 'status' || it.field === 'status') {
+          out.push({ historyId: String(h.id), created: h.created || '', fromId: String(it.from || ''), fromName: it.fromString || '', toId: String(it.to || ''), toName: it.toString || '' });
+        }
+      }));
+      startAt += values.length;
+      if (!values.length || data.isLast === true || startAt >= (data.total || 0)) break;
+    }
+    return out;
+  };
+
+  return { JIRA_KEY, normalizeSite, getPublicConfig, saveConfig, testConnection, disconnect, listProjects, searchIssues, fetchAllIssues, getProjectStatuses, getIssue, getTransitions, doTransition, addComment, getComments, getStatusChanges, toAdf };
 })();

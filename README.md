@@ -4,7 +4,7 @@
 
 **A local-first project & release tracker — built as a Chrome Extension**
 
-![Version](https://img.shields.io/badge/version-3.1.0-informational?style=flat-square)
+![Version](https://img.shields.io/badge/version-4.0.0-informational?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Chrome%20Extension-4285F4?style=flat-square&logo=googlechrome&logoColor=white)
 ![Manifest](https://img.shields.io/badge/manifest-V3-success?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-Vanilla%20JS%20%2F%20HTML%20%2F%20CSS-F7DF1E?style=flat-square)
@@ -52,6 +52,55 @@ The current app version is displayed in the sidebar footer and is always read di
 ---
 
 ## What's New
+
+### v4.0.0
+
+#### Scheduled Jira sync and automatic QA tasks
+
+Clair now keeps every linked Jira project in sync on a schedule and turns tickets that move to **Ready for QA** into QA work — one consolidated task per project, never duplicated.
+
+**Two ways to sync, one pipeline**
+
+- **Automatic** — every day at **9 AM, 11 AM, 1 PM, 3 PM and 5 PM** (computer's local time), from the background service worker (`chrome.alarms`). One one-shot alarm is kept at the next slot (same name, so never duplicated) and re-armed after each run, on install, update and every worker start. If Chrome was closed at a slot, the most recent missed slot runs once when the worker next starts — only inside the 9:00–18:00 window.
+- **Sync Now** — on the Jira page, any time (also outside the scheduled hours).
+- Both run the same code ([jiracore.js](jiracore.js)) with the same duplicate prevention. A Web Lock (`navigator.locks`) shared by the page and the worker means runs never overlap. When a Clair tab is open, the worker hands the scheduled run to it (the tab's data stays the single writer); with no tab open, the worker runs it on the saved database.
+
+**What a sync does** (for every linked project)
+
+1. Fetches every ticket (all issue types, full pagination) and refreshes the local Jira cache, keeping the project's status mapping.
+2. Reads the **changelog** of every ticket updated since the project's last checkpoint (`GET /rest/api/3/issue/{id}/changelog`, all pages) and finds tickets that **entered** the status mapped to *Ready for QA* — including tickets that entered it and moved on before the sync.
+3. Creates **one task per Clair project** with all of that project's new Ready for QA tickets; projects without new tickets get no task.
+
+**The task**
+
+| Field | Value |
+|---|---|
+| Title | `Ticket closing - {project name}` |
+| Project / Status / Priority | the linked Clair project / To-Do / Medium |
+| Start → End | earliest Ready for QA entry in the batch → two days later |
+| Tag | `Auto Task Creation` |
+| Developers | Jira assignees matched to Clair developers by name (same rule as Release Point imports); none matched → no developer, task still created |
+| Description | per ticket: key, title, assignee, when it entered Ready for QA, Jira link |
+
+**Duplicate prevention** (new SQLite table `jiraQa`)
+
+- **Checkpoint per project** — the next sync only looks at changes after it (with a 10-minute overlap for clock skew; overlaps are filtered out). The first sync of a project starts from the beginning of that day.
+- **Processed tickets** — a ticket that has produced a QA task never produces another, even if it re-enters Ready for QA or the sync is repeated (manual or scheduled, in any order, across restarts).
+- **Batch id** — each task carries a stable id derived from its project and tickets (`task.autoQa`), checked before creating.
+- A task and the records that mark its tickets processed are saved in the same database write. If a project fails (Jira error, network), its checkpoint does not move; the other projects still complete, and the next sync retries only what failed.
+
+**Results** — the Jira page shows the last run: scheduled or manual, projects synced, tickets fetched, new Ready for QA tickets, tasks created (and for which projects), already-processed tickets skipped, failures to retry, the last fully successful run, and the next scheduled time. A run with failures is shown as "completed with failures", never as success.
+
+#### Fixes
+
+- **Changes from another tab or the background are picked up** — when another context saved, an open Clair page "reloaded" from its own in-memory copy of the database and missed the change. Pages now re-read the saved database (`ClairDB.reload()`), which waits for the page's own in-flight saves.
+- Ticket table: the whole row opens the ticket panel; the key is plain text (the ↗ icon opens Jira); a # column; newest tickets first by default. Comments show pasted links (Jira smart links) and attachments as one chip.
+
+#### Manifest
+
+- Version **4.0.0** (major: background Jira sync that creates tasks, new SQLite table, shared `jiracore.js` loaded by the service worker); description mentions Jira sync and automatic QA tasks.
+
+> **Limitations** — scheduled runs need Chrome to be running; only the most recent missed slot is caught up. Tickets that reached Ready for QA before a project's first sync day are not turned into tasks. Clair saves the whole database at once, so the background run happens only when no Clair tab is open.
 
 ### v3.1.0
 
@@ -278,7 +327,7 @@ Jira status names differ between projects, so each linked project has its own ma
 | **Project Insights** | Capture issues, enhancements, and notes per project; track each item through a Dev → QA → Done workflow; filter by developer, status, and assignment state. |
 | **Release Management** | Log releases sorted by release date; advance through a seven-stage status workflow (Draft → Released); generate email-style release announcements; copy notes to clipboard. |
 | **Release Points** | Accordion list grouped into In progress / Completed; progress ring and bar per release point; full checklist on expand with in-place, keyboard-accessible ticking; project filter chips, Expand/Collapse all, search inside checklist items; shows the release each point belongs to; bulk add and bulk assign in the editor; import Jira tickets as checklist items; ticket links show the ticket key. |
-| **Jira** | Dashboard of every Clair project linked to Jira: per-project cards with ticket counts by category and last sync; a details page with a searchable, filterable, sortable, paginated ticket table (counts follow the filters); per-project status mapping into 10 Clair categories with automatic matching; local cache refreshed on demand and kept if a refresh fails; change a ticket's status and add comments, queued as pending changes and sent with **Sync to Jira**. |
+| **Jira** | Dashboard of every Clair project linked to Jira: per-project cards with ticket counts by category and last sync; a details page with a searchable, filterable, sortable, paginated ticket table (counts follow the filters); per-project status mapping into 10 Clair categories with automatic matching; local cache refreshed on demand and kept if a refresh fails; change a ticket's status and add comments, queued as pending changes and sent with **Sync to Jira**; scheduled sync (9 AM–5 PM) and **Sync Now** create one "Ticket closing" QA task per project for tickets that moved to Ready for QA, never duplicated. |
 | **Notes** | Organize notes by project; create main folders and 1-level subfolders; write notes with a 10-item Markdown toolbar & Edit/Preview mode toggle; move notes across project/folder tree; debounced search & sort by updated date, creation date, or title. |
 | **Test Case Management** | Three levels: a home page of project cards with pass rates; a project overview with KPIs, results donut, priority/type/assignee breakdowns, modules table, and open failures; and a test scenarios page with a module rail, status chips, filters, expandable rows with autosaving fields, bulk selection, and pagination. Import cases from Excel/CSV; bulk update. |
 | **Developers** | Maintain a developer registry; link developers to projects so they appear in context-sensitive dropdowns on tasks and insights. |
@@ -440,7 +489,9 @@ Requires a Jira connection (Settings → Integrations) and at least one project 
 - **Details** (breadcrumb Jira / Project) — header with **Open in Jira**, **Status mapping**, and **Refresh from Jira**; category tiles; search, issue type, assignee, and sort controls; category chips; the ticket table; rows per page and Prev/Next. Totals and chips reflect the search/type/assignee filters.
 - **Status mapping** — one row per Jira status: name, Jira's own category, ticket count, and a dropdown (**Automatic — *category*** or a fixed category). Saved per linked project; **Reset all to Automatic** clears manual choices.
 
-- **Ticket panel** — click a ticket summary: current Jira status, **Change status** (available transitions only), comments, a comment box, pending changes, and **Sync to Jira** with the result. See [v3.1.0](#v310).
+- **Jira sync & QA tasks** card — **Sync Now**, the schedule (9 AM–5 PM, every two hours) with the next run, and the last run's results. See [v4.0.0](#v400).
+- **Ticket table** — # column, newest tickets first by default; click anywhere on a row to open its panel (the ↗ icon opens Jira).
+- **Ticket panel** — click a ticket row: current Jira status, **Change status** (available transitions only), comments, a comment box, pending changes, and **Sync to Jira** with the result. See [v3.1.0](#v310).
 
 Nothing is fetched until you press Refresh; the page shows the last successful sync and says so when a later refresh failed.
 
@@ -492,7 +543,9 @@ Chrome toolbar action
 background.js  (MV3 service worker)
   ├─ Opens a Clair tab on first click
   ├─ Focuses the existing tab on subsequent clicks
-  └─ Scheduled backup: chrome.alarms → offscreen.html builds the file → chrome.downloads
+  ├─ Scheduled backup: chrome.alarms → offscreen.html builds the file → chrome.downloads
+  └─ Scheduled Jira sync: chrome.alarms (9/11/13/15/17 h) → open Clair tab runs it, or the worker
+     runs jiracore.js on the saved database (ClairDB.reload → load → save)
        (settings + status in chrome.storage.local, read by Settings)
         │
         ▼
@@ -523,8 +576,9 @@ db.js  (ClairDB — persistence layer)
   ├─ sql.js (SQLite compiled to WebAssembly, see sql-wasm.js/.wasm)
   ├─ schema: projects/tasks/tests/activity/developers/releases/
   │          testCases/modules/releasePoints/noteFolders/notes/jiraSync + meta (prefs, migration state)
-  │          (jiraSync = local Jira ticket cache, jiraPending = unsynced status/comment changes;
-  │           neither is part of JSON export/backup)
+  │          (jiraSync = local Jira ticket cache, jiraPending = unsynced status/comment changes,
+  │           jiraQa = sync checkpoints, processed Ready for QA tickets, task batches, run log;
+  │           none of them is part of JSON export/backup)
   ├─ migrateFromLegacyStorage()  one-time, transactional, verified, idempotent
   ├─ load()/save()/getPref()/setPref()  the only API the rest of the app uses
   └─ loadSnapshot()     read-only copy of the last saved DB, for the background backup
@@ -707,10 +761,11 @@ DEVELOPER ─┬── PROJECT       (developer.projectIds[])
 
 ```
 project-extension/
-├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 3.1.0)
-├── background.js            Service worker — tab lifecycle + scheduled automatic backup
+├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 4.0.0)
+├── background.js            Service worker — tab lifecycle, scheduled automatic backup, scheduled Jira sync
 ├── backup.js                Shared JSON backup format, Backup/ folder path, auto-backup filename
-├── jira.js                  Jira Cloud client (API token auth): test connection, projects, issue search, full issue fetch, project statuses, transitions, comments (ADF)
+├── jira.js                  Jira Cloud client (API token auth): test connection, projects, issue search, full issue fetch, project statuses, transitions, comments (ADF), changelog
+├── jiracore.js              Shared by page + service worker: status categories/auto-mapping, Jira sync + automatic QA task pipeline, schedule slots
 ├── offscreen.html / .js     Hidden page that builds the auto-backup file (blob URL) for the service worker
 ├── index.html               Static shell: sidebar, top bar, modals, form controls
 ├── app.js                   Single-page controller (~12 900 lines)
@@ -748,10 +803,12 @@ project-extension/
 | `chrome.storage.local.get / set`, `chrome.storage.onChanged` | Automatic-backup settings and status only (`autoBackupEnabled`, `autoBackupTime`, `autoBackupLastAttemptAt`, `autoBackupStatus`, `autoBackupLastSuccessAt`, `autoBackupLastFile`, `autoBackupLastError`, `autoBackupLastFailedAt`). Kept out of SQLite so the service worker never writes to the database file an open Clair tab is saving. |
 | `chrome.downloads.download` | Saves manual exports and automatic backups to the `Backup/` folder |
 | `chrome.downloads.search / onChanged` | Confirms an automatic backup actually finished before reporting Success |
-| `chrome.alarms` | One-shot alarm at the next scheduled backup time, re-armed after each run (`alarms` permission) |
+| `chrome.alarms` | One-shot alarms at the next scheduled backup time and the next Jira sync slot, re-armed after each run (`alarms` permission) |
 | `chrome.offscreen.createDocument / closeDocument` | Hidden page that builds the backup blob — service workers can't create blob URLs (`offscreen` permission, reason `BLOBS`) |
 | `chrome.runtime.getContexts / sendMessage / onMessage` | Detects an existing offscreen page; service worker ↔ offscreen messaging |
-| `chrome.runtime.onInstalled / onStartup` | Ensures the backup alarm exists and catches up a missed backup |
+| `chrome.runtime.onInstalled / onStartup` | Ensures the backup and Jira sync alarms exist and catches up a missed backup / Jira sync slot |
+| `chrome.runtime.sendMessage / onMessage` (`clair-jira-qa-sync`) | The service worker hands a scheduled Jira sync to an open Clair tab |
+| `navigator.locks` (Web Locks) | One Jira sync at a time across the page and the service worker |
 | `chrome.runtime.getURL` | Resolves the extension-relative `index.html` and `sql-wasm.wasm` URLs |
 | `chrome.permissions.request / contains / remove` | Optional `https://*.atlassian.net/*` host permission — requested when saving a Jira configuration, removed on disconnect |
 | `chrome.storage.local` (`jiraConfig`) | Jira site, email, API token, and connected account name — unencrypted, never exported |
@@ -770,7 +827,7 @@ In **Settings**, click **Export Data**. A timestamped JSON file is downloaded to
 clair-export-2026-06-20.json
 ```
 
-The export includes: `projects`, `tasks`, `tests` (insights), `developers`, `releases`, `testCases`, `modules`, `releasePoints`, `noteFolders`, `notes`, and `activity`. The Jira ticket cache (`jiraSync`), unsynced Jira changes (`jiraPending`) and Jira credentials are not exported; after restoring on another machine, connect Jira and press Refresh on the Jira page (manual status-mapping choices are not restored).
+The export includes: `projects`, `tasks`, `tests` (insights), `developers`, `releases`, `testCases`, `modules`, `releasePoints`, `noteFolders`, `notes`, and `activity`. The Jira ticket cache (`jiraSync`), unsynced Jira changes (`jiraPending`), Jira sync bookkeeping (`jiraQa`) and Jira credentials are not exported (generated QA tasks are ordinary tasks and are exported); after restoring on another machine, connect Jira and press Refresh on the Jira page (manual status-mapping choices are not restored).
 
 ### Automatic Backups
 
@@ -885,7 +942,8 @@ Clair follows a no-build, no-framework approach. Keep contributions consistent w
 - [ ] Project Details: opens from the **Project Details** button in both List and Kanban views; stats match the project's tasks (tasks linked to multiple projects are counted per project, nothing from other projects); release history is newest first; editing a task/release/project from the page updates it immediately; **Projects** returns to the list; works in light and dark and at phone width.
 - [ ] Client Name: create a project with and without a client; it shows on List and Kanban cards, the detail modal, and Project Details; it survives export → import.
 - [ ] Jira: Save with a wrong token shows "rejected the email or API token" and stores nothing; a valid token connects and shows the account/workspace; the token field is empty afterwards; link a project, open a Release Point for it, Import from Jira, search/select/add tickets, save — the card shows each key as a link opening Jira in a new tab plus the assignee; importing the same ticket again in that project is blocked; Disconnect removes the credentials; an exported JSON contains no token.
-- [ ] Jira ticket panel: clicking a summary opens it; the status dropdown lists only transitions Jira allows; choosing one and adding comments marks the ticket Pending without changing anything in Jira; pending changes survive leaving the page and reloading; Sync to Jira applies the status and posts the comments (check in Jira), refreshes the row and comments, and clears the pending state; with a failing comment the status change is kept, the comment stays pending, and Sync again posts it once.
+- [ ] Jira sync & QA tasks: Sync Now creates one "Ticket closing - {project}" task per project with new Ready for QA tickets (tag Auto Task Creation, To-Do, Medium, start = earliest entry, end = +2 days, developers matched, description with keys and links); a second Sync Now creates nothing; a ticket that leaves and re-enters Ready for QA creates nothing; `chrome.alarms.get('clair-jira-qa-sync')` in the service worker shows the next slot; a failed project is reported and retried on the next sync without duplicating the others.
+- [ ] Jira ticket panel: clicking a ticket row opens it; the status dropdown lists only transitions Jira allows; choosing one and adding comments marks the ticket Pending without changing anything in Jira; pending changes survive leaving the page and reloading; Sync to Jira applies the status and posts the comments (check in Jira), refreshes the row and comments, and clears the pending state; with a failing comment the status change is kept, the comment stays pending, and Sync again posts it once.
 - [ ] Jira page: only linked projects appear; Refresh fetches every ticket (Epics and Sub-tasks included) and updates the counts and last-synced time; a failed refresh keeps the previous data and says so; View Details shows the table — search, type, assignee, category chips, sort, and pagination work, and the totals follow the filters; keys and the action icon open the ticket in Jira; unrecognised statuses show as Unmapped and can be mapped in Status mapping (saved per project, kept across refresh, Reset all to Automatic clears them); Release Points are unchanged; an exported JSON contains no `jiraSync`; light and dark themes and phone width look right.
 - [ ] Automatic backup: Settings shows Enabled, schedule, last success, and status; saving a new time moves the alarm (`chrome.alarms.get('clair-daily-backup')` in the service worker console); disabling clears it; a backup file appears in `Backup/` and imports successfully; it matches a manual export apart from `exportedAt`.
 

@@ -89,6 +89,7 @@ let state = {
   noteFolders: [],
   notes: [],
   jiraSync: [], // one record per Clair project linked to Jira: cached issues, statuses, status mapping
+  jiraQa: [], // Jira sync bookkeeping: checkpoints, processed Ready-for-QA tickets, batches, run summaries
   jiraPending: [], // unsynced Jira changes per issue: { id: issueId, projectId, key, transition, comments } (separate from the cache)
   activeNoteProjectId: null,
   activeNoteFolderId: null,
@@ -133,7 +134,8 @@ const storage = {
       notes: state.notes || [],
       // Jira dashboard cache (not part of JSON exports/backups — see ClairBackup.KEYS)
       jiraSync: state.jiraSync || [],
-      jiraPending: state.jiraPending || []
+      jiraPending: state.jiraPending || [],
+      jiraQa: state.jiraQa || []
     });
   }
 };
@@ -1747,82 +1749,17 @@ const updateStorageInfo = () => { };
 // per linked Clair project with the last complete fetch of its issues, the project's
 // Jira statuses, and the user's status-mapping overrides. "Refresh from Jira" replaces
 // the issues only after a complete fetch; a failed refresh keeps the previous cache.
-// Clair categories a Jira status can be mapped to (order = display order). Colour drives
-// cards, KPI tiles, the stacked bar and pills. "core" ones always show on cards/banner;
-// the others show there only when they have tickets (the details page shows all).
-const JIRA_CATS = [
-  { key: 'todo', label: 'To Do', color: 'var(--status-planned)', core: true },
-  { key: 'reopen', label: 'Reopen', color: 'var(--jd-reopen)' },
-  { key: 'inprogress', label: 'In Progress', color: 'var(--warning)', core: true },
-  { key: 'inreview', label: 'In Review', color: 'var(--indigo)' },
-  { key: 'qa', label: 'Ready for QA', color: 'var(--info)', core: true },
-  { key: 'monitoring', label: 'Monitoring', color: 'var(--jd-monitor)' },
-  { key: 'onhold', label: 'On Hold', color: 'var(--violet)' },
-  { key: 'done', label: 'Done', color: 'var(--accent)', core: true },
-  { key: 'notapplicable', label: 'Not Applicable', short: 'N/A', color: 'var(--jd-na)' },
-  { key: 'wontdo', label: 'Will Not Do / Not a Bug', short: 'Won’t Do', color: 'var(--text-muted)' }
-];
 const JIRA_CAT_COLOR = { ...Object.fromEntries(JIRA_CATS.map(k => [k.key, k.color])), unmapped: 'var(--danger)' };
-const JIRA_CAT_LABEL = { ...Object.fromEntries(JIRA_CATS.map(k => [k.key, k.label])), unmapped: 'Unmapped' };
 const jiraEmptyCounts = () => ({ total: 0, ...Object.fromEntries(JIRA_CATS.map(k => [k.key, 0])), unmapped: 0 });
 const jiraSyncInFlight = new Map(); // clair projectId -> promise (no overlapping syncs)
 const jiraSyncProgress = {};        // clair projectId -> tickets fetched so far (UI only)
 
-// Common status names → category. Anything else stays Unmapped until the user maps it.
-// Order matters for phrase-in-name matches: negative/specific categories come first, so
-// "Not Done" or "Review in progress" don't land in Done / In Progress.
-const JIRA_AUTO = [
-  ['wontdo', ["won't do", 'wont do', 'will not do', "won't fix", 'wont fix', 'will not fix', 'not a bug', 'not bug', 'rejected', 'cancelled', 'canceled', 'invalid', 'duplicate', 'declined', 'obsolete', 'cannot reproduce', "can't reproduce", 'cant reproduce', 'not reproducible']],
-  ['notapplicable', ['not applicable', 'n/a', 'na', 'not relevant']],
-  ['onhold', ['on hold', 'hold', 'blocked', 'paused', 'deferred', 'parked', 'postponed']],
-  ['reopen', ['reopen', 'reopened', 're open', 're opened']],
-  ['qa', ['ready for qa', 'qa', 'in qa', 'qa review', 'ready for test', 'ready for testing', 'ready to test', 'testing', 'in test', 'in testing', 'uat', 'to verify', 'verify', 'verification']],
-  ['inreview', ['in review', 'review', 'code review', 'in code review', 'under review', 'peer review', 'pr review', 'awaiting review', 'ready for review']],
-  ['monitoring', ['monitoring', 'in monitoring', 'monitor', 'under observation', 'observation', 'watching']],
-  ['inprogress', ['in progress', 'in development', 'in dev', 'doing', 'development', 'implementing', 'work in progress', 'wip']],
-  ['done', ['done', 'closed', 'resolved', 'complete', 'completed', 'released', 'deployed', 'fixed', 'shipped']],
-  ['todo', ['to do', 'todo', 'open', 'backlog', 'new', 'selected for development', 'ready for dev', 'ready for development', 'planned']]
-].map(([cat, phrases]) => {
-  const label = JIRA_CAT_LABEL[cat].toLowerCase();
-  const all = [...new Set([...phrases, label, ...label.split(/\s*\/\s*/)])];
-  return [cat, new Set(all), new RegExp(`(^|[^a-z0-9'])(${all.map(p => p.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')).join('|')})(?=$|[^a-z0-9'])`)];
-});
-const jiraNormStatus = (s) => String(s || '').toLowerCase().replace(/[’‘`]/g, "'").replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
-const jiraExactCategory = (n) => (JIRA_AUTO.find(([, set]) => set.has(n)) || [''])[0];
-const jiraAutoCategory = (name) => {
-  const n = jiraNormStatus(name);
-  if (!n) return '';
-  // 1. The whole name is a known status ("Ready for QA", "Not a Bug").
-  const exact = jiraExactCategory(n);
-  if (exact) return exact;
-  // 2. Several names joined ("WILL NOT DO/NOT A BUG", "Done | Closed"): use them if they agree.
-  const parts = n.split(/\s*(?:\/|\||,|&|\+|\bor\b)\s*/).filter(Boolean);
-  if (parts.length > 1) {
-    const cats = new Set(parts.map(jiraExactCategory).filter(Boolean));
-    if (cats.size === 1) return [...cats][0];
-    if (cats.size > 1) return ''; // conflicting ("Done/To Do") → let the user decide
-  }
-  // 3. A known status phrase inside a longer name ("In QA", "Blocked by vendor").
-  //    Negated names ("Not Done") only count for the negative categories.
-  const hit = JIRA_AUTO.find(([, , re]) => re.test(n));
-  if (!hit) return '';
-  return /\bnot\b/.test(n) && hit[0] !== 'wontdo' && hit[0] !== 'notapplicable' ? '' : hit[0];
-};
 
 const jiraLinkedProjects = () => state.projects.filter(p => p.jira && p.jira.projectKey);
 // The cache for a project, only if it belongs to the project's current Jira link.
 const jiraRecordFor = (p) => {
   const r = (state.jiraSync || []).find(x => x.id === p.id);
   return r && r.site === p.jira.site && String(r.jiraProjectId) === String(p.jira.projectId) ? r : null;
-};
-// A manual choice must be a real category ("unmapped" is never a choice; older versions
-// could save it, which pinned a status to Unmapped and hid the automatic match).
-const jiraIsCat = (k) => JIRA_CATS.some(c => c.key === k);
-// Category of a status: user override, else automatic, else unmapped.
-const jiraCategoryOf = (rec, statusId, statusName) => {
-  const o = rec && rec.statusMap ? rec.statusMap[statusId] : undefined;
-  if (jiraIsCat(o)) return o;
-  return jiraAutoCategory(statusName) || 'unmapped';
 };
 const jiraCounts = (rec) => {
   const c = jiraEmptyCounts();
@@ -1837,45 +1774,17 @@ const syncJiraProject = (projectId) => {
   const p = state.projects.find(x => x.id === projectId);
   if (!p || !p.jira || !jiraConnected()) return Promise.resolve();
   const run = (async () => {
-    const link = { ...p.jira };
     jiraSyncProgress[projectId] = 0;
     try {
-      const { site, issues } = await ClairJira.fetchAllIssues({
-        projectKey: link.projectKey,
-        onProgress: (n) => {
-          jiraSyncProgress[projectId] = n;
-          const el = document.querySelector(`[data-jira-progress="${projectId}"]`);
-          if (el) el.textContent = `Fetching… ${n} tickets`;
-        }
+      const rec = await jiraRefreshProjectCache(state, p, (n) => {
+        jiraSyncProgress[projectId] = n;
+        const el = document.querySelector(`[data-jira-progress="${projectId}"]`);
+        if (el) el.textContent = `Fetching… ${n} tickets`;
       });
-      // Statuses: the project's workflow statuses, plus any seen on issues (e.g. if the
-      // statuses endpoint isn't permitted).
-      const statuses = new Map();
-      try { (await ClairJira.getProjectStatuses(link.projectKey)).forEach(s => statuses.set(s.id, s)); } catch (e) { /* fall back to issue statuses */ }
-      issues.forEach(i => { if (i.statusId && !statuses.has(i.statusId)) statuses.set(i.statusId, { id: i.statusId, name: i.status, category: i.statusCategory }); });
-      const prev = (state.jiraSync || []).find(x => x.id === projectId);
-      const sameProject = prev && prev.site === site && String(prev.jiraProjectId) === String(link.projectId);
-      const rec = {
-        id: projectId, site, jiraProjectId: String(link.projectId), jiraProjectKey: link.projectKey, jiraProjectName: link.projectName,
-        statuses: [...statuses.values()],
-        // Refresh re-applies automatic mapping: keep only real manual choices that differ
-        // from what Automatic now picks, for statuses that still exist.
-        statusMap: sameProject ? Object.fromEntries(Object.entries(prev.statusMap || {}).filter(([sid, cat]) =>
-          statuses.has(sid) && jiraIsCat(cat) && cat !== jiraAutoCategory(statuses.get(sid).name))) : {},
-        issues, syncedAt: new Date().toISOString(), lastError: '', lastErrorAt: ''
-      };
-      state.jiraSync = [...(state.jiraSync || []).filter(x => x.id !== projectId), rec];
       await storage.save();
-      showToast(`${p.name}: ${issues.length} Jira tickets synced`);
+      showToast(`${p.name}: ${rec.issues.length} Jira tickets synced`);
     } catch (e) {
-      // Keep the last successful cache; just record what went wrong.
-      const prev = (state.jiraSync || []).find(x => x.id === projectId);
-      if (prev) {
-        prev.lastError = jiraErrorText(e);
-        prev.lastErrorAt = new Date().toISOString();
-      } else {
-        state.jiraSync = [...(state.jiraSync || []), { id: projectId, site: link.site, jiraProjectId: String(link.projectId), jiraProjectKey: link.projectKey, jiraProjectName: link.projectName, statuses: [], statusMap: {}, issues: [], syncedAt: '', lastError: jiraErrorText(e), lastErrorAt: new Date().toISOString() }];
-      }
+      // The previous cache is kept; the error is recorded on it.
       await storage.save();
       showToast(`${p.name}: Jira refresh failed — ${jiraErrorText(e)}`, 'error');
     } finally {
@@ -1887,6 +1796,96 @@ const syncJiraProject = (projectId) => {
   jiraSyncInFlight.set(projectId, run);
   if (state.view === 'jira') render(); // after the lock is set, so the busy state shows
   return run;
+};
+// ─── Sync Now / scheduled Jira sync (runs the shared pipeline from jiracore.js) ───
+// The background worker hands scheduled runs to an open Clair page, so the page's
+// in-memory state stays the single writer; with no page open it runs them itself.
+let jiraQaRunning = false;
+let jiraQaProgressText = '';
+const runJiraQaSync = async (trigger) => {
+  if (jiraQaRunning || !jiraAvailable() || !jiraConnected()) return null;
+  jiraQaRunning = true;
+  jiraQaProgressText = 'Starting…';
+  if (state.view === 'jira') render();
+  let res = null;
+  try {
+    res = await jiraQaSyncLocked({
+      data: state, trigger, save: () => storage.save(),
+      // Pick up what another context (the background worker, another tab) saved meanwhile.
+      prepare: async () => {
+        await ClairDB.reload();
+        const d = await storage.load();
+        state.projects = d.projects;
+        state.tasks = migrateTasks(d.tasks);
+        state.activity = d.activity;
+        state.developers = d.developers || [];
+        state.jiraSync = d.jiraSync || [];
+        state.jiraQa = d.jiraQa || [];
+      },
+      onProgress: (t) => {
+        jiraQaProgressText = t;
+        const el = document.getElementById('jiraQaProgress');
+        if (el) el.textContent = t;
+      }
+    });
+    if (res && res.busy) showToast('A Jira sync is already running', 'error');
+    else if (res) {
+      showToast(res.ok
+        ? `Jira sync done: ${res.newQa} new Ready for QA ticket${res.newQa === 1 ? '' : 's'}, ${res.tasks} task${res.tasks === 1 ? '' : 's'} created`
+        : `Jira sync finished with ${res.failures.length} failure${res.failures.length === 1 ? '' : 's'}`, res.ok ? 'success' : 'error');
+    }
+  } catch (e) {
+    showToast(`Jira sync failed — ${jiraErrorText(e)}`, 'error');
+  } finally {
+    jiraQaRunning = false;
+    jiraQaProgressText = '';
+    render();
+  }
+  return res;
+};
+if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (!msg || msg.type !== 'clair-jira-qa-sync') return;
+    if (!jiraConnected() || jiraQaRunning) { sendResponse({ handled: jiraQaRunning }); return; }
+    sendResponse({ handled: true });
+    runJiraQaSync(msg.trigger === 'scheduled' ? 'scheduled' : 'manual');
+  });
+}
+
+// Summary card for the Jira page: last run, schedule, progress.
+const jiraQaRuns = () => (state.jiraQa || []).filter(r => r.kind === 'run').sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+const renderJiraQaCard = (connected) => {
+  const runs = jiraQaRuns();
+  const last = runs[0];
+  const lastOk = runs.find(r => r.ok);
+  const nextAt = jiraQaNextSlot(new Date());
+  const trig = (r) => r.trigger === 'scheduled' ? 'Scheduled' : 'Manual';
+  const body = jiraQaRunning
+    ? `<div class="jd-qa-progress"><span class="jd-qa-spinner" aria-hidden="true"></span><span id="jiraQaProgress">${escapeHtml(jiraQaProgressText)}</span></div>`
+    : last ? `
+      <div class="jd-qa-stats">
+        <div><strong>${last.synced}/${last.projects}</strong><span>Projects synced</span></div>
+        <div><strong>${last.tickets}</strong><span>Tickets fetched</span></div>
+        <div><strong>${last.newQa}</strong><span>New Ready for QA</span></div>
+        <div><strong>${last.tasks}</strong><span>QA tasks created</span></div>
+        <div><strong>${last.skipped}</strong><span>Already processed</span></div>
+      </div>
+      ${last.taskProjects.length ? `<div class="jd-qa-line">Tasks created for: <strong>${last.taskProjects.map(escapeHtml).join(', ')}</strong></div>` : ''}
+      ${last.failures.length ? `<div class="jd-qa-fail">${last.failures.map(f => `<div><strong>${escapeHtml(f.project)}</strong> — ${escapeHtml(f.error)} <em>(will be retried on the next sync)</em></div>`).join('')}</div>` : ''}`
+    : '<div class="jd-qa-line">No sync yet. Click Sync Now to fetch tickets and create QA tasks for tickets that moved to Ready for QA.</div>';
+  return `
+    <section class="tco-card jd-qa">
+      <div class="jd-qa-head">
+        <div>
+          <h3 class="tco-card-title">Jira sync &amp; QA tasks</h3>
+          <p class="jd-qa-sub">Automatic sync every day at 9 AM, 11 AM, 1 PM, 3 PM and 5 PM · next ${jiraWhen(new Date(nextAt).toISOString())}.
+            Tickets that move to <strong>Ready for QA</strong> become one “Ticket closing” task per project.</p>
+          ${last && !jiraQaRunning ? `<p class="jd-qa-sub">Last run: ${trig(last)}, ${jiraWhen(last.finishedAt || last.startedAt)} — <span class="${last.ok ? 'jd-qa-ok' : 'jd-qa-bad'}">${last.ok ? 'completed' : 'completed with failures'}</span>${lastOk && lastOk !== last ? ` · last fully successful: ${jiraWhen(lastOk.finishedAt)}` : ''}</p>` : ''}
+        </div>
+        <button type="button" class="btn-primary st-btn" data-action="jira-sync-now" ${!connected || jiraQaRunning ? 'disabled' : ''}>${JD_I.refresh}${jiraQaRunning ? 'Syncing…' : 'Sync Now'}</button>
+      </div>
+      ${body}
+    </section>`;
 };
 
 const jiraSyncStatusHtml = (p, rec) => {
@@ -1963,11 +1962,11 @@ const renderJiraPage = () => {
         </div>
       </section>
       ${notice ? `<div class="jd-notice">${escapeHtml(notice)}${jiraAvailable() && !connected ? ` <button type="button" class="rpa-link" data-action="jira-go-settings">Open Settings</button>` : ''}</div>` : ''}
+      ${linked.length ? renderJiraQaCard(connected) : ''}
       ${linked.length ? `
         <div class="rpa-toolbar">
           <span class="rpa-showing">${linked.length} linked project${linked.length === 1 ? '' : 's'} · counts use each project’s status mapping</span>
           <div class="rpa-toolbar-right">
-            <button type="button" class="btn-primary st-btn" data-action="jira-refresh-all" ${!connected || anyBusy ? 'disabled' : ''}>${JD_I.refresh}Refresh all from Jira</button>
           </div>
         </div>
         <div class="jd-grid">${recs.map(card).join('')}</div>` : `
@@ -2162,7 +2161,6 @@ const jiraEnsurePending = (projectId, issue) => {
 };
 const jiraPruneEmptyPending = () => { state.jiraPending = (state.jiraPending || []).filter(x => jiraPendingCount(x)); };
 const jiraNormText = (s) => String(s || '').replace(/\s+/g, ' ').trim();
-const jiraTime = (s) => Date.parse(String(s || '').replace(/([+-]\d\d)(\d\d)$/, '$1:$2')) || 0; // Jira: …+0530
 
 // Re-render without losing the comment box's focus/caret (async loads land while typing).
 const jiraRender = () => {
@@ -5808,6 +5806,7 @@ const clearAllData = async () => {
   state.noteFolders = [];
   state.jiraSync = [];
   state.jiraPending = [];
+  state.jiraQa = [];
   state.notes = [];
   state.activeNoteProjectId = null;
   state.activeNoteFolderId = null;
@@ -5944,6 +5943,7 @@ const attachCardListeners = () => {
       else if (action === 'jira-view') { state.jiraProjectId = cardId; state.jiraMappingOpen = false; state.jiraIssueOpen = null; jiraResetFilters(); render(); document.getElementById('mainContent').scrollTop = 0; }
       else if (action === 'jira-home') { state.jiraProjectId = null; state.jiraMappingOpen = false; render(); }
       else if (action === 'jira-refresh') syncJiraProject(cardId);
+      else if (action === 'jira-sync-now') runJiraQaSync('manual');
       else if (action === 'jira-refresh-all') {
         // One project at a time: gentler on Jira's rate limits than firing them all at once.
         (async () => { for (const p of jiraLinkedProjects()) await syncJiraProject(p.id); })();
@@ -12742,6 +12742,7 @@ const init = async () => {
   state.notes = data.notes || [];
   state.jiraSync = data.jiraSync || [];
   state.jiraPending = data.jiraPending || [];
+  state.jiraQa = data.jiraQa || [];
   state.projectsViewMode = await ClairDB.getPref('projects_view_mode', 'list');
   state.theme = await ClairDB.getPref('theme', 'light');
   applyTheme(state.theme);
@@ -13538,6 +13539,7 @@ const init = async () => {
         const end = isEditing ? active.selectionEnd : 0;
         const activeId = isEditing ? active.id : null;
 
+        await ClairDB.reload(); // read what the other context saved, not this tab's own copy
         const data = await storage.load();
         state.projects = data.projects;
         state.tasks = migrateTasks(data.tasks);
@@ -13552,6 +13554,7 @@ const init = async () => {
         state.notes = data.notes || [];
         state.jiraSync = data.jiraSync || [];
         state.jiraPending = data.jiraPending || [];
+        state.jiraQa = data.jiraQa || [];
 
         render();
 

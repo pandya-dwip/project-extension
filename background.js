@@ -181,3 +181,62 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
 // exists and catch up a missed slot. Both are no-ops when nothing is needed.
 syncBackupAlarm();
 maybeBackup();
+
+// ─── Scheduled Jira sync + automatic QA tasks (9, 11, 13, 15, 17 h local) ──────
+// One one-shot alarm at the next slot (same name replaces → never duplicated). A missed
+// slot is caught up once, when the worker next starts or an alarm fires, but only inside
+// the 9:00–18:00 window. The pipeline itself (jiracore.js) is shared with "Sync Now";
+// both take the same Web Lock, so runs never overlap, and duplicate prevention lives in
+// Clair's SQLite data (jiraQa), not here. If a Clair page is open it does the run (its
+// in-memory state stays the only writer); otherwise the worker loads the database, runs
+// it, and saves — open pages reload on the DB_SAVED broadcast.
+importScripts('sql-wasm.js', 'db.js', 'jira.js', 'jiracore.js');
+const JIRA_ALARM = 'clair-jira-qa-sync';
+
+async function syncJiraAlarm() {
+  const when = jiraQaNextSlot(new Date());
+  const alarm = await chrome.alarms.get(JIRA_ALARM);
+  if (!alarm || Math.abs(alarm.scheduledTime - when) > 60000) await chrome.alarms.create(JIRA_ALARM, { when });
+}
+
+// Run the pipeline in the worker on the latest saved database (reloaded inside the lock).
+async function runJiraSyncHere() {
+  if (!(await ClairDB.loadSnapshot())) return null; // Clair has never saved data
+  const data = {};
+  return jiraQaSyncLocked({
+    data, trigger: 'scheduled', save: () => ClairDB.save(data),
+    prepare: async () => { await ClairDB.reload(); Object.assign(data, await ClairDB.load()); }
+  });
+}
+
+let jiraSyncInFlight = null;
+function maybeJiraSync() {
+  if (jiraSyncInFlight) return jiraSyncInFlight;
+  jiraSyncInFlight = (async () => {
+    const { jiraQaLastSlot = 0 } = await chrome.storage.local.get('jiraQaLastSlot');
+    const slot = jiraQaDueSlot(new Date(), jiraQaLastSlot);
+    if (!slot) return;
+    const cfg = await ClairJira.getPublicConfig();
+    if (!cfg || !cfg.hasToken) return; // Jira not connected: nothing to do
+    await chrome.storage.local.set({ jiraQaLastSlot: slot }); // recorded first: a failure is retried at the next slot, never in a loop
+    let handled = false;
+    try {
+      const r = await chrome.runtime.sendMessage({ type: 'clair-jira-qa-sync', trigger: 'scheduled' });
+      handled = !!(r && r.handled);
+    } catch (e) { /* no Clair page open */ }
+    if (handled) return;
+    await runJiraSyncHere();
+  })().catch(e => console.warn('Clair scheduled Jira sync failed:', e && e.message))
+    .finally(() => { jiraSyncInFlight = null; });
+  return jiraSyncInFlight;
+}
+
+chrome.runtime.onInstalled.addListener(() => { syncJiraAlarm(); maybeJiraSync(); });
+chrome.runtime.onStartup.addListener(() => { syncJiraAlarm(); maybeJiraSync(); });
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== JIRA_ALARM) return;
+  await maybeJiraSync();
+  await syncJiraAlarm();
+});
+syncJiraAlarm();
+maybeJiraSync();
