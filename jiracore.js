@@ -109,7 +109,7 @@ const jiraQaRec = (data, id) => (data.jiraQa || []).find(r => r.id === id);
 const jiraQaPut = (data, rec) => { data.jiraQa = [...(data.jiraQa || []).filter(r => r.id !== rec.id), rec]; };
 const jiraHash = (s) => { let h = 2166136261; for (let k = 0; k < s.length; k++) { h ^= s.charCodeAt(k); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); };
 const jiraLocalDate = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
-const jiraFmt = (ms) => new Date(ms).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+const jiraFmt = (ms) => new Date(ms).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 const jiraErrText = (e) => (e && e.name === 'JiraError') ? e.message : ((e && e.message) || 'Something went wrong while contacting Jira.');
 
 // Fetch every issue of a linked project and replace its cache — only after a complete
@@ -162,6 +162,57 @@ const jiraFindQaEntries = async (data, project, rec, sinceMs) => {
   return { entries: out, skipped };
 };
 
+// Task description for a QA batch. Plain text (task descriptions keep line breaks and
+// make links clickable); the first line is what task cards preview.
+const jiraQaDescription = ({ projectKey, tickets, trigger, at }) => {
+  const n = tickets.length;
+  const one = n === 1;
+  const pad = one ? '' : '   ';
+  const block = (t, k) => [
+    `${one ? '' : `${k + 1}. `}${t.key} · ${t.summary}`,
+    `${pad}Developer: ${t.assignee || 'Unassigned'}`,
+    `${pad}Ready for QA since: ${t.readyAt}`,
+    `${pad}${t.url}`
+  ].join('\n');
+  return [
+    one ? `Verify ${tickets[0].key}: ${tickets[0].summary}` : `Verify ${n} ${projectKey} tickets that are ready for QA.`,
+    '',
+    one
+      ? 'This ticket was moved to Ready for QA in Jira. Test the fix, then close the ticket in Jira — or send it back to the developer with a comment if the issue still occurs.'
+      : 'These tickets were moved to Ready for QA in Jira. Test each fix, then close the ticket in Jira — or send it back to the developer with a comment if the issue still occurs.',
+    '',
+    one ? 'Ticket details' : `Tickets (${n})`,
+    '',
+    tickets.map(block).join('\n\n'),
+    '',
+    '—',
+    `Created automatically by the ${trigger === 'scheduled' ? 'scheduled' : 'manual'} Jira sync on ${at}.`
+  ].join('\n');
+};
+
+// Rewrites descriptions of earlier automatic QA tasks that still have the original
+// generated wording (never touches a description the user has edited). Returns true if any changed.
+const jiraQaUpgradeDescriptions = (data) => {
+  let changed = false;
+  (data.tasks || []).forEach(t => {
+    if (!t.autoQa || !t.description) return;
+    const head = /^(\d+) Jira tickets? moved to Ready for QA \(([^)]+)\), found by the (scheduled|manual) Jira sync on ([^\n]+):\n\n/.exec(t.description);
+    if (!head) return;
+    const tickets = [];
+    const re = /(?:^|\n\n)\d+\. (\S+) — ([^\n]*)\n {3}Assignee: ([^\n]*)\n {3}Entered Ready for QA: ([^\n]*)\n {3}(\S+)/g;
+    let m;
+    while ((m = re.exec(t.description.slice(head[0].length)))) tickets.push({ key: m[1], summary: m[2], assignee: m[3] === 'Unassigned' ? '' : m[3], readyAt: m[4], url: m[5] });
+    // Only if the whole description was the generated text.
+    const original = `${head[1]} Jira ticket${+head[1] === 1 ? '' : 's'} moved to Ready for QA (${head[2]}), found by the ${head[3]} Jira sync on ${head[4]}:\n\n` +
+      tickets.map((x, k) => `${k + 1}. ${x.key} — ${x.summary}\n   Assignee: ${x.assignee || 'Unassigned'}\n   Entered Ready for QA: ${x.readyAt}\n   ${x.url}`).join('\n\n');
+    if (!tickets.length || original !== t.description) return;
+    t.description = jiraQaDescription({ projectKey: head[2], tickets, trigger: head[3], at: head[4] });
+    t.autoQa = { ...t.autoQa, tickets };
+    changed = true;
+  });
+  return changed;
+};
+
 // Create (or recognise) the consolidated task for one project's batch. Returns the task id.
 const jiraCreateQaTask = (data, project, entries, trigger, runAt) => {
   const eventIds = entries.map(e => e.eventId).sort();
@@ -178,23 +229,18 @@ const jiraCreateQaTask = (data, project, entries, trigger, runAt) => {
       const d = n && (data.developers || []).find(x => (x.name || '').trim().toLowerCase() === n);
       return d ? d.id : null;
     }).filter(Boolean))];
-    const lines = entries.map((e, k) => [
-      `${k + 1}. ${e.key} — ${e.summary}`,
-      `   Assignee: ${e.assignee || 'Unassigned'}`,
-      `   Entered Ready for QA: ${jiraFmt(e.enteredAt)}`,
-      `   ${e.url}`
-    ].join('\n'));
+    const tickets = entries.map(e => ({ key: e.key, summary: e.summary, assignee: e.assignee, readyAt: jiraFmt(e.enteredAt), url: e.url }));
     const now = new Date().toISOString();
     taskId = `qa${jiraHash(batchId + now)}${Math.random().toString(36).slice(2, 6)}`;
     data.tasks = [{
       id: taskId,
       title: `Ticket closing - ${project.name}`,
-      description: `${entries.length} Jira ticket${entries.length === 1 ? '' : 's'} moved to Ready for QA (${project.jira.projectKey}), found by the ${trigger === 'scheduled' ? 'scheduled' : 'manual'} Jira sync on ${jiraFmt(runAt)}:\n\n${lines.join('\n\n')}`,
+      description: jiraQaDescription({ projectKey: project.jira.projectKey, tickets, trigger, at: jiraFmt(runAt) }),
       workDone: '', tags: [JIRA_QA_TAG],
       startDate: jiraLocalDate(start), endDate: jiraLocalDate(start + 2 * 86400000),
       status: 'To-Do', priority: 'Medium', projectIds: [project.id], developerIds: devIds,
       completedDate: null, createdAt: now, updatedAt: now,
-      autoQa: { batchId, issueIds: entries.map(e => e.issueId), keys: entries.map(e => e.key), trigger }
+      autoQa: { batchId, issueIds: entries.map(e => e.issueId), keys: entries.map(e => e.key), trigger, tickets }
     }, ...(data.tasks || [])];
     data.activity = [{ id: Math.random().toString(36).slice(2, 10), text: `Added task "Ticket closing - ${project.name}" (${entries.length} Ready for QA ticket${entries.length === 1 ? '' : 's'} from Jira)`, type: 'task', at: now }, ...(data.activity || [])].slice(0, 200);
     created = true;

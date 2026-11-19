@@ -259,6 +259,7 @@
     </div>
     <div class="modal-body">
       <input type="hidden" id="projectId" />
+      <div class="form-section-title">Project details</div>
       <div class="form-group">
         <label>Project Name <span class="req">*</span></label>
         <input type="text" id="projectName" placeholder="e.g. Invoice Module" />
@@ -339,6 +340,7 @@
           </div>
         </div>
       </div>
+      <div class="form-section-title">Client &amp; team</div>
       <div class="form-row">
         <div class="form-group">
           <label>Client Name</label>
@@ -353,6 +355,7 @@
         <label>Jira Project <span class="hint">(optional)</span></label>
         <div id="projectJiraField" class="jira-project-field"></div>
       </div>
+      <div class="form-section-title">Planning &amp; status</div>
       <div class="form-row">
         <div class="form-group">
           <label>Due Date</label>
@@ -406,6 +409,7 @@
     </div>
     <div class="modal-body">
       <input type="hidden" id="taskId" />
+      <div class="form-section-title">Details</div>
       <div class="form-group">
         <label>Task Title <span class="req">*</span></label>
         <input type="text" id="taskTitle" placeholder="e.g. Voucher GST Testing" />
@@ -422,6 +426,7 @@
         <label>Tags <span class="hint">(comma separated, e.g. Bug, UI)</span></label>
         <input type="text" id="taskTags" placeholder="Feature, Backend..." />
       </div>
+      <div class="form-section-title">Status &amp; schedule</div>
       <div class="form-row">
         <div class="form-group">
           <label>Status</label>
@@ -458,6 +463,7 @@
         <span style="font-size:11px;color:var(--text-muted);margin-top:4px;display:block;">The date this task was
           actually completed.</span>
       </div>
+      <div class="form-section-title">Assignment</div>
       <div class="form-group">
         <label>Project(s) <span class="hint">(optional, select multiple)</span></label>
         <input type="text" id="taskProjectSearch" placeholder="Search projects..."
@@ -676,6 +682,7 @@
     <div class="modal-body">
       <input type="hidden" id="releaseId" />
 
+      <div class="form-section-title">Projects &amp; versions</div>
       <div class="form-group">
         <label>Project(s) <span class="req">*</span> <span class="hint">(select multiple)</span></label>
         <div class="dev-project-checklist" id="releaseProjectChecklist" style="max-height:130px;">
@@ -690,6 +697,7 @@
         </div>
       </div>
 
+      <div class="form-section-title">Release details</div>
       <div class="form-row">
         <div class="form-group">
           <label>Release Name <span class="req">*</span></label>
@@ -727,6 +735,7 @@
         </div>
       </div>
 
+      <div class="form-section-title">Team &amp; scope</div>
       <div class="form-group">
         <label>Product Developers</label>
         <div class="dev-project-checklist" id="releaseDevChecklist" style="max-height: 120px;">
@@ -739,6 +748,7 @@
         <input type="text" id="releaseWorkItems" placeholder="Associated tickets or tasks…" />
       </div>
 
+      <div class="form-section-title">Release notes</div>
       <div class="form-group">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
           <label style="margin-bottom:0;">Release Notes (Mail)</label>

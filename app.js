@@ -2455,41 +2455,36 @@ const render = () => {
 
 
 // ─── Shared Page Hero Builder ─────────────────────────────
-const buildPageHero = ({ icon, gradient, title, subtitle, stats, progressBar }) => {
-  const progressHtml = progressBar ? `
-    <div class="rp-hero-progress">
-      <div class="rp-hero-progress-track">
-        <div class="rp-hero-progress-fill" style="width:${progressBar.pct}%;${progressBar.color ? `background:${progressBar.color};` : ''}"></div>
-      </div>
-      <span class="rp-hero-progress-label">${progressBar.label}</span>
-    </div>
-  ` : '';
-
-  const statsHtml = stats.map((s, i) => {
-    const divider = i < stats.length - 1 ? `<div class="rp-hero-stat-div"></div>` : '';
-    return `
-      <div class="rp-hero-stat">
-        <div class="rp-hero-stat-num" style="${s.color ? `color:${s.color};` : ''}">${s.value}</div>
-        <div class="rp-hero-stat-label">${s.label}</div>
-      </div>
-      ${divider}
-    `;
+// Page header used across Clair (same look as Release Points, Test Cases, Jira):
+// icon + title on the left, stats on the right, and an optional completion ring.
+// Stat colours: green/amber/red map to the shared ok/warn/bad tones; anything else
+// is applied as given. (`gradient` is ignored — every page uses the shared header.)
+const HERO_TONE = { '#4ade80': 'ok', '#22c55e': 'ok', '#fbbf24': 'warn', '#fb923c': 'warn', '#f59e0b': 'warn', '#f87171': 'bad', '#ef4444': 'bad' };
+const buildPageHero = ({ icon, title, subtitle, stats, progressBar }) => {
+  const statsHtml = stats.map(s => {
+    const tone = s.color && HERO_TONE[String(s.color).toLowerCase()];
+    return `<div class="rpa-hstat"><strong${tone ? ` class="${tone}"` : s.color ? ` style="color:${s.color}"` : ''}>${s.value}</strong><span>${s.label}</span></div>`;
   }).join('');
-
+  let ring = '';
+  if (progressBar) {
+    const r = 26, c = 2 * Math.PI * r, pct = Math.max(0, Math.min(100, Number(progressBar.pct) || 0));
+    ring = `
+      <div class="rpa-hero-ring" title="${progressBar.label}">
+        <svg viewBox="0 0 64 64"><circle class="track" cx="32" cy="32" r="${r}"/><circle class="fill" cx="32" cy="32" r="${r}" stroke-dasharray="${c.toFixed(2)}" stroke-dashoffset="${(c * (1 - pct / 100)).toFixed(2)}"/></svg>
+        <span><strong>${Math.round(pct)}%</strong><em>${progressBar.label}</em></span>
+      </div>`;
+  }
   return `
-    <div class="rp-page-hero" style="background:${gradient};">
-      <div class="rp-hero-content">
-        <div class="rp-hero-icon">${icon}</div>
+    <section class="rpa-hero page-hero-std">
+      <div class="rpa-hero-main">
+        <span class="rpa-hero-icon">${icon}</span>
         <div>
-          <h2 class="rp-hero-title">${title}</h2>
-          <p class="rp-hero-sub">${subtitle}</p>
+          <h2 class="rpa-hero-title">${title}</h2>
+          <p class="rpa-hero-sub">${subtitle}</p>
         </div>
       </div>
-      <div class="rp-hero-stats">
-        ${statsHtml}
-      </div>
-      ${progressHtml}
-    </div>
+      <div class="rpa-hero-stats">${statsHtml}${ring}</div>
+    </section>
   `;
 };
 
@@ -2972,7 +2967,6 @@ const renderDashboard = () => {
       { label: 'Insights', value: totalTests },
       { label: 'Releases', value: totalReleases },
       { label: 'Release Pts', value: totalReleasePts, color: '#4ade80' },
-      { label: 'Tasks Done', value: `${taskPct}%`, color: taskPct === 100 ? '#4ade80' : '#fb923c' },
     ],
     progressBar: { pct: taskPct, label: `${completedTasks} / ${totalTasks} tasks completed`, color: 'linear-gradient(90deg, #4ade80, #22c55e)' }
   });
@@ -3347,7 +3341,7 @@ const renderProjects = () => {
   return `
     ${hero}
 
-    <div class="filters-bar">
+    <div class="filters-bar tk-toolbar std-toolbar">
       <div class="page-search-wrap">
         <svg class="page-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
         <input type="text" class="page-search-input" id="projectSearchInput" placeholder="Search projects, clients, versions, devs…" value="${state.projectSearch || ''}" />
@@ -4347,20 +4341,23 @@ const renderCalendar = () => {
 
     const isSelected = day.dateStr === state.selectedCalendarDate;
     const taskCount = dayTasks.length;
-    // Open work first, then done; at most three titles per cell.
-    const shown = [...dayTasks].sort((a, b) => (a.status === 'Done') - (b.status === 'Done')).slice(0, 3);
+    // Calm cells: up to two open tasks, completed work as one line, nothing on
+    // other-month days. The side panel shows everything for the selected day.
+    const open = dayTasks.filter(t => t.status !== 'Done');
+    const doneN = taskCount - open.length;
     const weekend = day.date.getDay() === 0 || day.date.getDay() === 6;
+    const label = taskCount ? `${open.length} open, ${doneN} done` : 'No tasks';
+    const body = !day.isCurrentMonth ? '' : `
+          ${open.slice(0, 2).map(t => `<span class="cal-ev" style="--c:${CAL_STATUS_COLOR[t.status] || CAL_STATUS_COLOR['To-Do']}">${escapeHtml(t.title)}</span>`).join('')}
+          ${open.length > 2 ? `<span class="cal-more">+${open.length - 2} more open</span>` : ''}
+          ${doneN ? `<span class="cal-done">✓ ${doneN} done</span>` : ''}`;
 
     return `
-      <div class="calendar-day-cell ${day.isCurrentMonth ? '' : 'other-month'} ${weekend ? 'weekend' : ''} ${day.dateStr === todayStr ? 'today' : ''} ${isSelected ? 'selected' : ''}" data-action="select-calendar-date" data-date="${day.dateStr}" title="${taskCount} task${taskCount === 1 ? '' : 's'}">
+      <div class="calendar-day-cell ${day.isCurrentMonth ? '' : 'other-month'} ${weekend ? 'weekend' : ''} ${day.dateStr === todayStr ? 'today' : ''} ${isSelected ? 'selected' : ''}" data-action="select-calendar-date" data-date="${day.dateStr}" title="${label}">
         <div class="calendar-day-header">
           <span class="calendar-day-number">${day.dayNum}</span>
-          ${taskCount ? `<span class="cal-count">${taskCount}</span>` : ''}
         </div>
-        <div class="cal-events">
-          ${shown.map(t => `<span class="cal-ev ${t.status === 'Done' ? 'done' : ''}" style="--c:${CAL_STATUS_COLOR[t.status] || CAL_STATUS_COLOR['To-Do']}">${escapeHtml(t.title)}</span>`).join('')}
-          ${taskCount > 3 ? `<span class="cal-more">+${taskCount - 3} more</span>` : ''}
-        </div>
+        <div class="cal-events">${body}</div>
       </div>
     `;
   }).join('');
@@ -4585,7 +4582,7 @@ const renderTests = () => {
   return `
     ${hero}
 
-    <div class="filters-bar">
+    <div class="filters-bar tk-toolbar std-toolbar">
       <div class="page-search-wrap">
         <svg class="page-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
         <input type="text" class="page-search-input" id="testSearchInput" placeholder="Search tests…" value="${state.testSearch}" />
@@ -4896,52 +4893,84 @@ window.completeTask = async (id) => {
 
 
 // ─── Activity ────────────────────────────────────────────
+const ACTIVITY_TYPES = [
+  { key: 'task', label: 'Tasks' },
+  { key: 'project', label: 'Projects' },
+  { key: 'delete', label: 'Deletions' }
+];
 const renderActivity = () => {
-  const totalEvents = state.activity.length;
-  const todayEvents = state.activity.filter(a => {
-    const d = new Date(a.at); const now = new Date();
-    return d.toDateString() === now.toDateString();
-  }).length;
-  const taskEvents = state.activity.filter(a => a.type === 'task').length;
-  const deleteEvents = state.activity.filter(a => a.type === 'delete').length;
+  const all = state.activity || [];
+  const now = new Date();
+  const dayKey = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const todayKey = dayKey(now);
+  const yest = new Date(now); yest.setDate(now.getDate() - 1);
+  const weekAgo = now.getTime() - 7 * 86400000;
+  const todayEvents = all.filter(x => dayKey(new Date(x.at)) === todayKey).length;
+  const weekEvents = all.filter(x => new Date(x.at).getTime() >= weekAgo).length;
+  const count = (k) => all.filter(x => x.type === k).length;
   const hero = buildPageHero({
     icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>`,
-    gradient: 'linear-gradient(135deg, #0f2027 0%, #203a43 40%, #2c5364 100%)',
-    title: 'Activity Feed',
-    subtitle: 'A chronological log of every action taken in the system.',
+    title: 'Activity',
+    subtitle: 'Every change made in Clair, newest first (last 200 events).',
     stats: [
-      { label: 'Total Events', value: totalEvents },
+      { label: 'Events', value: all.length },
       { label: 'Today', value: todayEvents, color: '#4ade80' },
-      { label: 'Task Events', value: taskEvents, color: '#60a5fa' },
-      { label: 'Deletions', value: deleteEvents, color: deleteEvents > 0 ? '#f87171' : undefined },
-    ],
-    progressBar: {
-      pct: totalEvents === 0 ? 0 : Math.min(100, Math.round((todayEvents / totalEvents) * 100)),
-      label: `${todayEvents} / ${totalEvents} events logged today`,
-      color: 'linear-gradient(90deg, #4ade80, #22c55e)'
-    }
+      { label: 'Last 7 days', value: weekEvents },
+      { label: 'Task changes', value: count('task') },
+      { label: 'Project changes', value: count('project') },
+      { label: 'Deletions', value: count('delete'), color: count('delete') ? '#f87171' : undefined }
+    ]
   });
+  if (!all.length) {
+    return `${hero}${emptyState(
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
+      'No activity yet',
+      'Start creating projects and tasks — every action will be tracked here.'
+    )}`;
+  }
+  const f = state.activityFilter || '';
+  const q = (state.activitySearch || '').trim().toLowerCase();
+  const list = all.filter(x => (!f || x.type === f) && (!q || String(x.text || '').toLowerCase().includes(q)));
+  const groups = [];
+  list.forEach(x => {
+    const d = new Date(x.at);
+    const k = dayKey(d);
+    let g = groups[groups.length - 1];
+    if (!g || g.k !== k) {
+      const label = k === todayKey ? 'Today' : k === dayKey(yest) ? 'Yesterday' : d.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' });
+      g = { k, label, items: [] };
+      groups.push(g);
+    }
+    g.items.push(x);
+  });
+  const ICON = {
+    task: '<path d="M9 12l2 2 4-4"/><rect x="3" y="4" width="18" height="18" rx="2"/>',
+    project: '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>',
+    delete: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>'
+  };
+  const chip = (k, l, n) => `<button type="button" class="rpa-chip ${f === k ? 'active' : ''}" data-action="activity-filter" data-filter="${k}">${l} <span>${n}</span></button>`;
   return `
     ${hero}
-    ${state.activity.length === 0 ? `
-      ${emptyState(
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
-    'No activity yet',
-    'Start creating projects and tasks — every action will be tracked here.'
-  )}
-    ` : `
-      <div class="activity-list">
-        ${state.activity.map(a => `
-          <div class="activity-item event-${a.type}">
-            <div class="activity-dot ${a.type}"></div>
-            <div class="activity-content">
-              <div class="activity-text">${a.text}</div>
-              <div class="activity-time">${fmtDate(a.at)} · ${fmtTime(a.at)}</div>
-            </div>
-          </div>
-        `).join('')}
+    <div class="filters-bar tk-toolbar std-toolbar">
+      <div class="page-search-wrap">
+        <svg class="page-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        <input type="text" class="page-search-input" id="activitySearchInput" placeholder="Search activity…" value="${escapeHtml(state.activitySearch || '')}" />
       </div>
-    `}
+      <div class="act-chips">${chip('', 'All', all.length)}${ACTIVITY_TYPES.map(t => chip(t.key, t.label, count(t.key))).join('')}</div>
+      <span class="rpa-showing tk-showing">${list.length === all.length ? `${all.length} events` : `${list.length} of ${all.length} events`}</span>
+    </div>
+    ${groups.length ? `<div class="act-timeline">${groups.map(g => `
+      <section class="act-day">
+        <h3 class="act-day-title">${g.label}<span class="rpa-group-count">${g.items.length}</span></h3>
+        <div class="act-items">
+          ${g.items.map(x => `
+            <div class="act-item act-${escapeHtml(x.type || 'task')}">
+              <span class="act-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${ICON[x.type] || ICON.task}</svg></span>
+              <span class="act-text">${highlight(escapeHtml(x.text || ''), q)}</span>
+              <time class="act-time" datetime="${escapeHtml(x.at || '')}">${fmtTime(x.at)}</time>
+            </div>`).join('')}
+        </div>
+      </section>`).join('')}</div>` : '<div class="rpa-empty"><h3>No matching activity</h3><p>Try a different search or type.</p></div>'}
   `;
 };
 
@@ -5068,7 +5097,24 @@ const renderDevelopers = () => {
     if (p) activeFilterLabel = p.name;
   }
 
+  const openByDev = {};
+  (state.tasks || []).forEach(t => { if (t.status !== 'Done') (t.developerIds || []).forEach(id => { openByDev[id] = (openByDev[id] || 0) + 1; }); });
+  const coveredProjects = new Set((state.developers || []).flatMap(d => d.projectIds || [])).size;
+  const openAssigned = Object.values(openByDev).reduce((x, y) => x + y, 0);
+  const devHero = buildPageHero({
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>`,
+    title: 'Developers',
+    subtitle: 'Your team and the projects each developer works on.',
+    stats: [
+      { label: 'Developers', value: totalDevs },
+      { label: 'On projects', value: linkedDevs, color: '#4ade80' },
+      { label: 'Not assigned', value: unassignedDevs, color: unassignedDevs ? '#fbbf24' : undefined },
+      { label: 'Open tasks', value: openAssigned }
+    ],
+    progressBar: (state.projects || []).length ? { pct: Math.round(coveredProjects / state.projects.length * 100), label: `${coveredProjects}/${state.projects.length} projects staffed` } : null
+  });
   return `
+    ${devHero}
     <div class="dev-mgmt-view">
       <!-- Universal Header matching reference UI & Clair Theme -->
       <div class="dev-mgmt-header">
@@ -6128,6 +6174,8 @@ const attachCardListeners = () => {
         state.calendarMonth = { year, month };
         render();
       }
+      else if (action === 'release-status') { state.releaseFilters.status = state.releaseFilters.status === btn.dataset.status ? '' : btn.dataset.status; render(); }
+      else if (action === 'activity-filter') { state.activityFilter = btn.dataset.filter; render(); }
       else if (action === 'calendar-today') {
         const d = new Date();
         state.calendarMonth = { year: d.getFullYear(), month: d.getMonth() };
@@ -6441,7 +6489,7 @@ const attachCardListeners = () => {
         state.testFilters = { project: '', developer: '', status: '', assignedStatus: '' };
         render();
       } else if (clearBtn.id === 'clearReleaseFilters') {
-        state.releaseFilters = { status: '' };
+        state.releaseFilters = { status: '' }; state.releaseSearch = '';
         render();
       } else if (clearBtn.id === 'clearReleasePtFilters') {
         state.releasePtFilters = { project: '', releaseType: '', completion: '' };
@@ -6749,6 +6797,12 @@ const attachCardListeners = () => {
       d.draft = e.target.value;
       const sb = document.querySelector('.jd-sync-btn');
       if (sb && jiraConnected() && !sb.textContent.includes('Syncing')) sb.disabled = !d.draft.trim() && !document.querySelector('.jd-issue-warn');
+      return;
+    }
+    const actSearch = e.target.closest('#activitySearchInput');
+    if (actSearch) {
+      clearTimeout(pageSearchTimer);
+      pageSearchTimer = setTimeout(() => { state.activitySearch = actSearch.value; rerenderPreservingFocus(actSearch); }, 180);
       return;
     }
     const jiraSearch = e.target.closest('#jiraTicketSearch');
@@ -7981,182 +8035,163 @@ const handleSearch = (q) => {
 // ─── Release Management ──────────────────────────────────
 const RELEASE_STATUS_OPTIONS = ['Draft', 'Planned', 'In Progress', 'Testing', 'Approved', 'Released', 'Rolled Back'];
 
+// ─── Release Management ──────────────────────────────────
+// Status pipeline (click a stage to filter), toolbar, then releases grouped into
+// In flight / Released (by month) / Rolled back as compact rows. A row opens the
+// release details; notes, edit and delete are icon actions.
+const RELEASE_STATUS_COLOR = {
+  'Draft': 'var(--status-planned)', 'Planned': 'var(--indigo)', 'In Progress': 'var(--info)', 'Testing': 'var(--warning)',
+  'Approved': 'var(--violet)', 'Released': 'var(--accent)', 'Rolled Back': 'var(--danger)'
+};
+const releaseProjectIds = (r) => r.projectIds || (r.projectId ? [r.projectId] : []);
+const releaseVersions = (r) => r.versions || (r.version ? [r.version] : []);
+const releaseTime = (v) => {
+  if (!v) return 0;
+  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) { const [y, m, d] = v.slice(0, 10).split('-'); return new Date(+y, +m - 1, +d).getTime(); }
+  const t = new Date(v).getTime();
+  return isNaN(t) ? 0 : t;
+};
+
 const renderReleases = () => {
-  let releases = state.releases || [];
-  const q = state.releaseSearch.toLowerCase();
+  const all = state.releases || [];
+  const q = (state.releaseSearch || '').toLowerCase();
+  const f = state.releaseFilters || (state.releaseFilters = { status: '' });
+  const countBy = (st) => all.filter(r => (r.status || 'Draft') === st).length;
+  const releasedCount = countBy('Released');
+  const rolledBackCount = countBy('Rolled Back');
+  const inFlightCount = all.length - releasedCount - rolledBackCount;
+  const releasedPct = all.length ? Math.round(releasedCount / all.length * 100) : 0;
 
-  // Statistics
-  const total = releases.length;
-  const draftOrPlanned = releases.filter(r => r.status === 'Draft' || r.status === 'Planned').length;
-  const activeCount = releases.filter(r => r.status === 'In Progress' || r.status === 'Testing' || r.status === 'Approved').length;
-  const releasedCount = releases.filter(r => r.status === 'Released').length;
-  const rolledBackCount = releases.filter(r => r.status === 'Rolled Back').length;
-
-  if (q) {
-    releases = releases.filter(r => {
-      const projIds = r.projectIds || (r.projectId ? [r.projectId] : []);
-      const projNames = projIds.map(pid => { const p = state.projects.find(x => x.id === pid); return p ? p.name.toLowerCase() : ''; });
-      const vers = r.versions || (r.version ? [r.version] : []);
-      return r.name.toLowerCase().includes(q) ||
-        vers.some(v => v.toLowerCase().includes(q)) ||
-        projNames.some(n => n.includes(q)) ||
-        (r.description || '').toLowerCase().includes(q) ||
-        (r.workItems || '').toLowerCase().includes(q) ||
-        (r.managerName || '').toLowerCase().includes(q);
-    });
-  }
-
-  if (state.releaseFilters.status) {
-    releases = releases.filter(r => r.status === state.releaseFilters.status);
-  }
-
-  // Sort releases by releaseDate descending (newest releaseDate first), tie-breaking by createdAt
-  const parseSortTime = (dateStr) => {
-    if (!dateStr) return 0;
-    if (typeof dateStr === 'string' && /^\d{4}-\d{2}-\d{2}/.test(dateStr)) {
-      const [y, m, d] = dateStr.split('-');
-      return new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10)).getTime();
-    }
-    const t = new Date(dateStr).getTime();
-    return isNaN(t) ? 0 : t;
-  };
-
-  releases.sort((a, b) => {
-    const timeA = parseSortTime(a.releaseDate) || parseSortTime(a.createdAt);
-    const timeB = parseSortTime(b.releaseDate) || parseSortTime(b.createdAt);
-    if (timeB !== timeA) return timeB - timeA;
-    return parseSortTime(b.createdAt) - parseSortTime(a.createdAt);
+  const projName = (pid) => { const p = state.projects.find(x => x.id === pid); return p ? p.name : ''; };
+  let list = all.filter(r => {
+    if (f.status && (r.status || 'Draft') !== f.status) return false;
+    if (f.project && !releaseProjectIds(r).includes(f.project)) return false;
+    if (!q) return true;
+    return [r.name, r.description, r.workItems, r.managerName, ...releaseVersions(r), ...releaseProjectIds(r).map(projName)]
+      .some(v => String(v || '').toLowerCase().includes(q));
   });
-
-  const releasedPct = total === 0 ? 0 : Math.round(releasedCount / total * 100);
+  list.sort((x, y) => (releaseTime(y.releaseDate) || releaseTime(y.createdAt)) - (releaseTime(x.releaseDate) || releaseTime(x.createdAt)) || releaseTime(y.createdAt) - releaseTime(x.createdAt));
 
   const hero = buildPageHero({
     icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><polygon points="12 22.08 12 12 3 6.92 3 17.08 12 22.08"/><polygon points="12 22.08 21 17.08 21 6.92 12 12 12 22.08"/><polygon points="12 12 21 6.92 12 1.84 3 6.92 12 12"/></svg>`,
-    gradient: 'linear-gradient(135deg, #0f2027 0%, #203a43 40%, #2c5364 100%)',
     title: 'Release Management',
     subtitle: 'Plan and track every product release from draft to deployment.',
     stats: [
-      { label: 'Total', value: total },
-      { label: 'Draft/Planned', value: draftOrPlanned, color: '#60a5fa' },
-      { label: 'Active', value: activeCount, color: '#fbbf24' },
+      { label: 'Total', value: all.length },
+      { label: 'In flight', value: inFlightCount, color: '#fbbf24' },
       { label: 'Released', value: releasedCount, color: '#4ade80' },
-      { label: 'Rolled Back', value: rolledBackCount, color: rolledBackCount > 0 ? '#f87171' : undefined },
-      { label: 'Success Rate', value: `${releasedPct}%`, color: releasedPct >= 80 ? '#4ade80' : '#fb923c' },
+      { label: 'Rolled back', value: rolledBackCount, color: rolledBackCount ? '#f87171' : undefined }
     ],
-    progressBar: { pct: releasedPct, label: `${releasedCount} / ${total} released`, color: 'linear-gradient(90deg, #4ade80, #22c55e)' }
+    progressBar: { pct: releasedPct, label: `${releasedCount}/${all.length} released` }
   });
+
+  const stage = (st) => `
+    <button type="button" class="rl-stage ${f.status === st ? 'active' : ''}" style="--c:${RELEASE_STATUS_COLOR[st]}" data-action="release-status" data-status="${st}" aria-pressed="${f.status === st}">
+      <strong>${countBy(st)}</strong><span>${st}</span>
+    </button>`;
+  const pipeline = `
+    <div class="rl-pipeline" role="group" aria-label="Filter by status">
+      ${['Draft', 'Planned', 'In Progress', 'Testing', 'Approved', 'Released'].map(stage).join('<span class="rl-arrow" aria-hidden="true">›</span>')}
+      <span class="rl-pipeline-sep" aria-hidden="true"></span>
+      ${stage('Rolled Back')}
+    </div>`;
+
+  const filtered = !!(q || f.status || f.project);
+  const toolbar = `
+    <div class="filters-bar tk-toolbar std-toolbar">
+      <div class="page-search-wrap">
+        <svg class="page-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        <input type="text" class="page-search-input" id="releaseSearchInput" placeholder="Search name, version, project, work items…" value="${escapeHtml(state.releaseSearch || '')}" />
+        ${state.releaseSearch ? `<button class="page-search-clear" id="clearReleaseSearch">✕</button>` : ''}
+      </div>
+      <select class="filter-select" data-releasefilter="project" aria-label="Project">
+        <option value="">All projects</option>
+        ${state.projects.filter(p => all.some(r => releaseProjectIds(r).includes(p.id))).map(p => `<option value="${p.id}" ${f.project === p.id ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}
+      </select>
+      ${filtered ? `<button class="btn-ghost" id="clearReleaseFilters" style="font-size:12px;padding:6px 10px">Clear filters</button>` : ''}
+      <span class="rpa-showing tk-showing">${filtered ? `${list.length} of ${all.length} releases` : `${all.length} releases`}</span>
+    </div>`;
+
+  if (!list.length) {
+    return `${hero}${pipeline}${toolbar}${emptyState(
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="12 22.08 12 12 3 6.92 3 17.08 12 22.08"/><polygon points="12 12 21 6.92 12 1.84 3 6.92 12 12"/></svg>',
+      filtered ? 'No releases match' : 'No releases yet',
+      filtered ? 'Try another search or clear the filters.' : 'Click "Add Release" at the top to plan your first release.'
+    )}`;
+  }
+
+  // Groups: in flight, released by month, rolled back.
+  const groups = [];
+  const inFlight = list.filter(r => !['Released', 'Rolled Back'].includes(r.status || 'Draft'));
+  if (inFlight.length) groups.push({ title: 'In flight', note: 'Draft to Approved', items: inFlight });
+  const byMonth = new Map();
+  list.filter(r => r.status === 'Released').forEach(r => {
+    const t = releaseTime(r.releaseDate) || releaseTime(r.createdAt);
+    const key = t ? new Date(t).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'No release date';
+    if (!byMonth.has(key)) byMonth.set(key, []);
+    byMonth.get(key).push(r);
+  });
+  byMonth.forEach((items, key) => groups.push({ title: key, note: 'Released', items }));
+  const rolled = list.filter(r => r.status === 'Rolled Back');
+  if (rolled.length) groups.push({ title: 'Rolled back', items: rolled });
 
   return `
     ${hero}
-
-    <div class="filters-bar">
-      <div class="page-search-wrap">
-        <svg class="page-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-        <input type="text" class="page-search-input" id="releaseSearchInput" placeholder="Search releases…" value="${state.releaseSearch || ''}" />
-        ${state.releaseSearch ? `<button class="page-search-clear" id="clearReleaseSearch">✕</button>` : ''}
-      </div>
-      <select class="filter-select" id="filterReleaseStatus" data-releasefilter="status">
-        <option value="">All Statuses</option>
-        ${RELEASE_STATUS_OPTIONS.map(s => `<option value="${s}" ${state.releaseFilters.status === s ? 'selected' : ''}>${s}</option>`).join('')}
-      </select>
-      ${state.releaseFilters.status ? `
-        <button class="btn-ghost" id="clearReleaseFilters" style="font-size:12px;padding:6px 10px">Clear filters</button>
-      ` : ''}
-      <span class="section-count" style="margin-left:auto;">${releases.length} release${releases.length !== 1 ? 's' : ''}</span>
+    ${pipeline}
+    ${toolbar}
+    <div class="rl-groups">
+      ${groups.map(g => `
+        <section class="rl-group">
+          <h3 class="rl-group-title">${escapeHtml(g.title)}<span class="rpa-group-count">${g.items.length}</span>${g.note ? `<em>${g.note}</em>` : ''}</h3>
+          <div class="rl-list">${g.items.map(r => renderReleaseRow(r, q)).join('')}</div>
+        </section>`).join('')}
     </div>
-
-    ${releases.length === 0 ? `
-      ${emptyState(
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><polygon points="12 22.08 12 12 3 6.92 3 17.08 12 22.08"/><polygon points="12 22.08 21 17.08 21 6.92 12 12 12 22.08"/><polygon points="12 12 21 6.92 12 1.84 3 6.92 12 12"/></svg>',
-    q || state.releaseFilters.status ? 'No releases match search/filters' : 'No releases found',
-    q || state.releaseFilters.status ? 'Try adjustments or click Clear.' : 'Click "Add Release" in the header to manage your first project release!'
-  )}
-    ` : `
-      <div class="card-grid">
-        ${releases.map(r => renderReleaseCard(r, q)).join('')}
-      </div>
-    `}
-
   `;
 };
 
-const renderReleaseCard = (r, q = '') => {
-  const statusClass = (r.status || 'Draft').toLowerCase().replace(' ', '');
-  const devsList = (r.developerIds || []).map(id => {
-    const dev = state.developers.find(d => d.id === id);
-    return dev ? `<span class="release-dev-pill">${dev.name}</span>` : null;
-  }).filter(Boolean).join('');
-
-  // Support multi-project (new) and single-project (legacy)
-  const projectIds = r.projectIds || (r.projectId ? [r.projectId] : []);
-  const projNames = projectIds.map(pid => { const p = state.projects.find(x => x.id === pid); return p ? p.name : null; }).filter(Boolean);
-  const projPills = projNames.length
-    ? projNames.map(n => `<span class="test-pill test-proj" style="font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600;">${highlight(n, q)}</span>`).join('')
-    : '<span class="test-pill test-proj" style="font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600;background:var(--border);color:var(--text-muted);">No Project</span>';
-
-  // Support multi-version (new) and single-version (legacy)
-  const versions = r.versions || (r.version ? [r.version] : []);
-  const versionPills = versions.length
-    ? versions.map(v => `<div class="release-version" style="margin:0;padding:2px 6px;font-size:10px;">${highlight(v, q)}</div>`).join('')
-    : '';
-
+const renderReleaseRow = (r, q = '') => {
+  const st = r.status || 'Draft';
+  const hl = (v) => highlight(escapeHtml(v), q);
+  const projects = releaseProjectIds(r).map(pid => (state.projects.find(x => x.id === pid) || {}).name).filter(Boolean);
+  const versions = releaseVersions(r);
+  const devs = (r.developerIds || []).map(id => state.developers.find(d => d.id === id)).filter(Boolean);
+  const initials = (n) => n.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('');
+  const date = r.releaseDate ? fmtDate(r.releaseDate) : '';
   return `
-    <div class="release-card release-status-${statusClass}" data-id="${r.id}">
-      <div class="release-card-top">
-        <div class="release-name-wrap">
-          <div class="release-name">${highlight(r.name, q)}</div>
-          <div style="display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap;">
-            ${projPills}
-            ${versionPills}
-          </div>
+    <div class="rl-row" style="--c:${RELEASE_STATUS_COLOR[st] || 'var(--status-planned)'}" data-action="view-release" data-id="${r.id}" tabindex="0" role="button" aria-label="Open release ${escapeHtml(r.name)}">
+      <div class="rl-main">
+        <div class="rl-title-line">
+          <span class="rl-name">${hl(r.name)}</span>
+          <span class="rl-status">${st}</span>
         </div>
-        <span class="status-pill ${statusClass}">${r.status || 'Draft'}</span>
+        <div class="rl-meta">
+          ${projects.length ? projects.map(n => `<span class="rl-proj">${hl(n)}</span>`).join('') : '<span class="rl-proj none">No project</span>'}
+          ${versions.map(v => `<span class="rl-ver">${hl(v)}</span>`).join('')}
+        </div>
+        ${r.description ? `<div class="rl-desc">${hl(r.description)}</div>` : ''}
       </div>
-      
-      ${r.description ? `<div class="release-desc">${highlight(formatCardDescription(r.description), q)}</div>` : '<div class="release-desc" style="color:var(--text-muted);font-style:italic">No description provided.</div>'}
-      
-      <div class="release-meta-grid">
-        <div class="release-meta-block">
-          <span class="release-meta-label">Release Manager</span>
-          <span class="release-meta-value" title="${r.managerName || '–'}">${highlight(r.managerName || '–', q)}</span>
-        </div>
-        <div class="release-meta-block">
-          <span class="release-meta-label">Release Date</span>
-          <span class="release-meta-value" title="${r.releaseDate ? fmtDate(r.releaseDate) : '–'}">${r.releaseDate ? fmtDate(r.releaseDate) : '–'}</span>
-        </div>
-        <div class="release-meta-block" style="grid-column: span 2;">
-          <span class="release-meta-label">Work Items</span>
-          <span class="release-meta-value" title="${r.workItems || '–'}">${highlight(r.workItems || '–', q)}</span>
-        </div>
-        <div class="release-meta-block" style="grid-column: span 2;">
-          <span class="release-meta-label">Developers Involved</span>
-          <div class="release-devs">${devsList || '<span style="color:var(--text-muted);font-style:italic">None linked</span>'}</div>
-        </div>
+      <div class="rl-facts">
+        <div class="rl-fact"><span>${st === 'Released' ? 'Released' : 'Target date'}</span><strong>${date || '—'}</strong></div>
+        <div class="rl-fact"><span>Manager</span><strong>${r.managerName ? hl(r.managerName) : '—'}</strong></div>
+        <div class="rl-fact rl-work"><span>Work items</span><strong title="${escapeHtml(r.workItems || '')}">${r.workItems ? hl(r.workItems) : '—'}</strong></div>
       </div>
-
-      ${r.notes ? `
-        <div style="display:flex; flex-direction:column; gap:2px;">
-          <span class="release-meta-label">Release Notes Preview</span>
-          <div class="release-notes-preview">${r.notes}</div>
+      <div class="rl-side">
+        <div class="rl-devs" title="${escapeHtml(devs.map(d => d.name).join(', ') || 'No developers linked')}">
+          ${devs.slice(0, 4).map(d => `<span class="rl-avatar">${initials(d.name)}</span>`).join('')}${devs.length > 4 ? `<span class="rl-avatar more">+${devs.length - 4}</span>` : ''}
         </div>
-      ` : ''}
-
-      <div class="project-card-footer" style="margin-top:auto; padding-top:10px;">
-        <span class="card-time">${r.releaseDate ? 'Release: ' + fmtDate(r.releaseDate) : 'Created ' + timeAgo(r.createdAt)}</span>
-        <div class="card-actions" style="opacity: 1;">
-          <button class="icon-btn" data-action="copy-notes" data-id="${r.id}" aria-label="Copy Email Notes" title="Copy Email Notes">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
-          </button>
-          <button class="icon-btn" data-action="edit-release" data-id="${r.id}" aria-label="Edit" title="Edit">
+        <div class="rl-actions">
+          ${r.notes ? `<button type="button" class="icon-btn" data-action="copy-notes" data-id="${r.id}" aria-label="Copy release notes email" title="Copy release notes email">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          </button>` : ''}
+          <button type="button" class="icon-btn" data-action="edit-release" data-id="${r.id}" aria-label="Edit" title="Edit">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>
-          <button class="icon-btn danger" data-action="delete-release" data-id="${r.id}" aria-label="Delete" title="Delete">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+          <button type="button" class="icon-btn danger" data-action="delete-release" data-id="${r.id}" aria-label="Delete" title="Delete">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
           </button>
         </div>
       </div>
-    </div>
-  `;
+    </div>`;
 };
 
 // =======================================================
@@ -12816,6 +12851,7 @@ const init = async () => {
   state.jiraSync = data.jiraSync || [];
   state.jiraPending = data.jiraPending || [];
   state.jiraQa = data.jiraQa || [];
+  if (jiraQaUpgradeDescriptions(state)) await storage.save(); // older auto QA tasks get the current description format
   state.projectsViewMode = await ClairDB.getPref('projects_view_mode', 'list');
   state.theme = await ClairDB.getPref('theme', 'light');
   applyTheme(state.theme);
