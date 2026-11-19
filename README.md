@@ -4,7 +4,7 @@
 
 **A local-first project & release tracker — built as a Chrome Extension**
 
-![Version](https://img.shields.io/badge/version-2.6.0-informational?style=flat-square)
+![Version](https://img.shields.io/badge/version-3.0.0-informational?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Chrome%20Extension-4285F4?style=flat-square&logo=googlechrome&logoColor=white)
 ![Manifest](https://img.shields.io/badge/manifest-V3-success?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-Vanilla%20JS%20%2F%20HTML%20%2F%20CSS-F7DF1E?style=flat-square)
@@ -52,6 +52,44 @@ The current app version is displayed in the sidebar footer and is always read di
 ---
 
 ## What's New
+
+### v3.0.0
+
+#### Jira page: a ticket dashboard for every linked project
+
+A new **Jira** module in the sidebar (under Release) shows the tickets of every Clair project that is linked to a Jira project. It reuses the existing Jira connection (Settings → Integrations) and project links; nothing new to set up.
+
+- **Overview** — one card per linked project: Clair project name, Jira key and name, total tickets, a coloured status bar, category counts, last synchronized date and time, **Refresh** and **View Details**. A banner sums all linked projects; **Refresh all from Jira** syncs them one after another. Projects without a Jira link are not shown.
+- **Details page** — totals per category; a ticket table (Key, Summary, Type, Jira status, Category, Assignee, Priority, Updated, and an open-in-Jira action — the key also opens the ticket in a new tab); search by key or summary; filter by category, issue type, and assignee (including Unassigned); sort by recently/least recently updated, priority, or key; 25 / 50 / 100 rows per page. **The totals and category chips follow the search, type, and assignee filters** ("Matching tickets (of 727)").
+- **All tickets** — every issue type, Epics and Sub-tasks included, via `POST /rest/api/3/search/jql` (`project = KEY ORDER BY updated DESC`, fields `summary, status, assignee, issuetype, priority, created, updated`), following `nextPageToken` until the last page. Duplicates across pages are dropped; `429` responses wait for `Retry-After`; if Jira rejects the POST with an XSRF check, the equivalent GET is used.
+
+#### Status mapping
+
+Jira status names differ between projects, so each linked project has its own mapping from Jira statuses to Clair categories:
+
+**To Do · Reopen · In Progress · In Review · Ready for QA · Monitoring · On Hold · Done · Not Applicable · Will Not Do / Not a Bug**
+
+- **Automatic** — common names are recognised, ignoring case and punctuation (`Reopened`, `IN QA`, `ON HOLD`, `Code Review`, `N/A`, `Won't Do`…), including several names joined by `/` when they agree (`WILL NOT DO/NOT A BUG`, `Done/Closed`) and a known phrase inside a longer name (`Blocked by vendor` → On Hold). Conflicting (`Done/To Do`) or negated (`Not Done`) names are left for you to decide.
+- **Unmapped** — a status that isn't recognised shows as **Unmapped** (red), is counted in the total, and is never silently put in another category. Cards show "N tickets with unmapped statuses — map them".
+- **Status mapping panel** (details page) — lists the project's Jira statuses (from `/rest/api/3/project/{key}/statuses`, plus any seen on tickets) with their Jira category and ticket count; pick a category per status or leave it on Automatic. **Reset all to Automatic** clears manual choices.
+- **Every refresh re-applies automatic mapping**; real manual choices are kept, choices for statuses that no longer exist are dropped. "Unmapped" is no longer a selectable choice (it could pin a status to Unmapped and hide the automatic match).
+- Cards and the banner always show To Do, In Progress, Ready for QA and Done, plus any other category that has tickets; the details page shows all of them.
+
+#### Sync and caching
+
+- Tickets are cached locally in a new SQLite table, **`jiraSync`** (one record per linked Clair project: issues, the project's statuses, the status mapping, last sync, last error), so the page opens instantly and works offline.
+- **Refresh from Jira** (overview and details) replaces the cache **only after every page was fetched** — new tickets are added, changed ones updated, deleted ones removed. If a refresh fails part-way, the previous cache and its last-synced time are kept and the page says "Last refresh failed … — showing the previous sync". One refresh per project at a time; a progress counter shows while fetching.
+- If a Clair project is linked to a different Jira project, the old cache is ignored.
+
+#### Safety
+
+- The cache is **not** part of JSON exports or automatic backups (`ClairBackup.KEYS` is unchanged), and importing a backup does not touch it.
+- No API token in the page, the cache, logs, or backups — credentials stay in `chrome.storage.local` as before.
+- Release Points are never changed and tickets are never imported automatically; importing into a Release Point still works from the Release Point editor.
+
+#### Manifest
+
+- Version **3.0.0** (major release: new module and a new SQLite table); description mentions the Jira dashboard.
 
 ### v2.6.0
 
@@ -223,6 +261,7 @@ The current app version is displayed in the sidebar footer and is always read di
 | **Project Insights** | Capture issues, enhancements, and notes per project; track each item through a Dev → QA → Done workflow; filter by developer, status, and assignment state. |
 | **Release Management** | Log releases sorted by release date; advance through a seven-stage status workflow (Draft → Released); generate email-style release announcements; copy notes to clipboard. |
 | **Release Points** | Accordion list grouped into In progress / Completed; progress ring and bar per release point; full checklist on expand with in-place, keyboard-accessible ticking; project filter chips, Expand/Collapse all, search inside checklist items; shows the release each point belongs to; bulk add and bulk assign in the editor; import Jira tickets as checklist items; ticket links show the ticket key. |
+| **Jira** | Dashboard of every Clair project linked to Jira: per-project cards with ticket counts by category and last sync; a details page with a searchable, filterable, sortable, paginated ticket table (counts follow the filters); per-project status mapping into 10 Clair categories with automatic matching; local cache refreshed on demand and kept if a refresh fails. |
 | **Notes** | Organize notes by project; create main folders and 1-level subfolders; write notes with a 10-item Markdown toolbar & Edit/Preview mode toggle; move notes across project/folder tree; debounced search & sort by updated date, creation date, or title. |
 | **Test Case Management** | Three levels: a home page of project cards with pass rates; a project overview with KPIs, results donut, priority/type/assignee breakdowns, modules table, and open failures; and a test scenarios page with a module rail, status chips, filters, expandable rows with autosaving fields, bulk selection, and pagination. Import cases from Excel/CSV; bulk update. |
 | **Developers** | Maintain a developer registry; link developers to projects so they appear in context-sensitive dropdowns on tasks and insights. |
@@ -271,6 +310,7 @@ Clair is a single-page application. Navigation switches the rendered view in pla
 | Project Insights | `tests` | Issue, enhancement, and note board per project |
 | Release Management | `releases` | Release lifecycle and note generation (sorted by release date) |
 | Release Points | `releasepoints` | Accordion of release readiness checklists, grouped by In progress / Completed |
+| Jira | `jira` + `state.jiraProjectId` | Linked projects overview → per-project ticket table and status mapping |
 | Notes | `notes` | Project-based notes & Markdown workspace with 1-level subfolder hierarchy |
 | Test Cases | `testcases` + `state.activeTestCaseProjectId` / `state.tcPage` | Home (all projects) → project overview → test scenarios |
 | Activity | `activity` | Chronological audit feed |
@@ -375,6 +415,16 @@ Each collapsed row shows the progress ring, title, projects, Upcoming/Released, 
 - **Add Item** — inserts one empty row.
 - **Bulk Add** — opens a count picker; set how many empty rows you want (`−` / number / `+`) and click **Add Items**.
 
+### Jira
+
+Requires a Jira connection (Settings → Integrations) and at least one project linked to a Jira project (project Edit form → Jira Project).
+
+- **Overview** — a banner with totals across linked projects and a card per project (name, Jira key and name, total, status bar, category tiles, unmapped notice, last synced / last failed refresh, **Refresh**, **View Details**). **Refresh all from Jira** syncs every linked project in turn.
+- **Details** (breadcrumb Jira / Project) — header with **Open in Jira**, **Status mapping**, and **Refresh from Jira**; category tiles; search, issue type, assignee, and sort controls; category chips; the ticket table; rows per page and Prev/Next. Totals and chips reflect the search/type/assignee filters.
+- **Status mapping** — one row per Jira status: name, Jira's own category, ticket count, and a dropdown (**Automatic — *category*** or a fixed category). Saved per linked project; **Reset all to Automatic** clears manual choices.
+
+Nothing is fetched until you press Refresh; the page shows the last successful sync and says so when a later refresh failed.
+
 ### Test Case Management
 
 Three levels, with a breadcrumb (Test Cases / Project / Test scenarios) to move back up:
@@ -453,7 +503,8 @@ app.js  (single-page controller)
 db.js  (ClairDB — persistence layer)
   ├─ sql.js (SQLite compiled to WebAssembly, see sql-wasm.js/.wasm)
   ├─ schema: projects/tasks/tests/activity/developers/releases/
-  │          testCases/modules/releasePoints/noteFolders/notes + meta (prefs, migration state)
+  │          testCases/modules/releasePoints/noteFolders/notes/jiraSync + meta (prefs, migration state)
+  │          (jiraSync = local Jira ticket cache; not part of JSON export/backup)
   ├─ migrateFromLegacyStorage()  one-time, transactional, verified, idempotent
   ├─ load()/save()/getPref()/setPref()  the only API the rest of the app uses
   └─ loadSnapshot()     read-only copy of the last saved DB, for the background backup
@@ -636,10 +687,10 @@ DEVELOPER ─┬── PROJECT       (developer.projectIds[])
 
 ```
 project-extension/
-├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 2.6.0)
+├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 3.0.0)
 ├── background.js            Service worker — tab lifecycle + scheduled automatic backup
 ├── backup.js                Shared JSON backup format, Backup/ folder path, auto-backup filename
-├── jira.js                  Jira Cloud client (API token auth): test connection, projects, issue search
+├── jira.js                  Jira Cloud client (API token auth): test connection, projects, issue search, full issue fetch, project statuses
 ├── offscreen.html / .js     Hidden page that builds the auto-backup file (blob URL) for the service worker
 ├── index.html               Static shell: sidebar, top bar, modals, form controls
 ├── app.js                   Single-page controller (~12 900 lines)
@@ -699,7 +750,7 @@ In **Settings**, click **Export Data**. A timestamped JSON file is downloaded to
 clair-export-2026-06-20.json
 ```
 
-The export includes: `projects`, `tasks`, `tests` (insights), `developers`, `releases`, `testCases`, `modules`, `releasePoints`, `noteFolders`, `notes`, and `activity`.
+The export includes: `projects`, `tasks`, `tests` (insights), `developers`, `releases`, `testCases`, `modules`, `releasePoints`, `noteFolders`, `notes`, and `activity`. The Jira ticket cache (`jiraSync`) and Jira credentials are not exported; after restoring on another machine, connect Jira and press Refresh on the Jira page (manual status-mapping choices are not restored).
 
 ### Automatic Backups
 
@@ -814,6 +865,7 @@ Clair follows a no-build, no-framework approach. Keep contributions consistent w
 - [ ] Project Details: opens from the **Project Details** button in both List and Kanban views; stats match the project's tasks (tasks linked to multiple projects are counted per project, nothing from other projects); release history is newest first; editing a task/release/project from the page updates it immediately; **Projects** returns to the list; works in light and dark and at phone width.
 - [ ] Client Name: create a project with and without a client; it shows on List and Kanban cards, the detail modal, and Project Details; it survives export → import.
 - [ ] Jira: Save with a wrong token shows "rejected the email or API token" and stores nothing; a valid token connects and shows the account/workspace; the token field is empty afterwards; link a project, open a Release Point for it, Import from Jira, search/select/add tickets, save — the card shows each key as a link opening Jira in a new tab plus the assignee; importing the same ticket again in that project is blocked; Disconnect removes the credentials; an exported JSON contains no token.
+- [ ] Jira page: only linked projects appear; Refresh fetches every ticket (Epics and Sub-tasks included) and updates the counts and last-synced time; a failed refresh keeps the previous data and says so; View Details shows the table — search, type, assignee, category chips, sort, and pagination work, and the totals follow the filters; keys and the action icon open the ticket in Jira; unrecognised statuses show as Unmapped and can be mapped in Status mapping (saved per project, kept across refresh, Reset all to Automatic clears them); Release Points are unchanged; an exported JSON contains no `jiraSync`; light and dark themes and phone width look right.
 - [ ] Automatic backup: Settings shows Enabled, schedule, last success, and status; saving a new time moves the alarm (`chrome.alarms.get('clair-daily-backup')` in the service worker console); disabling clears it; a backup file appears in `Backup/` and imports successfully; it matches a manual export apart from `exportedAt`.
 
 ---

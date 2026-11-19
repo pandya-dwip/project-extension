@@ -56,19 +56,27 @@ const ClairJira = (() => {
 
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-  // GET {site}{path}. Maps every failure to a readable JiraError without credentials.
-  const request = async (cfg, path, params = {}) => {
+  // {site}{path} (GET by default; POST with a JSON body via opts). Maps every failure to
+  // a readable JiraError without credentials.
+  const request = async (cfg, path, params = {}, opts = {}) => {
     const url = new URL(cfg.site + path);
     Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v); });
     const host = new URL(cfg.site).hostname;
+    const method = opts.method || 'GET';
+    const headers = { Authorization: `Basic ${b64(`${cfg.email}:${cfg.token}`)}`, Accept: 'application/json' };
+    if (opts.body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+      headers['X-Atlassian-Token'] = 'no-check'; // REST call, not a browser form post
+    }
     for (let attempt = 0; ; attempt++) {
       let res;
       try {
         res = await fetch(url.toString(), {
-          method: 'GET',
+          method,
           credentials: 'omit', // never fall back to the browser's Jira login cookies
           cache: 'no-store',
-          headers: { Authorization: `Basic ${b64(`${cfg.email}:${cfg.token}`)}`, Accept: 'application/json' }
+          headers,
+          body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined
         });
       } catch (e) {
         if (!(await hasPermission())) throw new JiraError('Clair no longer has permission to contact Jira. Open Settings → Integrations and click Save to allow it again.');
@@ -83,8 +91,10 @@ const ClairJira = (() => {
         continue;
       }
       let detail = '';
+      let raw = '';
+      try { raw = await res.text(); } catch (e) { /* no body */ }
       try {
-        const body = await res.json();
+        const body = JSON.parse(raw);
         detail = [...(body.errorMessages || []), ...Object.values(body.errors || {})].filter(Boolean).join(' ');
       } catch (e) { /* non-JSON error body */ }
       switch (res.status) {
@@ -93,6 +103,7 @@ const ClairJira = (() => {
           if ((res.headers.get('X-Seraph-LoginReason') || '').includes('AUTHENTICATION_DENIED')) {
             throw new JiraError('Jira temporarily blocked API logins for this account (too many failed attempts). Sign in to Jira in your browser once, then try again.', 403);
           }
+          if (/xsrf/i.test(raw)) { const e = new JiraError('Jira refused the request (XSRF check).', 403); e.code = 'XSRF'; throw e; }
           throw new JiraError(`Your Jira account doesn't have permission for this.${detail ? ' ' + detail : ''}`, 403);
         case 404: throw new JiraError(`Not found on ${host}.${detail ? ' ' + detail : ' Check the site URL.'}`, 404);
         case 400: throw new JiraError(detail || 'Jira could not process the request.', 400);
@@ -198,5 +209,67 @@ const ClairJira = (() => {
     };
   };
 
-  return { JIRA_KEY, normalizeSite, getPublicConfig, saveConfig, testConnection, disconnect, listProjects, searchIssues };
+  const DASH_FIELDS = ['summary', 'status', 'assignee', 'issuetype', 'priority', 'created', 'updated'];
+  const compactIssue = (site, i) => {
+    const f = i.fields || {};
+    return {
+      id: String(i.id), key: i.key,
+      summary: f.summary || '(no summary)',
+      type: (f.issuetype && f.issuetype.name) || 'Unknown',
+      subtask: !!(f.issuetype && f.issuetype.subtask),
+      statusId: f.status ? String(f.status.id) : '',
+      status: (f.status && f.status.name) || 'Unknown',
+      statusCategory: (f.status && f.status.statusCategory && f.status.statusCategory.key) || '',
+      assignee: (f.assignee && f.assignee.displayName) || '',
+      priority: (f.priority && f.priority.name) || '',
+      created: f.created || '', updated: f.updated || '',
+      url: `${site}/browse/${i.key}`
+    };
+  };
+
+  // Every issue of a project (all issue types, sub-tasks included), following
+  // nextPageToken until Jira reports the last page. Throws on any failure, so callers
+  // only ever get a complete result. onProgress(fetchedSoFar) is called per page.
+  const fetchAllIssues = async ({ projectKey, onProgress } = {}) => {
+    const cfg = await requireConfig();
+    const jql = `project = ${jqlString(projectKey)} ORDER BY updated DESC`;
+    const byId = new Map();
+    let token = '';
+    let usePost = true;
+    const seenTokens = new Set();
+    for (let page = 0; page < 2000; page++) {
+      let data;
+      try {
+        data = usePost
+          ? await request(cfg, '/rest/api/3/search/jql', {}, { method: 'POST', body: { jql, fields: DASH_FIELDS, maxResults: 100, ...(token ? { nextPageToken: token } : {}) } })
+          : await request(cfg, '/rest/api/3/search/jql', { jql, fields: DASH_FIELDS.join(','), maxResults: 100, nextPageToken: token });
+      } catch (e) {
+        // Some sites reject POSTs from extensions with an XSRF check; the GET form is equivalent.
+        if (usePost && (e.code === 'XSRF' || e.status === 405 || e.status === 415)) { usePost = false; page--; continue; }
+        if (e.status === 400 && /project/i.test(e.message)) throw new JiraError(`The Jira project "${projectKey}" no longer exists or you can't access it.`, 400);
+        throw e;
+      }
+      (data.issues || []).forEach(i => byId.set(String(i.id), compactIssue(cfg.site, i))); // de-duplicates
+      if (onProgress) onProgress(byId.size);
+      const next = data.nextPageToken;
+      if (data.isLast === true || !next) return { site: cfg.site, issues: [...byId.values()] };
+      if (seenTokens.has(next)) throw new JiraError('Jira returned the same page twice; stopped to avoid an endless loop. Try again.');
+      seenTokens.add(next);
+      token = next;
+    }
+    throw new JiraError('This project has more issues than Clair can fetch in one sync.');
+  };
+
+  // Every workflow status the project's issue types can be in (id, name, Jira category).
+  const getProjectStatuses = async (projectKey) => {
+    const cfg = await requireConfig();
+    const data = await request(cfg, `/rest/api/3/project/${encodeURIComponent(projectKey)}/statuses`);
+    const byId = new Map();
+    (Array.isArray(data) ? data : []).forEach(t => (t.statuses || []).forEach(s => {
+      if (!byId.has(String(s.id))) byId.set(String(s.id), { id: String(s.id), name: s.name, category: (s.statusCategory && s.statusCategory.key) || '' });
+    }));
+    return [...byId.values()];
+  };
+
+  return { JIRA_KEY, normalizeSite, getPublicConfig, saveConfig, testConnection, disconnect, listProjects, searchIssues, fetchAllIssues, getProjectStatuses };
 })();

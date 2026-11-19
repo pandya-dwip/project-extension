@@ -88,6 +88,7 @@ let state = {
   calendarRightPanelSort: 'priority',
   noteFolders: [],
   notes: [],
+  jiraSync: [], // one record per Clair project linked to Jira: cached issues, statuses, status mapping
   activeNoteProjectId: null,
   activeNoteFolderId: null,
   activeNoteId: null,
@@ -128,7 +129,9 @@ const storage = {
       modules: state.modules,
       releasePoints: state.releasePoints || [],
       noteFolders: state.noteFolders || [],
-      notes: state.notes || []
+      notes: state.notes || [],
+      // Jira dashboard cache (not part of JSON exports/backups — see ClairBackup.KEYS)
+      jiraSync: state.jiraSync || []
     });
   }
 };
@@ -1736,6 +1739,407 @@ const showToast = (msg, type = 'success') => {
 // ─── Storage indicator ───────────────────────────────────
 const updateStorageInfo = () => { };
 
+// ─── Jira dashboard (Jira page) ──────────────────────────
+// Overview of every Clair project linked to Jira, plus a per-project ticket table.
+// Data comes from a local cache (state.jiraSync, SQLite table "jiraSync"): one record
+// per linked Clair project with the last complete fetch of its issues, the project's
+// Jira statuses, and the user's status-mapping overrides. "Refresh from Jira" replaces
+// the issues only after a complete fetch; a failed refresh keeps the previous cache.
+// Clair categories a Jira status can be mapped to (order = display order). Colour drives
+// cards, KPI tiles, the stacked bar and pills. "core" ones always show on cards/banner;
+// the others show there only when they have tickets (the details page shows all).
+const JIRA_CATS = [
+  { key: 'todo', label: 'To Do', color: 'var(--status-planned)', core: true },
+  { key: 'reopen', label: 'Reopen', color: 'var(--jd-reopen)' },
+  { key: 'inprogress', label: 'In Progress', color: 'var(--warning)', core: true },
+  { key: 'inreview', label: 'In Review', color: 'var(--indigo)' },
+  { key: 'qa', label: 'Ready for QA', color: 'var(--info)', core: true },
+  { key: 'monitoring', label: 'Monitoring', color: 'var(--jd-monitor)' },
+  { key: 'onhold', label: 'On Hold', color: 'var(--violet)' },
+  { key: 'done', label: 'Done', color: 'var(--accent)', core: true },
+  { key: 'notapplicable', label: 'Not Applicable', short: 'N/A', color: 'var(--jd-na)' },
+  { key: 'wontdo', label: 'Will Not Do / Not a Bug', short: 'Won’t Do', color: 'var(--text-muted)' }
+];
+const JIRA_CAT_COLOR = { ...Object.fromEntries(JIRA_CATS.map(k => [k.key, k.color])), unmapped: 'var(--danger)' };
+const JIRA_CAT_LABEL = { ...Object.fromEntries(JIRA_CATS.map(k => [k.key, k.label])), unmapped: 'Unmapped' };
+const jiraEmptyCounts = () => ({ total: 0, ...Object.fromEntries(JIRA_CATS.map(k => [k.key, 0])), unmapped: 0 });
+const jiraSyncInFlight = new Map(); // clair projectId -> promise (no overlapping syncs)
+const jiraSyncProgress = {};        // clair projectId -> tickets fetched so far (UI only)
+
+// Common status names → category. Anything else stays Unmapped until the user maps it.
+// Order matters for phrase-in-name matches: negative/specific categories come first, so
+// "Not Done" or "Review in progress" don't land in Done / In Progress.
+const JIRA_AUTO = [
+  ['wontdo', ["won't do", 'wont do', 'will not do', "won't fix", 'wont fix', 'will not fix', 'not a bug', 'not bug', 'rejected', 'cancelled', 'canceled', 'invalid', 'duplicate', 'declined', 'obsolete', 'cannot reproduce', "can't reproduce", 'cant reproduce', 'not reproducible']],
+  ['notapplicable', ['not applicable', 'n/a', 'na', 'not relevant']],
+  ['onhold', ['on hold', 'hold', 'blocked', 'paused', 'deferred', 'parked', 'postponed']],
+  ['reopen', ['reopen', 'reopened', 're open', 're opened']],
+  ['qa', ['ready for qa', 'qa', 'in qa', 'qa review', 'ready for test', 'ready for testing', 'ready to test', 'testing', 'in test', 'in testing', 'uat', 'to verify', 'verify', 'verification']],
+  ['inreview', ['in review', 'review', 'code review', 'in code review', 'under review', 'peer review', 'pr review', 'awaiting review', 'ready for review']],
+  ['monitoring', ['monitoring', 'in monitoring', 'monitor', 'under observation', 'observation', 'watching']],
+  ['inprogress', ['in progress', 'in development', 'in dev', 'doing', 'development', 'implementing', 'work in progress', 'wip']],
+  ['done', ['done', 'closed', 'resolved', 'complete', 'completed', 'released', 'deployed', 'fixed', 'shipped']],
+  ['todo', ['to do', 'todo', 'open', 'backlog', 'new', 'selected for development', 'ready for dev', 'ready for development', 'planned']]
+].map(([cat, phrases]) => {
+  const label = JIRA_CAT_LABEL[cat].toLowerCase();
+  const all = [...new Set([...phrases, label, ...label.split(/\s*\/\s*/)])];
+  return [cat, new Set(all), new RegExp(`(^|[^a-z0-9'])(${all.map(p => p.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')).join('|')})(?=$|[^a-z0-9'])`)];
+});
+const jiraNormStatus = (s) => String(s || '').toLowerCase().replace(/[’‘`]/g, "'").replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+const jiraExactCategory = (n) => (JIRA_AUTO.find(([, set]) => set.has(n)) || [''])[0];
+const jiraAutoCategory = (name) => {
+  const n = jiraNormStatus(name);
+  if (!n) return '';
+  // 1. The whole name is a known status ("Ready for QA", "Not a Bug").
+  const exact = jiraExactCategory(n);
+  if (exact) return exact;
+  // 2. Several names joined ("WILL NOT DO/NOT A BUG", "Done | Closed"): use them if they agree.
+  const parts = n.split(/\s*(?:\/|\||,|&|\+|\bor\b)\s*/).filter(Boolean);
+  if (parts.length > 1) {
+    const cats = new Set(parts.map(jiraExactCategory).filter(Boolean));
+    if (cats.size === 1) return [...cats][0];
+    if (cats.size > 1) return ''; // conflicting ("Done/To Do") → let the user decide
+  }
+  // 3. A known status phrase inside a longer name ("In QA", "Blocked by vendor").
+  //    Negated names ("Not Done") only count for the negative categories.
+  const hit = JIRA_AUTO.find(([, , re]) => re.test(n));
+  if (!hit) return '';
+  return /\bnot\b/.test(n) && hit[0] !== 'wontdo' && hit[0] !== 'notapplicable' ? '' : hit[0];
+};
+
+const jiraLinkedProjects = () => state.projects.filter(p => p.jira && p.jira.projectKey);
+// The cache for a project, only if it belongs to the project's current Jira link.
+const jiraRecordFor = (p) => {
+  const r = (state.jiraSync || []).find(x => x.id === p.id);
+  return r && r.site === p.jira.site && String(r.jiraProjectId) === String(p.jira.projectId) ? r : null;
+};
+// A manual choice must be a real category ("unmapped" is never a choice; older versions
+// could save it, which pinned a status to Unmapped and hid the automatic match).
+const jiraIsCat = (k) => JIRA_CATS.some(c => c.key === k);
+// Category of a status: user override, else automatic, else unmapped.
+const jiraCategoryOf = (rec, statusId, statusName) => {
+  const o = rec && rec.statusMap ? rec.statusMap[statusId] : undefined;
+  if (jiraIsCat(o)) return o;
+  return jiraAutoCategory(statusName) || 'unmapped';
+};
+const jiraCounts = (rec) => {
+  const c = jiraEmptyCounts();
+  (rec ? rec.issues : []).forEach(i => { c.total++; const k = jiraCategoryOf(rec, i.statusId, i.status); c[k in c ? k : 'unmapped']++; });
+  return c;
+};
+const jiraWhen = (iso) => iso ? `${fmtDate(iso)}, ${fmtTime(iso)}` : '';
+
+// Fetch every issue of a linked project and replace its cache — only after success.
+const syncJiraProject = (projectId) => {
+  if (jiraSyncInFlight.has(projectId)) return jiraSyncInFlight.get(projectId);
+  const p = state.projects.find(x => x.id === projectId);
+  if (!p || !p.jira || !jiraConnected()) return Promise.resolve();
+  const run = (async () => {
+    const link = { ...p.jira };
+    jiraSyncProgress[projectId] = 0;
+    try {
+      const { site, issues } = await ClairJira.fetchAllIssues({
+        projectKey: link.projectKey,
+        onProgress: (n) => {
+          jiraSyncProgress[projectId] = n;
+          const el = document.querySelector(`[data-jira-progress="${projectId}"]`);
+          if (el) el.textContent = `Fetching… ${n} tickets`;
+        }
+      });
+      // Statuses: the project's workflow statuses, plus any seen on issues (e.g. if the
+      // statuses endpoint isn't permitted).
+      const statuses = new Map();
+      try { (await ClairJira.getProjectStatuses(link.projectKey)).forEach(s => statuses.set(s.id, s)); } catch (e) { /* fall back to issue statuses */ }
+      issues.forEach(i => { if (i.statusId && !statuses.has(i.statusId)) statuses.set(i.statusId, { id: i.statusId, name: i.status, category: i.statusCategory }); });
+      const prev = (state.jiraSync || []).find(x => x.id === projectId);
+      const sameProject = prev && prev.site === site && String(prev.jiraProjectId) === String(link.projectId);
+      const rec = {
+        id: projectId, site, jiraProjectId: String(link.projectId), jiraProjectKey: link.projectKey, jiraProjectName: link.projectName,
+        statuses: [...statuses.values()],
+        // Refresh re-applies automatic mapping: keep only real manual choices that differ
+        // from what Automatic now picks, for statuses that still exist.
+        statusMap: sameProject ? Object.fromEntries(Object.entries(prev.statusMap || {}).filter(([sid, cat]) =>
+          statuses.has(sid) && jiraIsCat(cat) && cat !== jiraAutoCategory(statuses.get(sid).name))) : {},
+        issues, syncedAt: new Date().toISOString(), lastError: '', lastErrorAt: ''
+      };
+      state.jiraSync = [...(state.jiraSync || []).filter(x => x.id !== projectId), rec];
+      await storage.save();
+      showToast(`${p.name}: ${issues.length} Jira tickets synced`);
+    } catch (e) {
+      // Keep the last successful cache; just record what went wrong.
+      const prev = (state.jiraSync || []).find(x => x.id === projectId);
+      if (prev) {
+        prev.lastError = jiraErrorText(e);
+        prev.lastErrorAt = new Date().toISOString();
+      } else {
+        state.jiraSync = [...(state.jiraSync || []), { id: projectId, site: link.site, jiraProjectId: String(link.projectId), jiraProjectKey: link.projectKey, jiraProjectName: link.projectName, statuses: [], statusMap: {}, issues: [], syncedAt: '', lastError: jiraErrorText(e), lastErrorAt: new Date().toISOString() }];
+      }
+      await storage.save();
+      showToast(`${p.name}: Jira refresh failed — ${jiraErrorText(e)}`, 'error');
+    } finally {
+      delete jiraSyncProgress[projectId];
+      jiraSyncInFlight.delete(projectId);
+      if (state.view === 'jira') render();
+    }
+  })();
+  jiraSyncInFlight.set(projectId, run);
+  if (state.view === 'jira') render(); // after the lock is set, so the busy state shows
+  return run;
+};
+
+const jiraSyncStatusHtml = (p, rec) => {
+  if (jiraSyncInFlight.has(p.id)) return `<span class="jd-sync busy" data-jira-progress="${p.id}">Fetching… ${jiraSyncProgress[p.id] || 0} tickets</span>`;
+  const synced = rec && rec.syncedAt ? `<span class="jd-sync">Last synced ${jiraWhen(rec.syncedAt)}</span>` : '<span class="jd-sync never">Never synced</span>';
+  const failed = (state.jiraSync || []).find(x => x.id === p.id);
+  const err = failed && failed.lastError && (!rec || !rec.syncedAt || failed.lastErrorAt > rec.syncedAt)
+    ? `<span class="jd-sync error" title="${escapeHtml(failed.lastError)}">Last refresh failed ${jiraWhen(failed.lastErrorAt)}${rec && rec.syncedAt ? ' — showing the previous sync' : ''}</span>` : '';
+  return synced + err;
+};
+const jiraCatBar = (c) => `<span class="dbx-stackbar">${Object.keys(JIRA_CAT_COLOR).filter(k => c[k]).map(k => `<span style="flex:${c[k]};--c:${JIRA_CAT_COLOR[k]}" title="${JIRA_CAT_LABEL[k]}: ${c[k]}"></span>`).join('')}</span>`;
+const JD_I = {
+  jira: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 12l10 10 10-10L12 2z"/><path d="M12 8l-4 4 4 4 4-4-4-4z"/></svg>',
+  refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>',
+  ext: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>',
+  map: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h6"/><path d="M17 15l3 3-3 3"/></svg>'
+};
+
+const renderJiraPage = () => {
+  const linked = jiraLinkedProjects();
+  if (state.jiraProjectId) {
+    const p = linked.find(x => x.id === state.jiraProjectId);
+    if (p) return renderJiraDetails(p);
+    state.jiraProjectId = null;
+  }
+  const connected = jiraAvailable() && jiraConnected();
+  const notice = !jiraAvailable() ? 'The Jira page is available in the installed extension only.'
+    : !connected ? 'Jira isn’t connected, so tickets can’t be refreshed. Cached data (if any) is shown below. Connect in Settings → Integrations.' : '';
+  const recs = linked.map(p => ({ p, rec: jiraRecordFor(p) }));
+  const sum = jiraEmptyCounts();
+  recs.forEach(({ rec }) => { const c = jiraCounts(rec); Object.keys(sum).forEach(k => { sum[k] += c[k]; }); });
+
+  const card = ({ p, rec }) => {
+    const c = jiraCounts(rec);
+    return `
+      <div class="jd-card" data-id="${p.id}">
+        <div class="jd-card-top">
+          <div class="jd-card-names">
+            <span class="jd-card-title">${escapeHtml(p.name)}</span>
+            <span class="jd-card-sub"><span class="jira-key">${escapeHtml(p.jira.projectKey)}</span>${escapeHtml(p.jira.projectName)}</span>
+          </div>
+          <span class="jd-total"><strong>${c.total}</strong><em>tickets</em></span>
+        </div>
+        ${jiraCatBar(c)}
+        <div class="jd-cats">
+          ${JIRA_CATS.filter(k => k.core || c[k.key]).map(k => `<span class="jd-cat" style="--c:${k.color}" title="${k.label}: ${c[k.key]}"><strong>${c[k.key]}</strong><em>${k.short || k.label}</em></span>`).join('')}
+        </div>
+        ${c.unmapped ? `<button type="button" class="jd-unmapped" data-action="jira-open-mapping" data-id="${p.id}">${c.unmapped} ticket${c.unmapped === 1 ? '' : 's'} with unmapped statuses — map them</button>` : ''}
+        <div class="jd-card-foot">
+          <div class="jd-card-sync">${jiraSyncStatusHtml(p, rec)}</div>
+          <div class="jd-card-actions">
+            <button type="button" class="btn-ghost st-btn" data-action="jira-refresh" data-id="${p.id}" ${!connected || jiraSyncInFlight.has(p.id) ? 'disabled' : ''}>${JD_I.refresh}Refresh</button>
+            <button type="button" class="btn-primary st-btn" data-action="jira-view" data-id="${p.id}">View Details</button>
+          </div>
+        </div>
+      </div>`;
+  };
+  const anyBusy = linked.some(p => jiraSyncInFlight.has(p.id));
+
+  return `
+    <div class="tc-page">
+      <section class="rpa-hero">
+        <div class="rpa-hero-main">
+          <span class="rpa-hero-icon">${JD_I.jira}</span>
+          <div>
+            <h2 class="rpa-hero-title">Jira</h2>
+            <p class="rpa-hero-sub">Tickets of every Clair project linked to a Jira project.</p>
+          </div>
+        </div>
+        <div class="rpa-hero-stats">
+          <div class="rpa-hstat"><strong>${linked.length}</strong><span>Projects</span></div>
+          <div class="rpa-hstat"><strong>${sum.total}</strong><span>Tickets</span></div>
+          ${JIRA_CATS.filter(k => k.core || sum[k.key]).map(k => `<div class="rpa-hstat" title="${k.label}"><strong${k.key === 'inprogress' ? ' class="warn"' : k.key === 'done' ? ' class="ok"' : ''}>${sum[k.key]}</strong><span>${k.short || k.label}</span></div>`).join('')}
+        </div>
+      </section>
+      ${notice ? `<div class="jd-notice">${escapeHtml(notice)}${jiraAvailable() && !connected ? ` <button type="button" class="rpa-link" data-action="jira-go-settings">Open Settings</button>` : ''}</div>` : ''}
+      ${linked.length ? `
+        <div class="rpa-toolbar">
+          <span class="rpa-showing">${linked.length} linked project${linked.length === 1 ? '' : 's'} · counts use each project’s status mapping</span>
+          <div class="rpa-toolbar-right">
+            <button type="button" class="btn-primary st-btn" data-action="jira-refresh-all" ${!connected || anyBusy ? 'disabled' : ''}>${JD_I.refresh}Refresh all from Jira</button>
+          </div>
+        </div>
+        <div class="jd-grid">${recs.map(card).join('')}</div>` : `
+        <div class="rpa-empty">
+          <span class="rpa-empty-icon">${JD_I.jira}</span>
+          <h3>No projects linked to Jira</h3>
+          <p>Open a project’s Edit form and pick its Jira project under “Jira Project”. Linked projects appear here.</p>
+        </div>`}
+    </div>`;
+};
+
+const renderJiraDetails = (p) => {
+  const rec = jiraRecordFor(p);
+  const connected = jiraAvailable() && jiraConnected();
+  const c = jiraCounts(rec);
+  const f = state.jiraFilters || (state.jiraFilters = { q: '', cat: '', type: '', assignee: '', sort: 'updated-desc', page: 1, size: 25 });
+  const issues = rec ? rec.issues.map(i => ({ ...i, cat: jiraCategoryOf(rec, i.statusId, i.status) })) : [];
+  const types = [...new Set(issues.map(i => i.type))].sort();
+  const assignees = [...new Set(issues.map(i => i.assignee || ''))].sort((a, b) => (a || '~').localeCompare(b || '~'));
+  const q = f.q.trim().toLowerCase();
+  const PRIO = { highest: 0, high: 1, medium: 2, low: 3, lowest: 4 };
+  const prioRank = (s) => (s && PRIO[s.toLowerCase()] !== undefined ? PRIO[s.toLowerCase()] : 5);
+  const keyNum = (k) => { const m = /-(\d+)$/.exec(k); return m ? +m[1] : 0; };
+  // Search/type/assignee narrow everything below, including the counts; the category chip
+  // then picks within that (so the other chips still show what they'd select).
+  const base = issues.filter(i =>
+    (!q || i.key.toLowerCase().includes(q) || i.summary.toLowerCase().includes(q)) &&
+    (!f.type || i.type === f.type) &&
+    (f.assignee === '' || (f.assignee === '__none__' ? !i.assignee : i.assignee === f.assignee)));
+  const narrowed = base.length !== issues.length;
+  const fc = jiraEmptyCounts();
+  base.forEach(i => { fc.total++; fc[i.cat]++; });
+  let list = base.filter(i => !f.cat || i.cat === f.cat);
+  const sorters = {
+    'updated-desc': (a, b) => (b.updated || '').localeCompare(a.updated || ''),
+    'updated-asc': (a, b) => (a.updated || '').localeCompare(b.updated || ''),
+    'priority': (a, b) => prioRank(a.priority) - prioRank(b.priority) || (b.updated || '').localeCompare(a.updated || ''),
+    'key-asc': (a, b) => keyNum(a.key) - keyNum(b.key),
+    'key-desc': (a, b) => keyNum(b.key) - keyNum(a.key)
+  };
+  list.sort(sorters[f.sort] || sorters['updated-desc']);
+  const pages = Math.max(1, Math.ceil(list.length / f.size));
+  if (f.page > pages) f.page = pages;
+  if (f.page < 1) f.page = 1;
+  const start = (f.page - 1) * f.size;
+  const paged = list.slice(start, start + f.size);
+
+  const kpi = (n, l, cls = '') => `<div class="po-stat ${cls}"><span class="po-stat-num">${n}</span><span class="po-stat-label">${l}</span></div>`;
+  const chip = (v, l, n) => `<button type="button" class="rpa-chip jd-chip ${v || 'all'} ${f.cat === v ? 'active' : ''}" data-action="jira-cat" data-cat="${v}">${l} <span>${n}</span></button>`;
+
+  // Status mapping panel.
+  const statusCounts = {};
+  issues.forEach(i => { statusCounts[i.statusId] = (statusCounts[i.statusId] || 0) + 1; });
+  const statuses = rec ? [...rec.statuses].sort((a, b) => (statusCounts[b.id] || 0) - (statusCounts[a.id] || 0) || a.name.localeCompare(b.name)) : [];
+  const JIRA_CAT_HINT = { new: 'To Do', indeterminate: 'In Progress', done: 'Done' };
+  const mappingHtml = state.jiraMappingOpen ? `
+    <section class="tco-card jd-mapping" id="jiraMapping">
+      <div class="tco-card-head">
+        <h3 class="tco-card-title">Status mapping <span class="rpa-group-count">${statuses.length}</span></h3>
+        <div class="jd-mapping-actions">
+          ${Object.values(rec ? rec.statusMap : {}).some(jiraIsCat) ? '<button type="button" class="btn-ghost st-btn" data-action="jira-map-reset">Reset all to Automatic</button>' : ''}
+          <button type="button" class="btn-ghost st-btn" data-action="jira-close-mapping">Done</button>
+        </div>
+      </div>
+      <p class="jd-mapping-help">Choose which Clair category each Jira status in ${escapeHtml(p.jira.projectKey)} counts as. “Automatic” matches common status names (re-checked on every refresh); statuses it can’t recognise stay <strong>Unmapped</strong> until you choose. Your manual choices are kept and saved for this project only.</p>
+      ${statuses.length ? `<div class="jd-map-list">
+        ${statuses.map(s => {
+          const o = jiraIsCat(rec.statusMap[s.id]) ? rec.statusMap[s.id] : '';
+          const auto = jiraAutoCategory(s.name);
+          return `
+            <div class="jd-map-row">
+              <span class="jd-map-name">${escapeHtml(s.name)}</span>
+              <span class="jd-map-hint">${s.category && JIRA_CAT_HINT[s.category] ? `Jira category: ${JIRA_CAT_HINT[s.category]}` : ''}</span>
+              <span class="jd-map-n">${statusCounts[s.id] || 0} ticket${statusCounts[s.id] === 1 ? '' : 's'}</span>
+              <select class="filter-select jd-map-select" data-jira-map="${escapeHtml(s.id)}" aria-label="Category for ${escapeHtml(s.name)}">
+                <option value="" ${!o ? 'selected' : ''}>Automatic — ${auto ? JIRA_CAT_LABEL[auto] : 'Unmapped'}</option>
+                ${JIRA_CATS.map(k => `<option value="${k.key}" ${o === k.key ? 'selected' : ''}>${k.label}</option>`).join('')}
+              </select>
+            </div>`;
+        }).join('')}
+      </div>` : '<div class="dbx-empty">Refresh from Jira to load this project’s statuses.</div>'}
+    </section>` : '';
+
+  const catPill = (cat) => `<span class="jd-pill" style="--c:${JIRA_CAT_COLOR[cat]}">${JIRA_CAT_LABEL[cat]}</span>`;
+  const rowsHtml = paged.map(i => `
+    <tr>
+      <td><a class="jd-key" href="${escapeHtml(i.url)}" target="_blank" rel="noopener noreferrer" title="Open ${escapeHtml(i.key)} in Jira">${escapeHtml(i.key)}</a></td>
+      <td class="jd-summary">${escapeHtml(i.summary)}</td>
+      <td class="jd-nowrap">${escapeHtml(i.type)}</td>
+      <td class="jd-nowrap">${escapeHtml(i.status)}</td>
+      <td>${catPill(i.cat)}</td>
+      <td class="jd-nowrap">${i.assignee ? escapeHtml(i.assignee) : '<span class="po-muted">Unassigned</span>'}</td>
+      <td class="jd-nowrap">${escapeHtml(i.priority || '—')}</td>
+      <td class="jd-nowrap" title="${escapeHtml(i.updated)}">${i.updated ? fmtDate(i.updated) : '—'}</td>
+      <td><a class="icon-btn jd-open" href="${escapeHtml(i.url)}" target="_blank" rel="noopener noreferrer" aria-label="Open ${escapeHtml(i.key)} in Jira" title="Open in Jira">${JD_I.ext}</a></td>
+    </tr>`).join('');
+
+  return `
+    <div class="tc-page">
+      ${tcCrumbs([{ label: 'Jira', action: 'jira-home' }, { label: escapeHtml(p.name) }])}
+      <section class="tco-head">
+        <div class="tco-head-main">
+          <h2><span class="jira-key jd-head-key">${escapeHtml(p.jira.projectKey)}</span>${escapeHtml(p.jira.projectName)}</h2>
+          <p>${escapeHtml(p.name)} · <span class="jd-head-sync">${jiraSyncStatusHtml(p, rec)}</span></p>
+        </div>
+        <div class="tco-head-actions">
+          <a class="btn-ghost st-btn" href="${escapeHtml(`${p.jira.site}/browse/${p.jira.projectKey}`)}" target="_blank" rel="noopener noreferrer">${JD_I.ext}Open in Jira</a>
+          <button type="button" class="btn-ghost st-btn ${state.jiraMappingOpen ? 'tcs-on' : ''}" data-action="${state.jiraMappingOpen ? 'jira-close-mapping' : 'jira-open-mapping'}" data-id="${p.id}">${JD_I.map}Status mapping${c.unmapped ? ` <span class="jd-badge">${c.unmapped}</span>` : ''}</button>
+          <button type="button" class="btn-primary st-btn" data-action="jira-refresh" data-id="${p.id}" ${!connected || jiraSyncInFlight.has(p.id) ? 'disabled' : ''}>${JD_I.refresh}Refresh from Jira</button>
+        </div>
+      </section>
+      ${!connected && jiraAvailable() ? `<div class="jd-notice">Jira isn’t connected, so this data can’t be refreshed. <button type="button" class="rpa-link" data-action="jira-go-settings">Open Settings</button></div>` : ''}
+      <div class="po-stats jd-kpis">
+        ${kpi(fc.total, narrowed ? `Matching tickets (of ${c.total})` : 'Total tickets')}
+        ${JIRA_CATS.map(k => `<div class="po-stat" style="--tone:${k.color}"><span class="po-stat-num">${fc[k.key]}</span><span class="po-stat-label">${k.label}</span></div>`).join('')}
+        ${fc.unmapped ? kpi(fc.unmapped, 'Unmapped', 'tone-fail') : ''}
+      </div>
+      ${mappingHtml}
+      ${!rec || !rec.syncedAt ? `
+        <div class="rpa-empty">
+          <span class="rpa-empty-icon">${JD_I.jira}</span>
+          <h3>No tickets loaded yet</h3>
+          <p>${connected ? 'Click “Refresh from Jira” to fetch every ticket in this project.' : 'Connect Jira in Settings → Integrations, then refresh.'}</p>
+        </div>` : `
+        <div class="tcs-main">
+          <div class="tcs-toolbar">
+            <div class="page-search-wrap tcs-search">
+              <svg class="page-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+              <input type="text" class="page-search-input" id="jiraTicketSearch" placeholder="Search key or summary…" value="${escapeHtml(f.q)}" />
+            </div>
+            <select class="filter-select" data-jira-filter="type" aria-label="Issue type">
+              <option value="">All issue types</option>
+              ${types.map(t => `<option value="${escapeHtml(t)}" ${f.type === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')}
+            </select>
+            <select class="filter-select" data-jira-filter="assignee" aria-label="Assignee">
+              <option value="">All assignees</option>
+              ${assignees.map(a => `<option value="${a ? escapeHtml(a) : '__none__'}" ${f.assignee === (a || '__none__') ? 'selected' : ''}>${a ? escapeHtml(a) : 'Unassigned'}</option>`).join('')}
+            </select>
+            <select class="filter-select" data-jira-filter="sort" aria-label="Sort">
+              <option value="updated-desc" ${f.sort === 'updated-desc' ? 'selected' : ''}>Recently updated</option>
+              <option value="updated-asc" ${f.sort === 'updated-asc' ? 'selected' : ''}>Least recently updated</option>
+              <option value="priority" ${f.sort === 'priority' ? 'selected' : ''}>Priority (highest first)</option>
+              <option value="key-desc" ${f.sort === 'key-desc' ? 'selected' : ''}>Key (newest first)</option>
+              <option value="key-asc" ${f.sort === 'key-asc' ? 'selected' : ''}>Key (oldest first)</option>
+            </select>
+            ${(f.q || f.cat || f.type || f.assignee) ? `<button class="btn-ghost rpa-tool-btn" data-action="jira-clear-filters">Clear filters</button>` : ''}
+          </div>
+          <div class="tcs-chips">
+            ${chip('', 'All', fc.total)}${JIRA_CATS.map(k => chip(k.key, k.label, fc[k.key])).join('')}${fc.unmapped || f.cat === 'unmapped' ? chip('unmapped', 'Unmapped', fc.unmapped) : ''}
+            <span class="tcs-scope">showing ${list.length} of ${c.total}</span>
+          </div>
+          <div class="tcs-table-wrap">
+            <table class="tcs-table jd-table">
+              <thead><tr><th>Key</th><th>Summary</th><th>Type</th><th>Jira status</th><th>Category</th><th>Assignee</th><th>Priority</th><th>Updated</th><th></th></tr></thead>
+              <tbody>${rowsHtml || `<tr><td colspan="9"><div class="dbx-empty tcs-noresults">${c.total ? 'No tickets match these filters.' : 'This Jira project has no tickets.'}</div></td></tr>`}</tbody>
+            </table>
+          </div>
+          <div class="tc-pagination-bar">
+            <div class="tc-pagination-size"><label for="jiraPageSize">Rows per page</label>
+              <select class="filter-select" id="jiraPageSize" data-jira-filter="size">${[25, 50, 100].map(n => `<option value="${n}" ${f.size === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+            <div class="tc-pagination-info">${list.length ? `Showing ${start + 1}–${Math.min(start + f.size, list.length)} of ${list.length}` : 'No results'}</div>
+            <div class="tc-pagination-nav">
+              <button class="btn-ghost" data-action="jira-page" data-dir="-1" ${f.page <= 1 ? 'disabled' : ''}>‹ Prev</button>
+              <span class="tc-pagination-page">Page ${f.page} of ${pages}</span>
+              <button class="btn-ghost" data-action="jira-page" data-dir="1" ${f.page >= pages ? 'disabled' : ''}>Next ›</button>
+            </div>
+          </div>
+        </div>`}
+    </div>`;
+};
+
+const jiraResetFilters = () => { state.jiraFilters = { q: '', cat: '', type: '', assignee: '', sort: 'updated-desc', page: 1, size: (state.jiraFilters && state.jiraFilters.size) || 25 }; };
+
+
 // ─── Navigation ──────────────────────────────────────────
 const setView = (view) => {
   if (state.view === 'notes' && state.activeNoteId) {
@@ -1743,6 +2147,7 @@ const setView = (view) => {
   }
   state.view = view;
   state.overviewProjectId = null;
+  if (view === 'jira') { state.jiraProjectId = null; state.jiraMappingOpen = false; }
   if (view === 'testcases') {
     state.testCasePage = 1;
     const ct = document.getElementById('mainContent');
@@ -1768,6 +2173,7 @@ const setView = (view) => {
     tests: 'Project Insights',
     releases: 'Release Management',
     releasepoints: 'Release Points',
+    jira: 'Jira',
     testcases: 'Test Case Management',
     notes: 'Notes',
     developers: 'Developer Management',
@@ -1815,6 +2221,7 @@ const render = () => {
     case 'tests': ct.innerHTML = renderTests(); break;
     case 'releases': ct.innerHTML = renderReleases(); break;
     case 'releasepoints': ct.innerHTML = renderReleasePoints(); break;
+    case 'jira': ct.innerHTML = renderJiraPage(); break;
     case 'testcases': ct.innerHTML = renderTestCaseManagement(); break;
     case 'notes': ct.innerHTML = renderNotes(); break;
     case 'developers': ct.innerHTML = renderDevelopers(); break;
@@ -5076,6 +5483,7 @@ const renderSettings = () => {
     { key: 'testcases', label: 'Test Case Management', desc: 'Test scenarios & execution', icon: `<path d="M9 3v7.2a4 4 0 01-1.3 2.9l-3.4 3.1A2 2 0 005.7 20h12.6a2 2 0 001.4-3.8l-3.4-3.1A4 4 0 0115 10.2V3"/>` },
     { key: 'releases', label: 'Release Management', desc: 'Release versions & changelogs', icon: `<line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><polygon points="12 22.08 12 12 3 6.92 3 17.08 12 22.08"/>` },
     { key: 'releasepoints', label: 'Release Points', desc: 'Detailed release checklist items', icon: `<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>` },
+    { key: 'jira', label: 'Jira', desc: 'Jira tickets of linked projects', icon: `<path d="M12 2L2 12l10 10 10-10L12 2z"/><path d="M12 8l-4 4 4 4 4-4-4-4z"/>` },
     { key: 'developers', label: 'Developers', desc: 'Developer project mapping', icon: `<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/>` },
     { key: 'activity', label: 'Activity', desc: 'System activity & change logs', icon: `<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>` },
     { key: 'settings', label: 'Settings', desc: 'System preferences & database', locked: true, icon: `<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>` }
@@ -5098,7 +5506,7 @@ const renderSettings = () => {
       { key: 'light', label: 'Light', desc: 'Bright & crisp' },
       { key: 'dark', label: 'Dark', desc: 'Easy on the eyes' }
     ];
-    const views = [['dashboard', 'Dashboard'], ['projects', 'Projects'], ['tasks', 'Tasks'], ['notes', 'Notes'], ['calendar', 'Calendar'], ['tests', 'Project Insights'], ['testcases', 'Test Case Management'], ['releases', 'Release Management'], ['releasepoints', 'Release Points'], ['developers', 'Developer Management'], ['activity', 'Activity']];
+    const views = [['dashboard', 'Dashboard'], ['projects', 'Projects'], ['tasks', 'Tasks'], ['notes', 'Notes'], ['calendar', 'Calendar'], ['tests', 'Project Insights'], ['testcases', 'Test Case Management'], ['releases', 'Release Management'], ['releasepoints', 'Release Points'], ['jira', 'Jira'], ['developers', 'Developer Management'], ['activity', 'Activity']];
     body = stSection('Appearance', 'Choose how Clair looks. System follows your operating system’s light/dark setting.', `
       <div class="st-themes" id="themeToggle" role="radiogroup" aria-label="Theme">
         ${themes.map(t => `
@@ -5198,6 +5606,7 @@ const clearAllData = async () => {
   state.testCases = [];
   state.modules = [];
   state.noteFolders = [];
+  state.jiraSync = [];
   state.notes = [];
   state.activeNoteProjectId = null;
   state.activeNoteFolderId = null;
@@ -5327,6 +5736,27 @@ const attachCardListeners = () => {
       else if (action === 'new-release-pt') openReleasePtModal();
       else if (action === 'open-release-pt') openReleasePointOnPage(cardId);
       else if (action === 'rpa-toggle') toggleRpAccordion(cardId);
+      else if (action === 'jira-view') { state.jiraProjectId = cardId; state.jiraMappingOpen = false; jiraResetFilters(); render(); document.getElementById('mainContent').scrollTop = 0; }
+      else if (action === 'jira-home') { state.jiraProjectId = null; state.jiraMappingOpen = false; render(); }
+      else if (action === 'jira-refresh') syncJiraProject(cardId);
+      else if (action === 'jira-refresh-all') {
+        // One project at a time: gentler on Jira's rate limits than firing them all at once.
+        (async () => { for (const p of jiraLinkedProjects()) await syncJiraProject(p.id); })();
+      }
+      else if (action === 'jira-open-mapping') {
+        if (state.jiraProjectId !== cardId) { state.jiraProjectId = cardId; jiraResetFilters(); }
+        state.jiraMappingOpen = true; render();
+        const m = document.getElementById('jiraMapping'); if (m) m.scrollIntoView({ block: 'start' });
+      }
+      else if (action === 'jira-map-reset') {
+        const rec = (state.jiraSync || []).find(x => x.id === state.jiraProjectId);
+        if (rec) { rec.statusMap = {}; storage.save(); showToast('Status mapping reset to Automatic'); render(); }
+      }
+      else if (action === 'jira-close-mapping') { state.jiraMappingOpen = false; render(); }
+      else if (action === 'jira-cat') { state.jiraFilters.cat = btn.dataset.cat; state.jiraFilters.page = 1; render(); }
+      else if (action === 'jira-clear-filters') { jiraResetFilters(); render(); }
+      else if (action === 'jira-page') { state.jiraFilters.page += Number(btn.dataset.dir); render(); }
+      else if (action === 'jira-go-settings') { state.settingsSection = 'integrations'; setView('settings'); }
       else if (action === 'settings-section') {
         state.settingsSection = btn.dataset.section;
         render();
@@ -5885,6 +6315,25 @@ const attachCardListeners = () => {
       render();
     }
     if (e.target.id === 'tcHomeSort') { state.tcHomeSort = e.target.value; render(); return; }
+    const jiraFilter = e.target.closest('[data-jira-filter]');
+    if (jiraFilter) {
+      const k = jiraFilter.dataset.jiraFilter;
+      state.jiraFilters[k] = k === 'size' ? Number(jiraFilter.value) : jiraFilter.value;
+      state.jiraFilters.page = 1;
+      render(); return;
+    }
+    const jiraMap = e.target.closest('[data-jira-map]');
+    if (jiraMap) {
+      const rec = (state.jiraSync || []).find(x => x.id === state.jiraProjectId);
+      if (rec) {
+        rec.statusMap = { ...(rec.statusMap || {}) };
+        if (jiraMap.value) rec.statusMap[jiraMap.dataset.jiraMap] = jiraMap.value;
+        else delete rec.statusMap[jiraMap.dataset.jiraMap];
+        storage.save();
+        render();
+      }
+      return;
+    }
     const tcSelect = e.target.closest('[data-tcfilter]');
     if (tcSelect) {
       state.testCaseFilters[tcSelect.dataset.tcfilter] = tcSelect.value;
@@ -6000,6 +6449,12 @@ const attachCardListeners = () => {
     if (releasePtInput) {
       clearTimeout(pageSearchTimer);
       pageSearchTimer = setTimeout(() => { state.releasePtSearch = releasePtInput.value.toLowerCase(); rerenderPreservingFocus(releasePtInput); }, 180);
+      return;
+    }
+    const jiraSearch = e.target.closest('#jiraTicketSearch');
+    if (jiraSearch) {
+      clearTimeout(pageSearchTimer);
+      pageSearchTimer = setTimeout(() => { state.jiraFilters.q = jiraSearch.value; state.jiraFilters.page = 1; rerenderPreservingFocus(jiraSearch); }, 180);
       return;
     }
     const tcHomeInput = e.target.closest('#tcHomeSearchInput');
@@ -12037,6 +12492,7 @@ const init = async () => {
   state.releasePoints = data.releasePoints || [];
   state.noteFolders = data.noteFolders || [];
   state.notes = data.notes || [];
+  state.jiraSync = data.jiraSync || [];
   state.projectsViewMode = await ClairDB.getPref('projects_view_mode', 'list');
   state.theme = await ClairDB.getPref('theme', 'light');
   applyTheme(state.theme);
@@ -12845,6 +13301,7 @@ const init = async () => {
         state.releasePoints = data.releasePoints || [];
         state.noteFolders = data.noteFolders || [];
         state.notes = data.notes || [];
+        state.jiraSync = data.jiraSync || [];
 
         render();
 

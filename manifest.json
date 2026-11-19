@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "Clair – Task & Project Tracker",
   "short_name": "Clair",
-  "version": "2.6.0",
-  "description": "Local-first tracker for projects, tasks, releases and test cases, with Jira import and daily auto-backups. Your data stays local.",
+  "version": "3.0.0",
+  "description": "Local-first tracker for projects, tasks, releases and test cases, with a Jira dashboard and daily auto-backups. Data stays local.",
   "minimum_chrome_version": "116",
   "permissions": [
     "storage",
