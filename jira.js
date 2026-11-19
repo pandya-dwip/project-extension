@@ -34,7 +34,7 @@ const ClairJira = (() => {
   const getPublicConfig = async () => {
     const c = await readConfig();
     if (!c) return null;
-    return { site: c.site, email: c.email, hasToken: !!c.token, accountName: c.accountName || '', connectedAt: c.connectedAt || '' };
+    return { site: c.site, email: c.email, hasToken: !!c.token, accountName: c.accountName || '', accountId: c.accountId || '', connectedAt: c.connectedAt || '' };
   };
 
   // UTF-8-safe base64 (btoa alone throws on non-Latin-1 characters).
@@ -326,7 +326,7 @@ const ClairJira = (() => {
     return ['paragraph', 'heading', 'codeBlock', 'blockquote', 'bulletList', 'orderedList'].includes(node.type) ? inner + '\n\n' : inner;
   };
   const compactComment = (c) => ({
-    id: String(c.id), author: (c.author && c.author.displayName) || 'Unknown',
+    id: String(c.id), author: (c.author && c.author.displayName) || 'Unknown', authorId: (c.author && c.author.accountId) || '',
     text: adfText(c.body).replace(/\n{3,}/g, '\n\n').replace(/\s+$/, ''), created: c.created || '', updated: c.updated || ''
   });
 
@@ -368,5 +368,43 @@ const ClairJira = (() => {
     return out;
   };
 
-  return { JIRA_KEY, normalizeSite, getPublicConfig, saveConfig, testConnection, disconnect, listProjects, searchIssues, fetchAllIssues, getProjectStatuses, getIssue, getTransitions, doTransition, addComment, getComments, getStatusChanges, toAdf };
+  // ── Watching for changes (notifications) ──
+  // Tickets updated in the last `minutes` minutes across the given projects. Relative
+  // JQL dates ("-5m") avoid any timezone mismatch with the Jira profile.
+  const searchUpdated = async ({ projectKeys, minutes }) => {
+    const cfg = await requireConfig();
+    if (!projectKeys.length) return [];
+    const jql = `project in (${projectKeys.map(jqlString).join(', ')}) AND updated >= -${Math.max(1, Math.ceil(minutes))}m ORDER BY updated DESC`;
+    const out = [];
+    let token = '';
+    for (let page = 0; page < 5; page++) {
+      const data = await request(cfg, '/rest/api/3/search/jql', {}, { method: 'POST', body: { jql, fields: DASH_FIELDS, maxResults: 100, ...(token ? { nextPageToken: token } : {}) } });
+      (data.issues || []).forEach(i => out.push({ ...compactIssue(cfg.site, i), projectKey: (i.key || '').split('-')[0] }));
+      if (data.isLast === true || !data.nextPageToken) break;
+      token = data.nextPageToken;
+    }
+    return out;
+  };
+
+  // The latest changelog entries of an issue (all fields), oldest first, with who made them.
+  const getRecentHistory = async (key) => {
+    const cfg = await requireConfig();
+    const head = await request(cfg, `${issuePath(key)}/changelog`, { startAt: 0, maxResults: 1 });
+    const total = head.total || 0;
+    const data = total > 1 ? await request(cfg, `${issuePath(key)}/changelog`, { startAt: Math.max(0, total - 50), maxResults: 50 }) : head;
+    return (data.values || []).map(h => ({
+      id: String(h.id), created: h.created || '',
+      author: (h.author && h.author.displayName) || 'Someone', authorId: (h.author && h.author.accountId) || '',
+      items: (h.items || []).map(it => ({ field: it.field || it.fieldId || '', fieldId: it.fieldId || '', from: it.fromString || '', to: it.toString || '' }))
+    }));
+  };
+
+  // The newest comments of an issue (up to 20), newest first.
+  const getRecentComments = async (key) => {
+    const cfg = await requireConfig();
+    const data = await request(cfg, `${issuePath(key)}/comment`, { startAt: 0, maxResults: 20, orderBy: '-created' });
+    return (data.comments || []).map(compactComment);
+  };
+
+  return { searchUpdated, getRecentHistory, getRecentComments, JIRA_KEY, normalizeSite, getPublicConfig, saveConfig, testConnection, disconnect, listProjects, searchIssues, fetchAllIssues, getProjectStatuses, getIssue, getTransitions, doTransition, addComment, getComments, getStatusChanges, toAdf };
 })();

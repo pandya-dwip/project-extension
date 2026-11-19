@@ -240,3 +240,36 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 });
 syncJiraAlarm();
 maybeJiraSync();
+
+// ─── Jira change notifications (comments, status changes, updates) ──────
+// Jira Cloud can only push webhooks to a public server, so Clair checks for changes
+// on a repeating alarm instead — every 30 seconds (Chrome's minimum period). The
+// watcher (jiracore.js) adds notifications to chrome.storage.local; open Clair pages
+// pick them up instantly (bell, list, sound) and desktop pop-ups are shown here.
+const WATCH_ALARM = 'clair-jira-watch';
+async function syncWatchAlarm() {
+  const a = await chrome.alarms.get(WATCH_ALARM);
+  if (!a || !a.periodInMinutes) await chrome.alarms.create(WATCH_ALARM, { delayInMinutes: 0.5, periodInMinutes: 0.5 });
+}
+chrome.runtime.onInstalled.addListener(() => { syncWatchAlarm(); });
+chrome.runtime.onStartup.addListener(() => { syncWatchAlarm(); });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== WATCH_ALARM) return;
+  jiraWatchPollLocked().catch(e => console.warn('Clair Jira watch failed:', e && e.message));
+});
+syncWatchAlarm();
+
+// Clicking a desktop notification opens (or focuses) Clair on the Notifications page.
+chrome.notifications.onClicked.addListener(async (notificationId) => {
+  chrome.notifications.clear(notificationId);
+  const url = chrome.runtime.getURL('index.html');
+  const [tab] = await chrome.tabs.query({ url: url + '*' });
+  if (tab) {
+    await chrome.tabs.update(tab.id, { active: true });
+    await chrome.windows.update(tab.windowId, { focused: true });
+    chrome.runtime.sendMessage({ type: 'clair-open-notifications' }).catch(() => {});
+  } else {
+    const t = await chrome.tabs.create({ url: url + '#notifications' });
+    clairTabId = t.id;
+  }
+});

@@ -247,7 +247,7 @@ const jiraCreateQaTask = (data, project, entries, trigger, runAt) => {
   }
   jiraQaPut(data, { id: `batch:${batchId}`, kind: 'batch', batchId, projectId: project.id, taskId, eventIds, createdAt: new Date().toISOString() });
   entries.forEach(e => jiraQaPut(data, { id: `issue:${e.eventId.split('|').slice(0, 2).join('|')}`, kind: 'issue', issueId: e.issueId, key: e.key, projectId: project.id, eventId: e.eventId, enteredAt: new Date(e.enteredAt).toISOString(), taskId, batchId, processedAt: new Date().toISOString() }));
-  return { taskId, created };
+  return { taskId, created, batchId };
 };
 
 // The pipeline. `data` holds the app collections (the page's state, or a loaded DB in the
@@ -255,6 +255,7 @@ const jiraCreateQaTask = (data, project, entries, trigger, runAt) => {
 const jiraQaSync = async ({ data, trigger, save, onProgress = () => {} }) => {
   const runAt = Date.now();
   const projects = (data.projects || []).filter(p => p.jira && p.jira.projectKey);
+  const qaEvents = [];
   const sum = { kind: 'run', id: `run:${runAt}`, trigger, startedAt: new Date(runAt).toISOString(), finishedAt: '', projects: projects.length, synced: 0, tickets: 0, newQa: 0, tasks: 0, taskProjects: [], skipped: 0, failures: [], ok: false };
   for (const [n, p] of projects.entries()) {
     onProgress(`Syncing ${p.name} (${n + 1} of ${projects.length})…`);
@@ -272,8 +273,12 @@ const jiraQaSync = async ({ data, trigger, save, onProgress = () => {} }) => {
       sum.skipped += skipped;
       sum.newQa += entries.length;
       if (entries.length) {
-        const { created } = jiraCreateQaTask(data, p, entries, trigger, runAt);
-        if (created) { sum.tasks++; sum.taskProjects.push(p.name); }
+        const { created, taskId, batchId } = jiraCreateQaTask(data, p, entries, trigger, runAt);
+        if (created) {
+          sum.tasks++; sum.taskProjects.push(p.name);
+          qaEvents.push({ id: `qa:${batchId}`, type: 'qa-task', taskId, title: `QA task created: ${p.name}`,
+            body: `${entries.length} ticket${entries.length === 1 ? '' : 's'} ready for QA: ${entries.map(e => e.key).join(', ')}` });
+        }
       }
       // Advance only after this project's work is done; saved together with its task.
       jiraQaPut(data, { id: cpId, kind: 'checkpoint', projectId: p.id, link: linkSig, at: new Date(runAt).toISOString() });
@@ -288,6 +293,7 @@ const jiraQaSync = async ({ data, trigger, save, onProgress = () => {} }) => {
   const runs = (data.jiraQa || []).filter(r => r.kind === 'run').sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 19);
   data.jiraQa = [...(data.jiraQa || []).filter(r => r.kind !== 'run'), sum, ...runs];
   await save();
+  try { await notifyAdd(qaEvents); } catch (e) { /* the tasks exist; a missed notification is not fatal */ }
   return sum;
 };
 
@@ -298,3 +304,115 @@ const jiraQaSyncLocked = (opts) => navigator.locks.request(JIRA_QA_LOCK, { ifAva
   if (opts.prepare) await opts.prepare();
   return jiraQaSync(opts);
 });
+
+// ─── Notifications (shared by the page and the background worker) ───
+// Stored in chrome.storage.local (not the SQLite file), so the background watcher can
+// add notifications while a Clair page is open without racing the page's whole-file
+// saves; pages see new ones instantly through chrome.storage.onChanged. Every
+// read-modify-write of the list holds the "clair-notify" Web Lock.
+const NOTIFY_KEY = 'clairNotifications';           // [{ id, type, title, body, url, issueKey, taskId, author, at, read }], newest first
+const NOTIFY_SETTINGS_KEY = 'clairNotifySettings';
+const NOTIFY_WATCH_KEY = 'clairJiraWatch';          // watcher state: { lastPollAt, seen: [event ids] } (worker/page)
+const NOTIFY_PROJECTS_KEY = 'clairJiraWatchProjects'; // [{ key, name }] linked Jira projects, written by the page
+const NOTIFY_DEFAULTS = { sound: true, desktop: true, comments: true, status: true, updates: true, qaTasks: true, own: false };
+const NOTIFY_MAX = 300;
+const NOTIFY_TYPE_SETTING = { comment: 'comments', status: 'status', update: 'updates', 'qa-task': 'qaTasks' };
+const hasChromeStorage = () => typeof chrome !== 'undefined' && !!(chrome.storage && chrome.storage.local);
+const notifyLocked = (fn) => navigator.locks.request('clair-notify', fn);
+
+const notifySettings = async () => {
+  if (!hasChromeStorage()) return { ...NOTIFY_DEFAULTS };
+  return { ...NOTIFY_DEFAULTS, ...((await chrome.storage.local.get(NOTIFY_SETTINGS_KEY))[NOTIFY_SETTINGS_KEY] || {}) };
+};
+
+// Adds notifications (skipping ids already present and types switched off in Settings),
+// newest first, and shows desktop pop-ups when enabled. Returns the ones added.
+const notifyAdd = async (items) => {
+  if (!items.length || !hasChromeStorage()) return [];
+  const st = await notifySettings();
+  const wanted = items.filter(n => st[NOTIFY_TYPE_SETTING[n.type]] !== false);
+  if (!wanted.length) return [];
+  const fresh = await notifyLocked(async () => {
+    const cur = (await chrome.storage.local.get(NOTIFY_KEY))[NOTIFY_KEY] || [];
+    const have = new Set(cur.map(n => n.id));
+    const add = wanted.filter(n => !have.has(n.id)).map(n => ({ read: false, at: new Date().toISOString(), ...n }))
+      .sort((a, b) => b.at.localeCompare(a.at));
+    if (add.length) await chrome.storage.local.set({ [NOTIFY_KEY]: [...add, ...cur].slice(0, NOTIFY_MAX) });
+    return add;
+  });
+  if (fresh.length && st.desktop && chrome.notifications) {
+    const icon = chrome.runtime.getURL('assets/icon128.png');
+    const show = fresh.length > 4
+      ? [{ id: `clair-batch-${Date.now()}`, title: `${fresh.length} new Clair notifications`, body: fresh.slice(0, 3).map(n => n.title).join('\n') }]
+      : fresh;
+    show.forEach(n => chrome.notifications.create(n.id, { type: 'basic', iconUrl: icon, title: n.title, message: n.body || '', priority: 1 }, () => void chrome.runtime.lastError));
+  }
+  return fresh;
+};
+
+// Applies `fn(list)` → new list to the stored notifications (mark read, clear …).
+const notifyUpdate = (fn) => notifyLocked(async () => {
+  const cur = (await chrome.storage.local.get(NOTIFY_KEY))[NOTIFY_KEY] || [];
+  await chrome.storage.local.set({ [NOTIFY_KEY]: fn(cur) });
+});
+
+// Friendly field names for Jira changelog items.
+const JIRA_FIELD_LABEL = { assignee: 'assignee', priority: 'priority', summary: 'summary', description: 'description', duedate: 'due date', labels: 'labels', resolution: 'resolution', Sprint: 'sprint', 'Fix Version': 'fix version', issuetype: 'type', reporter: 'reporter', Attachment: 'attachment', 'Story Points': 'story points' };
+const JIRA_FIELD_IGNORE = new Set(['Rank', 'RemoteIssueLink', 'WorklogId', 'timeestimate', 'timeoriginalestimate', 'timespent', 'Workflow', 'Link']);
+
+// One watcher run: tickets updated since the last run in every linked Jira project →
+// comment / status / update notifications (your own changes skipped unless enabled).
+// The first run only records the starting point, so nothing old floods in.
+const jiraWatchPoll = async () => {
+  if (!hasChromeStorage() || typeof ClairJira === 'undefined') return { skipped: 'unavailable' };
+  const cfg = await ClairJira.getPublicConfig();
+  if (!cfg || !cfg.hasToken) return { skipped: 'not connected' };
+  const projects = (await chrome.storage.local.get(NOTIFY_PROJECTS_KEY))[NOTIFY_PROJECTS_KEY] || [];
+  if (!projects.length) return { skipped: 'no linked projects' };
+  const st = await notifySettings();
+  const w = (await chrome.storage.local.get(NOTIFY_WATCH_KEY))[NOTIFY_WATCH_KEY] || {};
+  const now = Date.now();
+  if (!w.lastPollAt) { await chrome.storage.local.set({ [NOTIFY_WATCH_KEY]: { lastPollAt: now, seen: [] } }); return { started: true }; }
+  const since = w.lastPollAt - 60000; // one-minute overlap; duplicates are filtered by id
+  const minutes = Math.min(7 * 24 * 60, (now - since) / 60000 + 1);
+  const issues = await ClairJira.searchUpdated({ projectKeys: projects.map(p => p.key), minutes });
+  const seen = new Set(w.seen || []);
+  const mine = (id) => !st.own && cfg.accountId && id === cfg.accountId;
+  const events = [];
+  for (const i of issues.slice(0, 60)) {
+    const base = `jira:${cfg.site}:${i.id}`;
+    if (st.status || st.updates) {
+      for (const h of await ClairJira.getRecentHistory(i.id)) {
+        if (jiraTime(h.created) < since || mine(h.authorId)) continue;
+        const items = h.items.filter(it => !JIRA_FIELD_IGNORE.has(it.field));
+        const statusItem = items.find(it => it.fieldId === 'status' || it.field === 'status');
+        const assigneeItem = items.find(it => it.field === 'assignee');
+        const others = items.filter(it => it !== statusItem && it !== assigneeItem);
+        const at = new Date(jiraTime(h.created) || now).toISOString();
+        if (statusItem) events.push({ id: `${base}:h:${h.id}:s`, type: 'status', at, issueKey: i.key, url: i.url, author: h.author,
+          title: `${i.key} moved to ${statusItem.to}`, body: `${h.author}: ${statusItem.from || '—'} → ${statusItem.to} · ${i.summary}` });
+        if (assigneeItem) events.push({ id: `${base}:h:${h.id}:a`, type: 'update', at, issueKey: i.key, url: i.url, author: h.author,
+          title: assigneeItem.to ? `${i.key} assigned to ${assigneeItem.to}` : `${i.key} unassigned`, body: `${h.author} · ${i.summary}` });
+        if (others.length) {
+          const fields = [...new Set(others.map(it => JIRA_FIELD_LABEL[it.field] || String(it.field).toLowerCase()))];
+          events.push({ id: `${base}:h:${h.id}:u`, type: 'update', at, issueKey: i.key, url: i.url, author: h.author,
+            title: `${i.key} updated`, body: `${h.author} changed ${fields.join(', ')} · ${i.summary}` });
+        }
+      }
+    }
+    if (st.comments) {
+      for (const c of await ClairJira.getRecentComments(i.id)) {
+        if (jiraTime(c.created) < since || mine(c.authorId)) continue;
+        const text = String(c.text || '').replace(/\s+/g, ' ').trim();
+        events.push({ id: `${base}:c:${c.id}`, type: 'comment', at: new Date(jiraTime(c.created) || now).toISOString(), issueKey: i.key, url: i.url, author: c.author,
+          title: `${c.author} commented on ${i.key}`, body: text.length > 160 ? text.slice(0, 157) + '…' : (text || i.summary) });
+      }
+    }
+  }
+  const fresh = events.filter(e => !seen.has(e.id));
+  const added = await notifyAdd(fresh);
+  fresh.forEach(e => seen.add(e.id));
+  await chrome.storage.local.set({ [NOTIFY_WATCH_KEY]: { lastPollAt: now, seen: [...seen].slice(-800) } });
+  return { checked: issues.length, added: added.length };
+};
+const jiraWatchPollLocked = () => navigator.locks.request('clair-jira-watch', { ifAvailable: true }, async (lock) => lock ? jiraWatchPoll() : { busy: true });

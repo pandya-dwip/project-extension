@@ -120,6 +120,7 @@ const storage = {
   },
 
   async save() {
+    setTimeout(() => { try { syncWatchProjects(); } catch (e) { /* page still starting */ } }, 0);
     return ClairDB.save({
       projects: state.projects,
       tasks: state.tasks,
@@ -2338,6 +2339,213 @@ const renderJiraIssuePanel = (p, rec, i) => {
 const jiraResetFilters = () => { state.jiraFilters = { q: '', cat: '', type: '', assignee: '', sort: 'key-desc', page: 1, size: (state.jiraFilters && state.jiraFilters.size) || 25 }; };
 
 
+// ─── Notifications (page) ─────────────────────────────────
+// The list lives in chrome.storage.local (see jiracore.js). This page mirrors it in
+// state.notifications, updates the bell/badges, plays the chime and re-renders the
+// Notifications page whenever the watcher (background) adds something.
+const NOTIFY_TYPES = [
+  { key: 'comment', label: 'Comments', color: 'var(--info)', icon: '<path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>' },
+  { key: 'status', label: 'Status changes', color: 'var(--violet)', icon: '<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>' },
+  { key: 'update', label: 'Updates', color: 'var(--warning)', icon: '<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>' },
+  { key: 'qa-task', label: 'QA tasks', color: 'var(--accent)', icon: '<path d="M9 12l2 2 4-4"/><rect x="3" y="4" width="18" height="18" rx="2"/>' }
+];
+const NOTIFY_BELL = '<path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/>';
+
+// A short two-note chime, synthesised (no sound file). Browsers only allow audio after
+// the page has been interacted with once, so the audio context is unlocked on the
+// first click/keypress; Clair stays open, so that happens early in the day.
+let notifyAudio = null;
+const notifyAudioCtx = () => {
+  try {
+    notifyAudio = notifyAudio || new (window.AudioContext || window.webkitAudioContext)();
+    if (notifyAudio.state === 'suspended') notifyAudio.resume();
+  } catch (e) { notifyAudio = null; }
+  return notifyAudio;
+};
+['pointerdown', 'keydown'].forEach(ev => document.addEventListener(ev, () => { if (!notifyAudio || notifyAudio.state === 'suspended') notifyAudioCtx(); }, { capture: true, passive: true }));
+const clairChime = () => {
+  document.documentElement.dataset.lastChime = String(Date.now()); // lets tests (and devtools) see a chime was played
+  const ctx = notifyAudioCtx();
+  if (!ctx) return;
+  const t0 = ctx.currentTime + 0.02;
+  [[784, 0], [1175, 0.14]].forEach(([freq, delay]) => {
+    const osc = ctx.createOscillator(), gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.0001, t0 + delay);
+    gain.gain.exponentialRampToValueAtTime(0.2, t0 + delay + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + delay + 0.5);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t0 + delay);
+    osc.stop(t0 + delay + 0.55);
+  });
+};
+
+const updateNotifyBadge = () => {
+  const n = (state.notifications || []).filter(x => !x.read).length;
+  document.querySelectorAll('[data-notify-badge]').forEach(el => { el.textContent = n > 99 ? '99+' : String(n); el.hidden = !n; });
+  const bell = document.getElementById('notifBellBtn');
+  if (bell) bell.setAttribute('aria-label', n ? `Notifications, ${n} unread` : 'Notifications');
+};
+const notifyLoad = async () => {
+  if (!hasChromeStorage()) return;
+  state.notifications = (await chrome.storage.local.get(NOTIFY_KEY))[NOTIFY_KEY] || [];
+  state.notifySettings = await notifySettings();
+  updateNotifyBadge();
+};
+// Tell the background watcher which Jira projects are linked (it can't read the DB safely).
+let watchProjectsSig = null;
+const syncWatchProjects = () => {
+  if (!hasChromeStorage()) return;
+  const list = (state.projects || []).filter(p => p.jira && p.jira.projectKey).map(p => ({ key: p.jira.projectKey, name: p.name }));
+  const sig = JSON.stringify(list);
+  if (sig === watchProjectsSig) return;
+  watchProjectsSig = sig;
+  chrome.storage.local.set({ [NOTIFY_PROJECTS_KEY]: list });
+};
+if (hasChromeStorage()) {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    if (changes[NOTIFY_SETTINGS_KEY]) state.notifySettings = { ...NOTIFY_DEFAULTS, ...(changes[NOTIFY_SETTINGS_KEY].newValue || {}) };
+    if (!changes[NOTIFY_KEY]) return;
+    const before = new Set((state.notifications || []).map(n => n.id));
+    state.notifications = changes[NOTIFY_KEY].newValue || [];
+    const fresh = state.notifications.filter(n => !before.has(n.id) && !n.read);
+    updateNotifyBadge();
+    if (fresh.length) {
+      if ((state.notifySettings || NOTIFY_DEFAULTS).sound) clairChime();
+      showToast(fresh.length === 1 ? fresh[0].title : `${fresh.length} new notifications`);
+    }
+    if (state.view === 'notifications') render();
+  });
+}
+if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+  chrome.runtime.onMessage.addListener((msg) => { if (msg && msg.type === 'clair-open-notifications') setView('notifications'); });
+}
+const topbarDate = document.getElementById('topbarDate');
+if (topbarDate) topbarDate.textContent = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+const notifBellBtn = document.getElementById('notifBellBtn');
+if (notifBellBtn) notifBellBtn.addEventListener('click', () => setView('notifications'));
+
+let notifyChecking = false;
+const runNotifyCheck = async () => {
+  if (notifyChecking) return;
+  notifyChecking = true;
+  render();
+  try {
+    const r = await jiraWatchPollLocked();
+    if (r.busy) showToast('A check is already running');
+    else if (r.started) showToast('Started watching Jira — changes from now on will appear here');
+    else if (r.skipped === 'not connected') showToast('Connect Jira in Settings → Integrations first', 'error');
+    else if (r.skipped === 'no linked projects') showToast('Link a project to Jira first (project Edit form)', 'error');
+    else if (r.skipped) showToast('Notifications are available in the installed extension only', 'error');
+    else showToast(r.added ? `${r.added} new notification${r.added === 1 ? '' : 's'}` : 'No new changes in Jira');
+  } catch (e) {
+    showToast(`Couldn't check Jira — ${jiraErrorText(e)}`, 'error');
+  } finally {
+    notifyChecking = false;
+    render();
+  }
+};
+
+const renderNotifications = () => {
+  const all = state.notifications || [];
+  const f = state.notifyFilter || '';
+  const typeOf = (k) => NOTIFY_TYPES.find(t => t.key === k) || NOTIFY_TYPES[2];
+  const unread = all.filter(n => !n.read).length;
+  const dayKey = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const now = new Date();
+  const todayKey = dayKey(now);
+  const y = new Date(now); y.setDate(now.getDate() - 1);
+  const count = (k) => all.filter(n => n.type === k).length;
+  const hero = buildPageHero({
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${NOTIFY_BELL}</svg>`,
+    title: 'Notifications',
+    subtitle: 'Comments, status changes and updates in your linked Jira projects, and automatic QA tasks — checked every 30 seconds.',
+    stats: [
+      { label: 'Unread', value: unread, color: unread ? '#fbbf24' : undefined },
+      { label: 'Today', value: all.filter(n => dayKey(new Date(n.at)) === todayKey).length },
+      ...NOTIFY_TYPES.map(t => ({ label: t.label, value: count(t.key) }))
+    ]
+  });
+  const connected = jiraAvailable() && jiraConnected();
+  const linked = (state.projects || []).some(p => p.jira && p.jira.projectKey);
+  const setup = !jiraAvailable() ? 'Notifications work in the installed extension only.'
+    : !connected ? 'Connect Jira in Settings → Integrations to get notifications about your tickets.'
+    : !linked ? 'Link a Clair project to a Jira project (project Edit form) to get notifications about its tickets.' : '';
+  const chip = (k, l, n) => `<button type="button" class="rpa-chip ${f === k ? 'active' : ''}" data-action="notif-filter" data-filter="${k}">${l} <span>${n}</span></button>`;
+  const list = all.filter(n => !f || (f === 'unread' ? !n.read : n.type === f));
+  const groups = [];
+  list.forEach(n => {
+    const d = new Date(n.at);
+    const k = dayKey(d);
+    let g = groups[groups.length - 1];
+    if (!g || g.k !== k) {
+      g = { k, label: k === todayKey ? 'Today' : k === dayKey(y) ? 'Yesterday' : d.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' }), items: [] };
+      groups.push(g);
+    }
+    g.items.push(n);
+  });
+  const item = (n) => {
+    const t = typeOf(n.type);
+    return `
+      <div class="nt-item ${n.read ? '' : 'unread'}" style="--c:${t.color}" data-action="notif-open" data-nid="${escapeHtml(n.id)}" role="button" tabindex="0">
+        <span class="act-icon nt-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${t.icon}</svg></span>
+        <div class="nt-main">
+          <div class="nt-title">${escapeHtml(n.title)}</div>
+          ${n.body ? `<div class="nt-body">${escapeHtml(n.body)}</div>` : ''}
+          <div class="nt-meta">${escapeHtml(t.label)}${n.url ? ' · opens in Jira' : n.taskId ? ' · opens the task' : ''}</div>
+        </div>
+        <time class="act-time" datetime="${escapeHtml(n.at)}">${fmtTime(n.at)}</time>
+        <button type="button" class="icon-btn nt-read" data-action="notif-toggle-read" data-nid="${escapeHtml(n.id)}" title="${n.read ? 'Mark as unread' : 'Mark as read'}" aria-label="${n.read ? 'Mark as unread' : 'Mark as read'}">
+          ${n.read ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/></svg>' : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>'}
+        </button>
+      </div>`;
+  };
+  return `
+    ${hero}
+    ${setup ? `<div class="jd-notice nt-notice">${escapeHtml(setup)}${jiraAvailable() && !connected ? ' <button type="button" class="rpa-link" data-action="jira-go-settings">Open Settings</button>' : ''}</div>` : ''}
+    <div class="filters-bar tk-toolbar std-toolbar">
+      <div class="act-chips">${chip('', 'All', all.length)}${chip('unread', 'Unread', unread)}${NOTIFY_TYPES.map(t => chip(t.key, t.label, count(t.key))).join('')}</div>
+      <div class="rpa-toolbar-right">
+        <button type="button" class="btn-ghost st-btn" data-action="notif-settings">Settings</button>
+        <button type="button" class="btn-ghost st-btn" data-action="notif-clear-read" ${all.some(n => n.read) ? '' : 'disabled'}>Clear read</button>
+        <button type="button" class="btn-ghost st-btn" data-action="notif-mark-all" ${unread ? '' : 'disabled'}>Mark all read</button>
+        <button type="button" class="btn-primary st-btn" data-action="notif-check-now" ${notifyChecking || !connected ? 'disabled' : ''}>${notifyChecking ? 'Checking…' : 'Check now'}</button>
+      </div>
+    </div>
+    ${groups.length ? `<div class="act-timeline">${groups.map(g => `
+      <section class="act-day">
+        <h3 class="act-day-title">${g.label}<span class="rpa-group-count">${g.items.length}</span></h3>
+        <div class="act-items">${g.items.map(item).join('')}</div>
+      </section>`).join('')}</div>` : `
+      <div class="rpa-empty">
+        <span class="rpa-empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${NOTIFY_BELL}</svg></span>
+        <h3>${all.length ? 'Nothing here' : 'You’re all caught up'}</h3>
+        <p>${all.length ? 'No notifications match this filter.' : 'New comments, status changes and updates in your linked Jira projects will appear here.'}</p>
+      </div>`}
+  `;
+};
+
+// Settings → Notifications.
+const renderNotifySettings = () => {
+  const ns = state.notifySettings || NOTIFY_DEFAULTS;
+  const tg = (k, label) => `<label class="switch-toggle" title="${label}"><input type="checkbox" data-notify-setting="${k}" ${ns[k] ? 'checked' : ''} aria-label="${label}" /><span class="switch-slider"></span></label>`;
+  return stSection('Alerts', 'How Clair tells you about something new.', `
+      <div class="st-list">
+        ${stRow('Sound', 'Play a short chime when a notification arrives while Clair is open.', `<button type="button" class="btn-ghost st-btn" data-action="notify-test-sound">Play</button>${tg('sound', 'Sound')}`)}
+        ${stRow('Desktop notifications', 'Also show a Windows notification — useful when Clair is in the background.', tg('desktop', 'Desktop notifications'))}
+      </div>`) +
+    stSection('What to notify about', 'Clair checks your linked Jira projects every 30 seconds while Chrome is running.', `
+      <div class="st-list">
+        ${stRow('Comments', 'Someone comments on a ticket.', tg('comments', 'Comments'))}
+        ${stRow('Status changes', 'A ticket moves to another status.', tg('status', 'Status changes'))}
+        ${stRow('Other updates', 'Assignee, priority, summary and other field changes.', tg('updates', 'Other updates'))}
+        ${stRow('QA tasks created', 'The Jira sync creates a “Ticket closing” task.', tg('qaTasks', 'QA tasks created'))}
+        ${stRow('Include my own changes', 'Also notify about changes you make in Jira yourself.', tg('own', 'Include my own changes'))}
+      </div>`);
+};
+
 // ─── Navigation ──────────────────────────────────────────
 const setView = (view) => {
   if (state.view === 'notes' && state.activeNoteId) {
@@ -2372,16 +2580,13 @@ const setView = (view) => {
     releases: 'Release Management',
     releasepoints: 'Release Points',
     jira: 'Jira',
+    notifications: 'Notifications',
     testcases: 'Test Case Management',
     notes: 'Notes',
     developers: 'Developer Management',
     activity: 'Activity',
     settings: 'Settings'
   };
-
-  // Show/hide topbar buttons based on view
-  const addReleaseBtn = document.getElementById('addReleaseBtn');
-  if (addReleaseBtn) addReleaseBtn.style.display = view === 'releases' ? '' : 'none';
 
   document.getElementById('pageTitle').textContent = titles[view] || 'Clair';
   render();
@@ -2420,6 +2625,7 @@ const render = () => {
     case 'releases': ct.innerHTML = renderReleases(); break;
     case 'releasepoints': ct.innerHTML = renderReleasePoints(); break;
     case 'jira': ct.innerHTML = renderJiraPage(); break;
+    case 'notifications': ct.innerHTML = renderNotifications(); break;
     case 'testcases': ct.innerHTML = renderTestCaseManagement(); break;
     case 'notes': ct.innerHTML = renderNotes(); break;
     case 'developers': ct.innerHTML = renderDevelopers(); break;
@@ -3373,6 +3579,7 @@ const renderProjects = () => {
           Kanban
         </button>
       </div>
+      <button type="button" class="btn-primary st-btn tb-new" data-action="new-project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>New Project</button>
     </div>
 
     ${viewContent}
@@ -3418,97 +3625,53 @@ const renderKanbanBoard = (projects, q = '') => {
 };
 
 const renderKanbanCard = (p, q = '') => {
+  const hl = (v) => highlight(escapeHtml(v), q);
   const isApp = p.projectType === 'app';
-  const statusPills = (p.statuses || []).map(s => statusPill(s)).join('');
-
-  const clientLine = p.clientName ? `
-    <div class="kanban-meta-item" title="Client">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-      <span>${highlight(escapeHtml(p.clientName), q)}</span>
-    </div>
-  ` : '';
-
-  const teamLine = p.assignedTeam ? `
-    <div class="kanban-meta-item" title="Assigned Team">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-      <span>${highlight(p.assignedTeam, q)}</span>
-    </div>
-  ` : '';
-
-  const dueDateLine = p.dueDate ? `
-    <div class="kanban-meta-item" title="Due Date">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-      <span>${fmtDate(p.dueDate)}</span>
-    </div>
-  ` : '';
-
-  const priorityBadge = p.priority ? `
-    <span class="kanban-priority-badge ${p.priority.toLowerCase()}">${p.priority}</span>
-  ` : '';
-
+  const statuses = p.statuses || [];
   const projTasks = state.tasks.filter(t => (t.projectIds || []).includes(p.id));
-  const completedTasks = projTasks.filter(t => t.status === 'Done').length;
-  const progressPct = projTasks.length === 0 ? 0 : Math.round((completedTasks / projTasks.length) * 100);
-  const progressHtml = projTasks.length > 0 ? `
-    <div class="kanban-card-progress" title="${completedTasks} of ${projTasks.length} tasks completed">
-      <div class="kanban-card-progress-bar">
-        <div class="kanban-card-progress-fill" style="width: ${progressPct}%;"></div>
-      </div>
-      <span class="kanban-card-progress-text">${progressPct}%</span>
-    </div>
-  ` : '';
-
-  const typeBadge = isApp
-    ? `<span class="project-type-badge app" style="font-size: 9px; padding: 1px 6px;">App</span>`
-    : `<span class="project-type-badge web" style="font-size: 9px; padding: 1px 6px;">Web</span>`;
-
-  const assignedDevs = (state.developers || []).filter(d => (d.projectIds || []).some(pid => String(pid) === String(p.id)));
-  const devsLine = `
-    <div class="kanban-meta-item" title="Assigned Developers" style="align-items: center;">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;flex-shrink:0;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-      <div class="kanban-devs-wrap">
-        ${assignedDevs.length > 0 ? assignedDevs.map(d => {
-    const initials = d.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() || 'DV';
-    const avatarBg = getAvatarGradient(d.name);
-    return `<span class="kanban-dev-avatar" style="background: ${avatarBg};" title="${escapeHtml(d.name)}">${initials}</span><span class="kanban-dev-name-text">${highlight(d.name, q)}</span>`;
-  }).join('') : '<span style="font-size:11px;color:var(--text-muted);font-style:italic;">No developers</span>'}
-      </div>
-    </div>
-  `;
-
+  const done = projTasks.filter(t => t.status === 'Done').length;
+  const pct = projTasks.length ? Math.round(done / projTasks.length * 100) : 0;
+  const devs = (state.developers || []).filter(d => (d.projectIds || []).some(pid => String(pid) === String(p.id)));
+  const initials = (n) => n.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || 'DV';
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const overdue = p.dueDate && (p.overallProjectStatus || 'YET_TO_START') !== 'COMPLETED' && new Date(p.dueDate) < today;
+  const sub = [p.clientName, p.assignedTeam].filter(Boolean);
+  const prio = (p.priority || '').toLowerCase();
   return `
-    <div class="kanban-card" data-id="${p.id}" draggable="true">
-      <div class="kanban-card-header" style="display:flex; justify-content:space-between; align-items:flex-start; gap: 8px; margin-bottom: 6px;">
-        <h4 class="kanban-card-title">${highlight(p.name, q)}</h4>
-        ${typeBadge}
-      </div>
-      
-      ${p.description ? `<div class="kanban-card-desc">${highlight(trimText(p.description, 80), q)}</div>` : ''}
-      
-      <div class="kanban-card-meta">
-        ${clientLine}
-        ${teamLine}
-        ${devsLine}
-        ${dueDateLine}
-      </div>
-
-      <div class="kanban-card-statuses" style="display:flex; flex-wrap:wrap; gap:4px; margin-top: 8px;">
-        ${statusPills}
-      </div>
-
-      ${progressHtml}
-
-      <div class="kanban-card-footer">
-        ${priorityBadge}
-        <div class="kanban-card-actions">
-          ${projectDetailsBtn(p.id)}
-          <button class="icon-btn" data-action="edit-project" data-id="${p.id}" aria-label="Edit" title="Edit" style="padding:4px; width:24px; height:24px;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px; height:13px;"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-          </button>
-          <button class="icon-btn danger" data-action="delete-project" data-id="${p.id}" aria-label="Delete" title="Delete" style="padding:4px; width:24px; height:24px;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px; height:13px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
-          </button>
+    <div class="kanban-card pk-card" data-id="${p.id}" draggable="true">
+      <div class="pk-top">
+        <div class="pk-titles">
+          <h4 class="kanban-card-title">${hl(p.name)}</h4>
+          ${sub.length ? `<span class="pk-sub">${sub.map(hl).join(' · ')}</span>` : ''}
         </div>
+        <span class="pk-type ${isApp ? 'app' : 'web'}">${isApp ? 'App' : 'Web'}</span>
+      </div>
+      ${p.description ? `<p class="pk-desc">${hl(p.description)}</p>` : ''}
+      ${statuses.length ? `<div class="pk-statuses">${statuses.slice(0, 3).map(st => statusPill(st)).join('')}${statuses.length > 3 ? `<span class="pk-more">+${statuses.length - 3}</span>` : ''}</div>` : ''}
+      ${projTasks.length ? `
+        <div class="pk-progress" title="${done} of ${projTasks.length} tasks done">
+          <div class="pk-progress-head"><span>Tasks ${done}/${projTasks.length}</span><strong>${pct}%</strong></div>
+          <div class="pk-bar"><span style="width:${pct}%"></span></div>
+        </div>` : ''}
+      <div class="pk-foot">
+        <div class="pk-devs" title="${escapeHtml(devs.map(d => d.name).join(', ') || 'No developers')}">
+          ${devs.length ? devs.slice(0, 4).map(d => `<span class="pk-avatar" style="background:${getAvatarGradient(d.name)}">${initials(d.name)}</span>`).join('') + (devs.length > 4 ? `<span class="pk-avatar more">+${devs.length - 4}</span>` : '') : '<span class="pk-none">No developers</span>'}
+        </div>
+        <div class="pk-chips">
+          ${p.dueDate ? `<span class="pk-due ${overdue ? 'overdue' : ''}" title="${overdue ? 'Overdue — due' : 'Due'} ${fmtDate(p.dueDate)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>${new Date(p.dueDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span>` : ''}
+          ${p.priority ? `<span class="pk-prio ${prio}">${escapeHtml(p.priority)}</span>` : ''}
+        </div>
+      </div>
+      <div class="pk-actions">
+        ${projectDetailsBtn(p.id)}
+        <span class="pk-actions-right">
+          <button class="icon-btn" data-action="edit-project" data-id="${p.id}" aria-label="Edit project" title="Edit">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <button class="icon-btn danger" data-action="delete-project" data-id="${p.id}" aria-label="Delete project" title="Delete">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+          </button>
+        </span>
       </div>
     </div>
   `;
@@ -4165,6 +4328,7 @@ const renderTasks = () => {
       ` : ''}
       <span class="rpa-showing tk-showing">${filtersActive ? `${tasks.length} of ${totalTasks} tasks` : `${totalTasks} tasks`}</span>
 
+      <button type="button" class="btn-primary st-btn tb-new" data-action="new-task"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>New Task</button>
     </div>
 
     <div class="kanban-board tk-board">
@@ -4609,6 +4773,7 @@ const renderTests = () => {
       ${(state.testFilters.project || state.testFilters.developer || state.testFilters.status || state.testFilters.assignedStatus) ? `
         <button class="btn-ghost" id="clearTestFilters" style="font-size:12px;padding:6px 10px">Clear filters</button>
       ` : ''}
+      <button type="button" class="btn-primary st-btn tb-new" data-action="new-insight"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>New Insight</button>
     </div>
 
     <div class="test-kanban-board">
@@ -5740,6 +5905,7 @@ const SETTINGS_SECTIONS = [
   { key: 'modules', label: 'Modules', desc: 'Sidebar navigation', icon: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>' },
   { key: 'data', label: 'Data & Backups', desc: 'Export, import, auto-backup', icon: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/>' },
   { key: 'integrations', label: 'Integrations', desc: 'Jira Cloud', icon: '<path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>' },
+  { key: 'notifications', label: 'Notifications', desc: 'Sound & alerts', icon: '<path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/>' },
   { key: 'danger', label: 'Danger Zone', desc: 'Clear all data', icon: '<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01"/>', danger: true }
 ];
 
@@ -5773,6 +5939,7 @@ const renderSettings = () => {
     { key: 'testcases', label: 'Test Case Management', desc: 'Test scenarios & execution', icon: `<path d="M9 3v7.2a4 4 0 01-1.3 2.9l-3.4 3.1A2 2 0 005.7 20h12.6a2 2 0 001.4-3.8l-3.4-3.1A4 4 0 0115 10.2V3"/>` },
     { key: 'releases', label: 'Release Management', desc: 'Release versions & changelogs', icon: `<line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><polygon points="12 22.08 12 12 3 6.92 3 17.08 12 22.08"/>` },
     { key: 'releasepoints', label: 'Release Points', desc: 'Detailed release checklist items', icon: `<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>` },
+    { key: 'notifications', label: 'Notifications', desc: 'Jira changes & QA task alerts', icon: `<path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/>` },
     { key: 'jira', label: 'Jira', desc: 'Jira tickets of linked projects', icon: `<path d="M12 2L2 12l10 10 10-10L12 2z"/><path d="M12 8l-4 4 4 4 4-4-4-4z"/>` },
     { key: 'developers', label: 'Developers', desc: 'Developer project mapping', icon: `<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/>` },
     { key: 'activity', label: 'Activity', desc: 'System activity & change logs', icon: `<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>` },
@@ -5796,7 +5963,7 @@ const renderSettings = () => {
       { key: 'light', label: 'Light', desc: 'Bright & crisp' },
       { key: 'dark', label: 'Dark', desc: 'Easy on the eyes' }
     ];
-    const views = [['dashboard', 'Dashboard'], ['projects', 'Projects'], ['tasks', 'Tasks'], ['notes', 'Notes'], ['calendar', 'Calendar'], ['tests', 'Project Insights'], ['testcases', 'Test Case Management'], ['releases', 'Release Management'], ['releasepoints', 'Release Points'], ['jira', 'Jira'], ['developers', 'Developer Management'], ['activity', 'Activity']];
+    const views = [['dashboard', 'Dashboard'], ['projects', 'Projects'], ['tasks', 'Tasks'], ['notes', 'Notes'], ['calendar', 'Calendar'], ['tests', 'Project Insights'], ['testcases', 'Test Case Management'], ['releases', 'Release Management'], ['releasepoints', 'Release Points'], ['jira', 'Jira'], ['notifications', 'Notifications'], ['developers', 'Developer Management'], ['activity', 'Activity']];
     body = stSection('Appearance', 'Choose how Clair looks. System follows your operating system’s light/dark setting.', `
       <div class="st-themes" id="themeToggle" role="radiogroup" aria-label="Theme">
         ${themes.map(t => `
@@ -5854,6 +6021,8 @@ const renderSettings = () => {
           ${stat((state.developers || []).length, 'Developers')}
           ${stat(`${dbSizeKb} KB`, 'Data size')}
         </div>`);
+  } else if (section === 'notifications') {
+    body = renderNotifySettings();
   } else if (section === 'integrations') {
     body = stSection('Jira Cloud', 'Connect your own Jira account to import tickets into Release Points. Link Clair projects to Jira projects from the project form.', renderJiraBox(),
       `<span class="st-brand">${stIcon('<path d="M12 2L2 12l10 10 10-10L12 2z"/><path d="M12 8l-4 4 4 4 4-4-4-4z"/>')}</span>`);
@@ -5965,7 +6134,7 @@ const attachCardListeners = () => {
   // Click delegation
   // Jira ticket rows are clickable; Enter/Space toggle them too.
   content.addEventListener('keydown', e => {
-    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('tr.jd-row')) { e.preventDefault(); e.target.click(); }
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('tr.jd-row, .nt-item, .rl-row')) { e.preventDefault(); e.target.click(); }
   });
   content.addEventListener('click', async e => {
     const toggleBtn = e.target.closest('.view-toggle-btn[data-view-mode]');
@@ -6029,6 +6198,9 @@ const attachCardListeners = () => {
       const cardId = id || (card ? card.dataset.id : null);
 
       if (action === 'new-project') openProjectModal();
+      else if (action === 'new-task') openTaskModal();
+      else if (action === 'new-insight') openTestModal();
+      else if (action === 'new-release') openReleaseModal();
       else if (action === 'new-release-pt') openReleasePtModal();
       else if (action === 'open-release-pt') openReleasePointOnPage(cardId);
       else if (action === 'rpa-toggle') toggleRpAccordion(cardId);
@@ -6173,6 +6345,21 @@ const attachCardListeners = () => {
         month--; if (month < 0) { month = 11; year--; }
         state.calendarMonth = { year, month };
         render();
+      }
+      else if (action === 'notif-filter') { state.notifyFilter = btn.dataset.filter; render(); }
+      else if (action === 'notif-check-now') runNotifyCheck();
+      else if (action === 'notif-mark-all') notifyUpdate(list => list.map(n => ({ ...n, read: true })));
+      else if (action === 'notif-clear-read') notifyUpdate(list => list.filter(n => !n.read));
+      else if (action === 'notif-settings') { state.settingsSection = 'notifications'; setView('settings'); }
+      else if (action === 'notify-test-sound') clairChime();
+      else if (action === 'notif-toggle-read') { const id = btn.dataset.nid; notifyUpdate(list => list.map(n => n.id === id ? { ...n, read: !n.read } : n)); }
+      else if (action === 'notif-open') {
+        const n = (state.notifications || []).find(x => x.id === btn.dataset.nid);
+        if (n) {
+          if (!n.read) notifyUpdate(list => list.map(x => x.id === n.id ? { ...x, read: true } : x));
+          if (n.url) window.open(n.url, '_blank', 'noopener');
+          else if (n.taskId && state.tasks.some(t => t.id === n.taskId)) openDetailModal('task', n.taskId);
+        }
       }
       else if (action === 'release-status') { state.releaseFilters.status = state.releaseFilters.status === btn.dataset.status ? '' : btn.dataset.status; render(); }
       else if (action === 'activity-filter') { state.activityFilter = btn.dataset.filter; render(); }
@@ -6650,6 +6837,14 @@ const attachCardListeners = () => {
       state.jiraFilters[k] = k === 'size' ? Number(jiraFilter.value) : jiraFilter.value;
       state.jiraFilters.page = 1;
       render(); return;
+    }
+    const nset = e.target.closest('[data-notify-setting]');
+    if (nset) {
+      const next = { ...(state.notifySettings || NOTIFY_DEFAULTS), [nset.dataset.notifySetting]: nset.checked };
+      state.notifySettings = next;
+      if (hasChromeStorage()) chrome.storage.local.set({ [NOTIFY_SETTINGS_KEY]: next });
+      if (nset.dataset.notifySetting === 'sound' && nset.checked) clairChime();
+      return;
     }
     const jiraTr = e.target.closest('[data-jira-transition]');
     if (jiraTr) {
@@ -8110,6 +8305,7 @@ const renderReleases = () => {
       </select>
       ${filtered ? `<button class="btn-ghost" id="clearReleaseFilters" style="font-size:12px;padding:6px 10px">Clear filters</button>` : ''}
       <span class="rpa-showing tk-showing">${filtered ? `${list.length} of ${all.length} releases` : `${all.length} releases`}</span>
+      <button type="button" class="btn-primary st-btn tb-new" data-action="new-release"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>New Release</button>
     </div>`;
 
   if (!list.length) {
@@ -12852,6 +13048,8 @@ const init = async () => {
   state.jiraPending = data.jiraPending || [];
   state.jiraQa = data.jiraQa || [];
   if (jiraQaUpgradeDescriptions(state)) await storage.save(); // older auto QA tasks get the current description format
+  syncWatchProjects();
+  notifyLoad().then(() => { if (location.hash === '#notifications') { history.replaceState(null, '', location.pathname); setView('notifications'); } });
   state.projectsViewMode = await ClairDB.getPref('projects_view_mode', 'list');
   state.theme = await ClairDB.getPref('theme', 'light');
   applyTheme(state.theme);
@@ -12948,12 +13146,6 @@ const init = async () => {
   });
 
   // Modals
-  document.getElementById('addProjectBtn').addEventListener('click', () => openProjectModal());
-  document.getElementById('addTaskBtn').addEventListener('click', () => openTaskModal());
-  document.getElementById('addTestBtn').addEventListener('click', () => openTestModal());
-  document.getElementById('addReleaseBtn').addEventListener('click', () => openReleaseModal());
-  document.getElementById('addTestCaseBtn').addEventListener('click', () => openTestCaseModal());
-  document.getElementById('addReleasePtBtn').addEventListener('click', () => openReleasePtModal());
   document.getElementById('saveProject').addEventListener('click', saveProject);
   document.getElementById('saveTask').addEventListener('click', saveTask);
   document.getElementById('saveTest').addEventListener('click', saveTest);

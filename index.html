@@ -138,6 +138,14 @@
             </svg>
             <span>Developers</span>
           </button>
+          <button class="nav-item" data-view="notifications">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
+              <path d="M13.73 21a2 2 0 01-3.46 0" />
+            </svg>
+            <span>Notifications</span>
+            <span class="nav-badge" data-notify-badge hidden>0</span>
+          </button>
           <button class="nav-item" data-view="activity">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
               <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
@@ -166,71 +174,42 @@
       <!-- Header -->
       <header class="topbar">
         <div class="topbar-left">
-          <button class="menu-btn" id="menuBtn">
+          <button class="menu-btn" id="menuBtn" aria-label="Open menu">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M3 12h18M3 6h18M3 18h18" />
             </svg>
           </button>
-          <h1 class="page-title" id="pageTitle">Dashboard</h1>
+          <div class="topbar-titles">
+            <h1 class="page-title" id="pageTitle">Dashboard</h1>
+            <span class="topbar-date" id="topbarDate"></span>
+          </div>
         </div>
         <div class="topbar-right">
           <input type="file" id="importInput" style="display: none;" accept=".json" />
-          <button class="btn-ghost" id="importBtn" title="Import Data">
+          <div class="topbar-group" role="group" aria-label="Data">
+            <button class="topbar-btn" id="importBtn" title="Import data from a JSON backup">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+              <span>Import</span>
+            </button>
+            <button class="topbar-btn" id="exportBtn" title="Export all data as a JSON backup">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              <span>Export</span>
+            </button>
+          </div>
+          <button class="topbar-btn topbar-icon topbar-bell" id="notifBellBtn" title="Notifications" aria-label="Notifications">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
+              <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
+              <path d="M13.73 21a2 2 0 01-3.46 0" />
             </svg>
-            <span>Import</span>
-          </button>
-          <button class="btn-ghost" id="exportBtn" title="Export Data">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-            <span>Export</span>
-          </button>
-          <button class="btn-ghost" id="addTestBtn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" />
-              <rect x="9" y="3" width="6" height="4" rx="1" />
-              <path d="M12 12v4M10 14h4" />
-            </svg>
-            <span>Add Insight</span>
-          </button>
-          <button class="btn-ghost" id="addTestCaseBtn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="3" y="4" width="18" height="16" rx="2" />
-              <path d="M9 10h6M9 14h6" />
-              <path d="M6 10v.01M6 14v.01" />
-            </svg>
-            <span>Add Test Case</span>
-          </button>
-          <button class="btn-ghost" id="addTaskBtn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            <span>Add Task</span>
-          </button>
-          <button class="btn-primary" id="addProjectBtn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            <span>Add Project</span>
-          </button>
-          <button class="btn-accent" id="addReleasePtBtn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M9 11l3 3L22 4" />
-              <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
-            </svg>
-            <span>Add Release Point</span>
-          </button>
-          <button class="btn-primary" id="addReleaseBtn" style="display:none;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            <span>Add Release</span>
+            <span class="nav-badge" data-notify-badge hidden>0</span>
           </button>
         </div>
       </header>

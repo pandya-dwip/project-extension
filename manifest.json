@@ -10,7 +10,8 @@
     "tabs",
     "downloads",
     "alarms",
-    "offscreen"
+    "offscreen",
+    "notifications"
   ],
   "optional_host_permissions": [
     "https://*.atlassian.net/*"
