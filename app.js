@@ -5529,7 +5529,7 @@ const renderSettings = () => {
   } else if (section === 'modules') {
     const visible = MODULE_LIST.length - hiddenSet.size;
     body = stSection('Sidebar modules', 'Show or hide modules in the sidebar. Hidden modules keep their data. Settings can’t be hidden.', `
-      <div class="st-list">
+      <div class="st-list st-module-list">
         ${MODULE_LIST.map(mod => {
           const isVisible = !hiddenSet.has(mod.key);
           return `
