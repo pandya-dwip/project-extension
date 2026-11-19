@@ -10207,7 +10207,7 @@ a.st-btn { text-decoration: none; }
 .jd-table .jd-nowrap { white-space: nowrap; }
 .jd-open { display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; }
 .jd-open svg { width: 15px; height: 15px; }
-.jd-pill { --c: var(--text-muted); display: inline-block; padding: 2px 9px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--c) 15%, transparent); color: var(--c); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.jd-pill { --c: var(--text-muted); display: inline-block; padding: 2px 9px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--c) 15%, transparent); color: color-mix(in srgb, var(--c) 72%, var(--text)); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
 .jd-mapping-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .jd-mapping-help { margin: 0 0 12px; font-size: 12.5px; color: var(--text-secondary); }
 .jd-map-list { display: flex; flex-direction: column; }
@@ -10222,27 +10222,44 @@ a.st-btn { text-decoration: none; }
 }
 
 /* Jira ticket panel (status transition, comments, Sync to Jira) */
-.jd-summary-btn { all: unset; cursor: pointer; color: var(--text); }
-.jd-summary-btn:hover { color: var(--accent); text-decoration: underline; }
-.jd-summary-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.jd-table tr.jd-row-open > td { background: var(--accent-subtle); }
 .jd-pending-tag { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: var(--radius-pill); background: var(--warning-light); color: var(--warning); font-size: 10.5px; font-weight: 700; vertical-align: middle; }
-.jd-issue-row > td { background: var(--surface-2); padding: 14px 16px !important; }
+.jd-issue-row > td { background: var(--surface-2); padding: 16px 18px !important; }
 .jd-issue { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; align-items: start; }
-.jd-issue-title { margin: 0 0 8px; font-size: 13px; font-weight: 650; color: var(--text); }
-.jd-cmts { display: flex; flex-direction: column; gap: 8px; max-height: 360px; overflow-y: auto; margin-bottom: 10px; }
-.jd-cmt { padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.jd-issue-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.jd-issue-title { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; font-weight: 650; color: var(--text); }
+.jd-issue-open { font-size: 12px; text-decoration: none; }
+.jd-cmts { display: flex; flex-direction: column; gap: 8px; max-height: 380px; overflow-y: auto; margin-bottom: 12px; padding-right: 2px; }
+.jd-cmts-empty { padding: 14px; border: 1px dashed var(--border); border-radius: var(--radius); text-align: center; font-size: 12.5px; color: var(--text-muted); }
+.jd-cmt { display: flex; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .jd-cmt.pending { border-style: dashed; border-color: var(--warning); background: var(--warning-light); }
-.jd-cmt-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 4px; font-size: 12px; color: var(--text-muted); }
-.jd-cmt-head strong { color: var(--text); font-weight: 600; }
-.jd-cmt-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; color: var(--text-secondary); line-height: 1.5; }
-.jd-draft { width: 100%; box-sizing: border-box; resize: vertical; min-height: 70px; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font-family: var(--font); font-size: 13px; }
-.jd-draft:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
-.jd-issue-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
-.jd-issue-side { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.jd-avatar { flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--accent-light); color: var(--accent); font-size: 11px; font-weight: 700; }
+.jd-cmt.pending .jd-avatar { background: var(--surface); color: var(--warning); }
+.jd-cmt-main { flex: 1; min-width: 0; }
+.jd-cmt-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 3px; font-size: 11.5px; color: var(--text-muted); }
+.jd-cmt-head strong { color: var(--text); font-size: 12.5px; font-weight: 600; }
+.jd-cmt-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; }
+.jd-cmt-body a { color: var(--accent); }
+.jd-composer { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); transition: border-color var(--transition), box-shadow var(--transition); }
+.jd-composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
+.jd-draft { display: block; width: 100%; box-sizing: border-box; resize: vertical; min-height: 64px; padding: 10px 12px; border: none; border-radius: var(--radius) var(--radius) 0 0; background: transparent; color: var(--text); font-family: var(--font); font-size: 13px; line-height: 1.5; }
+.jd-draft:focus { outline: none; }
+.jd-composer-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px 8px 12px; border-top: 1px solid var(--border); }
+.jd-issue-side { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.jd-status-now { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.jd-status-now strong { font-size: 14px; color: var(--text); }
+.jd-sync-btn { justify-content: center; width: 100%; }
+.jd-sync-btn:disabled, .jd-issue button:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+.jd-table tr.jd-row { cursor: pointer; }
+.jd-table tr.jd-row:hover > td { background: var(--surface-2); }
+.jd-table tr.jd-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.jd-table .jd-idx { width: 1%; padding-right: 4px; text-align: right; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.jd-table tr.jd-row-open > td, .jd-table tr.jd-row-open:hover > td { background: var(--accent-subtle); }
+.jd-issue-col { position: sticky; top: 8px; display: flex; flex-direction: column; min-width: 0; }
+.jd-issue-head { min-height: 26px; }
+.jd-att { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface-2); color: var(--text-secondary); font-size: 11.5px; font-weight: 600; }
+.jd-att::before { content: ''; width: 11px; height: 11px; background: currentColor; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48'/%3E%3C/svg%3E") center / contain no-repeat; }
 .jd-issue-field { display: flex; flex-direction: column; gap: 5px; }
 .jd-issue-field > span { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); }
-.jd-issue-field strong { color: var(--text); font-size: 13px; margin-right: 6px; }
 .jd-issue-field select { width: 100%; }
 .jd-issue-pending { font-size: 12.5px; color: var(--text-secondary); }
 .jd-issue-warn { padding: 7px 10px; border-radius: var(--radius-sm); background: var(--warning-light); color: var(--warning); font-size: 12px; font-weight: 600; }
@@ -10251,7 +10268,6 @@ a.st-btn { text-decoration: none; }
 .jd-issue-result { padding: 8px 10px; border-radius: var(--radius-sm); font-size: 12px; line-height: 1.45; }
 .jd-issue-result.ok { background: var(--accent-subtle); color: var(--accent); }
 .jd-issue-result.fail { background: var(--danger-light); color: var(--danger); }
-.jd-sync-btn { justify-content: center; }
 @media (max-width: 900px) { .jd-issue { grid-template-columns: minmax(0, 1fr); } }
 
 /* ─── Jira integration ─── */

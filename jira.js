@@ -318,6 +318,9 @@ const ClairJira = (() => {
     if (node.type === 'text') return node.text || '';
     if (node.type === 'hardBreak') return '\n';
     if (node.type === 'mention' || node.type === 'emoji') return (node.attrs && (node.attrs.text || node.attrs.shortName)) || '';
+    // Smart links (pasted URLs) keep the URL in attrs, not in text.
+    if (['inlineCard', 'blockCard', 'embedCard'].includes(node.type)) return (node.attrs && node.attrs.url) ? node.attrs.url + (node.type === 'inlineCard' ? '' : '\n\n') : '';
+    if (node.type === 'media' || node.type === 'mediaInline') return '[attachment]';
     const inner = (node.content || []).map(adfText).join('');
     if (node.type === 'listItem') return inner.replace(/\n+$/, '') + '\n';
     return ['paragraph', 'heading', 'codeBlock', 'blockquote', 'bulletList', 'orderedList'].includes(node.type) ? inner + '\n\n' : inner;

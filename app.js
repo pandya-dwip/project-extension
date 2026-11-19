@@ -1983,7 +1983,7 @@ const renderJiraDetails = (p) => {
   const rec = jiraRecordFor(p);
   const connected = jiraAvailable() && jiraConnected();
   const c = jiraCounts(rec);
-  const f = state.jiraFilters || (state.jiraFilters = { q: '', cat: '', type: '', assignee: '', sort: 'updated-desc', page: 1, size: 25 });
+  const f = state.jiraFilters || (state.jiraFilters = { q: '', cat: '', type: '', assignee: '', sort: 'key-desc', page: 1, size: 25 });
   const issues = rec ? rec.issues.map(i => ({ ...i, cat: jiraCategoryOf(rec, i.statusId, i.status) })) : [];
   const types = [...new Set(issues.map(i => i.type))].sort();
   const assignees = [...new Set(issues.map(i => i.assignee || ''))].sort((a, b) => (a || '~').localeCompare(b || '~'));
@@ -2008,7 +2008,7 @@ const renderJiraDetails = (p) => {
     'key-asc': (a, b) => keyNum(a.key) - keyNum(b.key),
     'key-desc': (a, b) => keyNum(b.key) - keyNum(a.key)
   };
-  list.sort(sorters[f.sort] || sorters['updated-desc']);
+  list.sort(sorters[f.sort] || sorters['key-desc']);
   const pages = Math.max(1, Math.ceil(list.length / f.size));
   if (f.page > pages) f.page = pages;
   if (f.page < 1) f.page = 1;
@@ -2052,13 +2052,14 @@ const renderJiraDetails = (p) => {
     </section>` : '';
 
   const catPill = (cat) => `<span class="jd-pill" style="--c:${JIRA_CAT_COLOR[cat]}">${JIRA_CAT_LABEL[cat]}</span>`;
-  const rowsHtml = paged.map(i => {
+  const rowsHtml = paged.map((i, idx) => {
     const open = state.jiraIssueOpen === i.id;
     const np = jiraPendingCount(jiraPendingFor(i.id));
     return `
-    <tr class="${open ? 'jd-row-open' : ''}">
-      <td><a class="jd-key" href="${escapeHtml(i.url)}" target="_blank" rel="noopener noreferrer" title="Open ${escapeHtml(i.key)} in Jira">${escapeHtml(i.key)}</a>${np ? `<span class="jd-pending-tag" title="${np} change${np === 1 ? '' : 's'} not yet synced to Jira">Pending</span>` : ''}</td>
-      <td class="jd-summary"><button type="button" class="jd-summary-btn" data-action="jira-issue" data-issue="${escapeHtml(i.id)}" aria-expanded="${open}">${escapeHtml(i.summary)}</button></td>
+    <tr class="jd-row ${open ? 'jd-row-open' : ''}" data-action="jira-issue" data-issue="${escapeHtml(i.id)}" tabindex="0" aria-expanded="${open}" title="${open ? 'Hide' : 'Show'} status and comments">
+      <td class="jd-idx">${start + idx + 1}</td>
+      <td class="jd-nowrap"><span class="jd-key">${escapeHtml(i.key)}</span>${np ? `<span class="jd-pending-tag" title="${np} change${np === 1 ? '' : 's'} not yet synced to Jira">Pending</span>` : ''}</td>
+      <td class="jd-summary">${escapeHtml(i.summary)}</td>
       <td class="jd-nowrap">${escapeHtml(i.type)}</td>
       <td class="jd-nowrap">${escapeHtml(i.status)}</td>
       <td>${catPill(i.cat)}</td>
@@ -2111,10 +2112,10 @@ const renderJiraDetails = (p) => {
               ${assignees.map(a => `<option value="${a ? escapeHtml(a) : '__none__'}" ${f.assignee === (a || '__none__') ? 'selected' : ''}>${a ? escapeHtml(a) : 'Unassigned'}</option>`).join('')}
             </select>
             <select class="filter-select" data-jira-filter="sort" aria-label="Sort">
+              <option value="key-desc" ${f.sort === 'key-desc' ? 'selected' : ''}>Newest tickets first</option>
               <option value="updated-desc" ${f.sort === 'updated-desc' ? 'selected' : ''}>Recently updated</option>
               <option value="updated-asc" ${f.sort === 'updated-asc' ? 'selected' : ''}>Least recently updated</option>
               <option value="priority" ${f.sort === 'priority' ? 'selected' : ''}>Priority (highest first)</option>
-              <option value="key-desc" ${f.sort === 'key-desc' ? 'selected' : ''}>Key (newest first)</option>
               <option value="key-asc" ${f.sort === 'key-asc' ? 'selected' : ''}>Key (oldest first)</option>
             </select>
             ${(f.q || f.cat || f.type || f.assignee) ? `<button class="btn-ghost rpa-tool-btn" data-action="jira-clear-filters">Clear filters</button>` : ''}
@@ -2125,8 +2126,8 @@ const renderJiraDetails = (p) => {
           </div>
           <div class="tcs-table-wrap">
             <table class="tcs-table jd-table">
-              <thead><tr><th>Key</th><th>Summary</th><th>Type</th><th>Jira status</th><th>Category</th><th>Assignee</th><th>Priority</th><th>Updated</th><th></th></tr></thead>
-              <tbody>${rowsHtml || `<tr><td colspan="9"><div class="dbx-empty tcs-noresults">${c.total ? 'No tickets match these filters.' : 'This Jira project has no tickets.'}</div></td></tr>`}</tbody>
+              <thead><tr><th class="jd-idx">#</th><th>Key</th><th>Summary</th><th>Type</th><th>Jira status</th><th>Category</th><th>Assignee</th><th>Priority</th><th>Updated</th><th></th></tr></thead>
+              <tbody>${rowsHtml || `<tr><td colspan="10"><div class="dbx-empty tcs-noresults">${c.total ? 'No tickets match these filters.' : 'This Jira project has no tickets.'}</div></td></tr>`}</tbody>
             </table>
           </div>
           <div class="tc-pagination-bar">
@@ -2262,6 +2263,10 @@ const jiraSyncIssue = async (issueId) => {
   }
 };
 
+// Escaped text with http(s) links made clickable.
+const jiraLinkify = (text) => escapeHtml(text)
+  .replace(/(\[attachment\]\s*)+/g, m => { const n = (m.match(/\[attachment\]/g) || []).length; return `<span class="jd-att">${n} attachment${n === 1 ? '' : 's'}</span>`; }).replace(/https?:\/\/[^\s<]+[^\s<.,;:!?)'"\]]/g, u => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`);
+const jiraInitials = (name) => String(name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?';
 const renderJiraIssuePanel = (p, rec, i) => {
   const d = jiraTicketData[i.key] || {};
   const pd = jiraPendingFor(i.id);
@@ -2274,14 +2279,20 @@ const renderJiraIssuePanel = (p, rec, i) => {
     : !d.comments && d.loading ? '<div class="dbx-empty">Loading comments…</div>'
     : comments.length ? comments.map(c => `
       <div class="jd-cmt">
-        <div class="jd-cmt-head"><strong>${escapeHtml(c.author)}</strong><span>${when(c.created)}${c.updated && c.updated !== c.created ? ` · edited ${when(c.updated)}` : ''}</span></div>
-        <div class="jd-cmt-body">${escapeHtml(c.text)}</div>
-      </div>`).join('') : '<div class="dbx-empty">No comments yet.</div>';
+        <span class="jd-avatar" aria-hidden="true">${escapeHtml(jiraInitials(c.author))}</span>
+        <div class="jd-cmt-main">
+          <div class="jd-cmt-head"><strong>${escapeHtml(c.author)}</strong><span>${when(c.created)}${c.updated && c.updated !== c.created ? ` · edited ${when(c.updated)}` : ''}</span></div>
+          <div class="jd-cmt-body">${jiraLinkify(c.text)}</div>
+        </div>
+      </div>`).join('') : '<div class="jd-cmts-empty">No comments yet.</div>';
   const pendingComments = (pd ? pd.comments : []).map(c => `
       <div class="jd-cmt pending">
-        <div class="jd-cmt-head"><strong>Pending — not in Jira yet</strong>
-          ${busy ? '' : `<button type="button" class="rpa-link" data-action="jira-drop-comment" data-issue="${escapeHtml(i.id)}" data-cid="${escapeHtml(c.id)}">Remove</button>`}</div>
-        <div class="jd-cmt-body">${escapeHtml(c.text)}</div>
+        <span class="jd-avatar" aria-hidden="true">…</span>
+        <div class="jd-cmt-main">
+          <div class="jd-cmt-head"><strong>Pending — not in Jira yet</strong>
+            ${busy ? '' : `<button type="button" class="rpa-link" data-action="jira-drop-comment" data-issue="${escapeHtml(i.id)}" data-cid="${escapeHtml(c.id)}">Remove</button>`}</div>
+          <div class="jd-cmt-body">${jiraLinkify(c.text)}</div>
+        </div>
       </div>`).join('');
   const trans = d.transitions || [];
   const sel = pd && pd.transition ? pd.transition.id : '';
@@ -2293,16 +2304,26 @@ const renderJiraIssuePanel = (p, rec, i) => {
         ${trans.map(t => `<option value="${escapeHtml(t.id)}" ${sel === t.id ? 'selected' : ''}>${escapeHtml(t.name)}${t.toName && t.toName !== t.name ? ` → ${escapeHtml(t.toName)}` : ''}</option>`).join('')}
       </select>`;
   return `
-    <tr class="jd-issue-row"><td colspan="9">
+    <tr class="jd-issue-row"><td colspan="10">
       <div class="jd-issue">
         <div class="jd-issue-main">
-          <h4 class="jd-issue-title">Comments <span class="rpa-group-count">${comments.length}</span></h4>
+          <div class="jd-issue-head">
+            <h4 class="jd-issue-title">Comments <span class="rpa-group-count">${comments.length}</span>${d.loading && d.comments ? '<span class="jd-issue-hint">Refreshing…</span>' : ''}</h4>
+          </div>
           <div class="jd-cmts">${commentsHtml}${pendingComments}</div>
-          <textarea id="jiraCommentDraft" class="jd-draft" data-key="${escapeHtml(i.key)}" rows="3" placeholder="Write a comment… (added to pending changes, sent on Sync to Jira)" ${busy ? 'disabled' : ''}>${escapeHtml(d.draft || '')}</textarea>
-          <div class="jd-issue-actions"><button type="button" class="btn-ghost st-btn" data-action="jira-queue-comment" data-issue="${escapeHtml(i.id)}" ${busy ? 'disabled' : ''}>Add comment to pending</button></div>
+          <div class="jd-composer">
+            <textarea id="jiraCommentDraft" class="jd-draft" data-key="${escapeHtml(i.key)}" rows="3" placeholder="Write a comment…" aria-label="New comment" ${busy ? 'disabled' : ''}>${escapeHtml(d.draft || '')}</textarea>
+            <div class="jd-composer-foot">
+              <span class="jd-issue-hint">Added to pending changes and sent with Sync to Jira.</span>
+              <button type="button" class="btn-ghost st-btn" data-action="jira-queue-comment" data-issue="${escapeHtml(i.id)}" ${busy ? 'disabled' : ''}>Add to pending</button>
+            </div>
+          </div>
         </div>
-        <div class="jd-issue-side">
-          <div class="jd-issue-field"><span>Current Jira status</span><div><strong>${escapeHtml(i.status)}</strong> <span class="jd-pill" style="--c:${JIRA_CAT_COLOR[i.cat]}">${JIRA_CAT_LABEL[i.cat]}</span></div></div>
+        <div class="jd-issue-col">
+          <div class="jd-issue-head"><h4 class="jd-issue-title">Status</h4></div>
+          <div class="jd-issue-side">
+          <div class="jd-issue-field"><span>Current Jira status</span>
+            <div class="jd-status-now"><strong>${escapeHtml(i.status)}</strong><span class="jd-issue-hint">Clair: <span class="jd-pill" style="--c:${JIRA_CAT_COLOR[i.cat]}">${JIRA_CAT_LABEL[i.cat]}</span></span></div></div>
           <div class="jd-issue-field"><span>Change status</span>${transControl}</div>
           ${pd && pd.transition ? `<div class="jd-issue-pending">Selected: <strong>${escapeHtml(pd.transition.toName)}</strong> — not applied yet</div>` : ''}
           ${pd && pd.comments.length ? `<div class="jd-issue-pending">Pending comments: <strong>${pd.comments.length}</strong></div>` : ''}
@@ -2310,12 +2331,13 @@ const renderJiraIssuePanel = (p, rec, i) => {
           <button type="button" class="btn-primary st-btn jd-sync-btn" data-action="jira-sync-issue" data-issue="${escapeHtml(i.id)}" ${busy || !connected || (!n && !(d.draft || '').trim()) ? 'disabled' : ''}>${JD_I.refresh}${busy ? 'Syncing…' : 'Sync to Jira'}</button>
           ${!connected ? '<div class="jd-issue-hint">Connect Jira in Settings to sync.</div>' : ''}
           ${d.result ? `<div class="jd-issue-result ${d.result.ok ? 'ok' : 'fail'}">${escapeHtml(d.result.text)}</div>` : ''}
+          </div>
         </div>
       </div>
     </td></tr>`;
 };
 
-const jiraResetFilters = () => { state.jiraFilters = { q: '', cat: '', type: '', assignee: '', sort: 'updated-desc', page: 1, size: (state.jiraFilters && state.jiraFilters.size) || 25 }; };
+const jiraResetFilters = () => { state.jiraFilters = { q: '', cat: '', type: '', assignee: '', sort: 'key-desc', page: 1, size: (state.jiraFilters && state.jiraFilters.size) || 25 }; };
 
 
 // ─── Navigation ──────────────────────────────────────────
@@ -5850,6 +5872,10 @@ const attachCardListeners = () => {
 
 
   // Click delegation
+  // Jira ticket rows are clickable; Enter/Space toggle them too.
+  content.addEventListener('keydown', e => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('tr.jd-row')) { e.preventDefault(); e.target.click(); }
+  });
   content.addEventListener('click', async e => {
     const toggleBtn = e.target.closest('.view-toggle-btn[data-view-mode]');
     if (toggleBtn) {
@@ -5932,6 +5958,7 @@ const attachCardListeners = () => {
         if (rec) { rec.statusMap = {}; storage.save(); showToast('Status mapping reset to Automatic'); render(); }
       }
       else if (action === 'jira-issue') {
+        if (e.target.closest('a, select, textarea, input')) return;
         const id = btn.dataset.issue;
         state.jiraIssueOpen = state.jiraIssueOpen === id ? null : id;
         render();
