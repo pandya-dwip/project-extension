@@ -4109,26 +4109,35 @@ const renderTasks = () => {
   }).length;
   const donePct = totalTasks === 0 ? 0 : Math.round(doneCount / totalTasks * 100);
 
-  const hero = buildPageHero({
-    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg>`,
-    gradient: 'linear-gradient(135deg, #0f2027 0%, #203a43 40%, #2c5364 100%)',
-    title: 'Kanban Board',
-    subtitle: 'Plan, track, and manage your tasks across all projects.',
-    stats: [
-      { label: 'Total', value: totalTasks },
-      { label: 'To-Do', value: todoCount },
-      { label: 'In Progress', value: inProgressCount, color: '#fbbf24' },
-      { label: 'Done', value: doneCount, color: '#4ade80' },
-      { label: 'Overdue', value: overdue, color: overdue > 0 ? '#f87171' : undefined },
-      { label: 'Completion', value: `${donePct}%`, color: donePct === 100 ? '#4ade80' : '#fb923c' },
-    ],
-    progressBar: { pct: donePct, label: `${doneCount} / ${totalTasks} tasks done`, color: 'linear-gradient(90deg, #4ade80, #22c55e)' }
-  });
+  const ringR = 26, ringC = 2 * Math.PI * ringR;
+  const filtersActive = !!(q || state.filters.dateFrom || state.filters.dateTo || state.filters.taskProject || state.filters.taskPriority || state.filters.taskDeadline);
+  const hero = `
+    <section class="rpa-hero">
+      <div class="rpa-hero-main">
+        <span class="rpa-hero-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg></span>
+        <div>
+          <h2 class="rpa-hero-title">Tasks</h2>
+          <p class="rpa-hero-sub">Plan, track and move work across all projects. Drag cards between columns.</p>
+        </div>
+      </div>
+      <div class="rpa-hero-stats">
+        <div class="rpa-hstat"><strong>${totalTasks}</strong><span>Total</span></div>
+        <div class="rpa-hstat"><strong>${todoCount}</strong><span>To-Do</span></div>
+        <div class="rpa-hstat"><strong class="warn">${inProgressCount}</strong><span>In progress</span></div>
+        <div class="rpa-hstat"><strong class="${overdue ? 'bad' : ''}">${overdue}</strong><span>Overdue</span></div>
+        <div class="rpa-hstat"><strong class="ok">${doneCount}</strong><span>Done</span></div>
+        <div class="rpa-hero-ring" title="${doneCount} of ${totalTasks} tasks done">
+          <svg viewBox="0 0 64 64"><circle class="track" cx="32" cy="32" r="${ringR}"/><circle class="fill" cx="32" cy="32" r="${ringR}" stroke-dasharray="${ringC.toFixed(2)}" stroke-dashoffset="${(ringC * (1 - donePct / 100)).toFixed(2)}"/></svg>
+          <span><strong>${donePct}%</strong><em>${doneCount}/${totalTasks} done</em></span>
+        </div>
+      </div>
+    </section>`;
 
   return `
+    <div class="rpa-page tk-page">
     ${hero}
 
-    <div class="filters-bar">
+    <div class="filters-bar tk-toolbar">
       <div class="page-search-wrap">
         <svg class="page-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
         <input type="text" class="page-search-input" id="taskSearchInput" placeholder="Search tasks…" value="${state.taskSearch}" />
@@ -4160,10 +4169,11 @@ const renderTasks = () => {
       ${(state.filters.dateFrom || state.filters.dateTo || state.filters.taskProject || state.filters.taskPriority || state.filters.taskDeadline) ? `
         <button class="btn-ghost" id="clearTasksFilters" style="font-size:12px;padding:6px 10px">Clear filters</button>
       ` : ''}
+      <span class="rpa-showing tk-showing">${filtersActive ? `${tasks.length} of ${totalTasks} tasks` : `${totalTasks} tasks`}</span>
 
     </div>
 
-    <div class="kanban-board">
+    <div class="kanban-board tk-board">
       ${TASK_STATUS_OPTIONS.map(status => {
     const columnTasks = tasks.filter(t => (t.status || 'To-Do') === status);
     return `
@@ -4173,11 +4183,12 @@ const renderTasks = () => {
               <span class="kanban-column-count">${columnTasks.length}</span>
             </div>
             <div class="kanban-tasks">
-              ${columnTasks.map(t => renderTaskCard(t, q)).join('')}
+              ${columnTasks.map(t => renderTaskCard(t, q)).join('') || '<div class="tk-col-empty">No tasks</div>'}
             </div>
           </div>
         `;
   }).join('')}
+    </div>
     </div>
   `;
 };
@@ -4225,6 +4236,7 @@ const renderCalendarPanelTaskCard = (t) => {
   `;
 };
 
+const CAL_STATUS_COLOR = { 'To-Do': 'var(--status-planned)', 'In Progress': 'var(--info)', 'Done': 'var(--accent)', 'On Hold': 'var(--danger)' };
 const renderCalendar = () => {
   // Helper to format date YYYY-MM-DD
   const formatDateStr = (y, m, d) => {
@@ -4335,19 +4347,19 @@ const renderCalendar = () => {
 
     const isSelected = day.dateStr === state.selectedCalendarDate;
     const taskCount = dayTasks.length;
-    const badgeClass = taskCount > 0 ? '' : 'none';
-
-    // Check if tasks are all completed (Done)
-    const allDone = taskCount > 0 && dayTasks.every(t => t.status === 'Done');
-    const badgeTypeClass = allDone ? 'done-only' : '';
+    // Open work first, then done; at most three titles per cell.
+    const shown = [...dayTasks].sort((a, b) => (a.status === 'Done') - (b.status === 'Done')).slice(0, 3);
+    const weekend = day.date.getDay() === 0 || day.date.getDay() === 6;
 
     return `
-      <div class="calendar-day-cell ${day.isCurrentMonth ? '' : 'other-month'} ${day.dateStr === todayStr ? 'today' : ''} ${isSelected ? 'selected' : ''}" data-action="select-calendar-date" data-date="${day.dateStr}">
+      <div class="calendar-day-cell ${day.isCurrentMonth ? '' : 'other-month'} ${weekend ? 'weekend' : ''} ${day.dateStr === todayStr ? 'today' : ''} ${isSelected ? 'selected' : ''}" data-action="select-calendar-date" data-date="${day.dateStr}" title="${taskCount} task${taskCount === 1 ? '' : 's'}">
         <div class="calendar-day-header">
           <span class="calendar-day-number">${day.dayNum}</span>
+          ${taskCount ? `<span class="cal-count">${taskCount}</span>` : ''}
         </div>
-        <div class="calendar-day-events" style="align-items: center; justify-content: center;">
-          <span class="calendar-day-task-badge ${badgeClass} ${badgeTypeClass}">${taskCount} ${taskCount === 1 ? 'task' : 'tasks'}</span>
+        <div class="cal-events">
+          ${shown.map(t => `<span class="cal-ev ${t.status === 'Done' ? 'done' : ''}" style="--c:${CAL_STATUS_COLOR[t.status] || CAL_STATUS_COLOR['To-Do']}">${escapeHtml(t.title)}</span>`).join('')}
+          ${taskCount > 3 ? `<span class="cal-more">+${taskCount - 3} more</span>` : ''}
         </div>
       </div>
     `;
@@ -4388,33 +4400,62 @@ const renderCalendar = () => {
     { key: 'Done', label: 'Completed' },
     { key: 'On Hold', label: 'On-hold' }
   ].map(f => {
-    const activeClass = statusFilter === f.key ? 'active' : '';
-    return `<button class="right-panel-filter-btn ${activeClass}" data-action="calendar-right-filter" data-filter="${f.key}">${f.label}</button>`;
+    const n = f.key === 'all' ? rawSelTasks.length : rawSelTasks.filter(t => t.status === f.key).length;
+    return `<button type="button" class="rpa-chip ${statusFilter === f.key ? 'active' : ''}" data-action="calendar-right-filter" data-filter="${f.key}">${f.label} <span>${n}</span></button>`;
   }).join('');
+
+  // Month summary for the header.
+  const monthStart = formatDateStr(year, month, 1), monthEnd = formatDateStr(year, month, numDays);
+  const inMonth = tasks.filter(t => { const { start, end } = getTaskCalendarRange(t); const a = start || end, b = end || start; return a && b && a <= monthEnd && b >= monthStart; });
+  const dueInMonth = tasks.filter(t => t.endDate && t.status !== 'Done' && t.endDate.slice(0, 10) >= monthStart && t.endDate.slice(0, 10) <= monthEnd).length;
+  const overdueOpen = tasks.filter(t => t.endDate && t.status !== 'Done' && t.endDate.slice(0, 10) < todayStr).length;
+  const doneInMonth = tasks.filter(t => t.status === 'Done' && t.completedDate && t.completedDate.slice(0, 10) >= monthStart && t.completedDate.slice(0, 10) <= monthEnd).length;
+  const busiest = days.filter(d => d.isCurrentMonth).map(d => ({ d, n: tasks.filter(t => isTaskActiveOnDate(t, d.dateStr)).length })).sort((a, b) => b.n - a.n)[0];
+  const isTodaySel = selectedDateStr === todayStr;
+  const viewingThisMonth = year === new Date().getFullYear() && month === new Date().getMonth();
 
   const taskCardsHtml = filteredSelTasks.length > 0
     ? filteredSelTasks.map(t => renderCalendarPanelTaskCard(t)).join('')
-    : `<div class="calendar-task-empty">No tasks scheduled for this date.</div>`;
+    : `<div class="calendar-task-empty">${rawSelTasks.length ? 'No tasks with this status on this day.' : 'No tasks scheduled for this day.'}</div>`;
 
   return `
+    <div class="rpa-page cal-page">
+    <section class="rpa-hero">
+      <div class="rpa-hero-main">
+        <span class="rpa-hero-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
+        <div>
+          <h2 class="rpa-hero-title">Calendar</h2>
+          <p class="rpa-hero-sub">Tasks by day for ${monthName}${filterProjId ? ` · ${escapeHtml((state.projects.find(p => p.id === filterProjId) || {}).name || '')}` : ''}.</p>
+        </div>
+      </div>
+      <div class="rpa-hero-stats">
+        <div class="rpa-hstat"><strong>${inMonth.length}</strong><span>This month</span></div>
+        <div class="rpa-hstat"><strong class="warn">${dueInMonth}</strong><span>Due (open)</span></div>
+        <div class="rpa-hstat"><strong class="${overdueOpen ? 'bad' : ''}">${overdueOpen}</strong><span>Overdue</span></div>
+        <div class="rpa-hstat"><strong class="ok">${doneInMonth}</strong><span>Done</span></div>
+        <div class="rpa-hstat"><strong>${busiest && busiest.n ? busiest.d.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '–'}</strong><span>Busiest day</span></div>
+      </div>
+    </section>
+
     <div class="calendar-two-panel-layout">
-      <!-- Left Panel: Calendar Grid -->
       <div class="calendar-left-panel">
-        <div class="filters-bar" style="margin-top: 0; padding-bottom: 12px; border-bottom: none; background: transparent;">
+        <div class="rpa-toolbar cal-toolbar">
           <div class="calendar-nav">
-            <button class="btn-ghost" data-action="calendar-prev" style="padding: 6px 10px;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px;"><polyline points="15 18 9 12 15 6"/></svg>
+            <button type="button" class="btn-ghost cal-nav-btn" data-action="calendar-prev" aria-label="Previous month">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
             </button>
             <span class="calendar-title">${monthName}</span>
-            <button class="btn-ghost" data-action="calendar-next" style="padding: 6px 10px;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px;"><polyline points="9 18 15 12 9 6"/></svg>
+            <button type="button" class="btn-ghost cal-nav-btn" data-action="calendar-next" aria-label="Next month">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
+            <button type="button" class="btn-ghost st-btn" data-action="calendar-today" ${viewingThisMonth && isTodaySel ? 'disabled' : ''}>Today</button>
           </div>
-
-          <select class="filter-select" id="filterCalendarProject" data-calfilter="project" style="margin-left: auto; min-width: 180px;">
-            <option value="">All Projects</option>
-            ${projectOptions}
-          </select>
+          <div class="rpa-toolbar-right">
+            <select class="filter-select" id="filterCalendarProject" data-calfilter="project" aria-label="Project">
+              <option value="">All Projects</option>
+              ${projectOptions}
+            </select>
+          </div>
         </div>
 
         <div class="calendar-grid-container">
@@ -4425,26 +4466,30 @@ const renderCalendar = () => {
             ${gridHtml}
           </div>
         </div>
+        <div class="cal-foot">
+          <div class="cal-legend">${Object.entries({ 'To-Do': 'To-Do', 'In Progress': 'In progress', 'Done': 'Done', 'On Hold': 'On hold' }).map(([k, l]) => `<span><i style="--c:${CAL_STATUS_COLOR[k]}"></i>${l}</span>`).join('')}</div>
+          <span>Click a day to see its tasks.</span>
+        </div>
       </div>
 
-      <!-- Right Panel: Tasks List -->
       <div class="calendar-right-panel">
-        <div class="right-panel-header">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
-            <h3>Tasks for ${selectedDateLabel}</h3>
-            <button class="btn-ghost" data-action="calendar-add-task" data-date="${selectedDateStr}" style="padding: 4px 8px; font-size: 11px; font-weight: 600; display: flex; align-items: center; gap: 4px;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 12px; height: 12px;"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        <div class="right-panel-header cal-panel-head">
+          <div class="cal-panel-title">
+            <div>
+              <span class="cal-panel-eyebrow">${isTodaySel ? 'Today' : 'Selected day'} · ${rawSelTasks.length} task${rawSelTasks.length === 1 ? '' : 's'}</span>
+              <h3>${selectedDateLabel}</h3>
+            </div>
+            <button type="button" class="btn-ghost st-btn" data-action="calendar-add-task" data-date="${selectedDateStr}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Add Task
             </button>
           </div>
-          <div class="right-panel-filters">
-            ${filterBtnsHtml}
-          </div>
-          <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
-            <span style="font-size: 11px; font-weight: 600; color: var(--text-muted);">Sort By:</span>
-            <select class="right-panel-sort-select" data-cal-sort="type" style="flex: 1;">
+          <div class="cal-panel-filters">${filterBtnsHtml}</div>
+          <div class="cal-panel-sort">
+            <label for="calSortSelect">Sort by</label>
+            <select class="filter-select" id="calSortSelect" data-cal-sort="type">
               <option value="priority" ${sortType === 'priority' ? 'selected' : ''}>Priority</option>
-              <option value="due" ${sortType === 'due' ? 'selected' : ''}>Due Date</option>
+              <option value="due" ${sortType === 'due' ? 'selected' : ''}>Due date</option>
             </select>
           </div>
         </div>
@@ -4452,6 +4497,7 @@ const renderCalendar = () => {
           ${taskCardsHtml}
         </div>
       </div>
+    </div>
     </div>
   `;
 };
@@ -6080,6 +6126,12 @@ const attachCardListeners = () => {
         let { year, month } = state.calendarMonth || { year: new Date().getFullYear(), month: new Date().getMonth() };
         month--; if (month < 0) { month = 11; year--; }
         state.calendarMonth = { year, month };
+        render();
+      }
+      else if (action === 'calendar-today') {
+        const d = new Date();
+        state.calendarMonth = { year: d.getFullYear(), month: d.getMonth() };
+        state.selectedCalendarDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         render();
       }
       else if (action === 'calendar-next') {
@@ -12629,7 +12681,27 @@ const renderNotes = () => {
     `;
   }
 
+  const allNotes = state.notes || [];
+  const weekAgo = Date.now() - 7 * 86400000;
+  const updatedWeek = allNotes.filter(n => Date.parse(n.updatedAt || n.createdAt || 0) >= weekAgo).length;
+  const projWithNotes = new Set(allNotes.map(n => n.projectId)).size;
   return `
+    <div class="rpa-page notes-page">
+    <section class="rpa-hero notes-hero">
+      <div class="rpa-hero-main">
+        <span class="rpa-hero-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></span>
+        <div>
+          <h2 class="rpa-hero-title">Notes</h2>
+          <p class="rpa-hero-sub">Markdown notes organised by project and folder.</p>
+        </div>
+      </div>
+      <div class="rpa-hero-stats">
+        <div class="rpa-hstat"><strong>${allNotes.length}</strong><span>Notes</span></div>
+        <div class="rpa-hstat"><strong>${(state.noteFolders || []).length}</strong><span>Folders</span></div>
+        <div class="rpa-hstat"><strong>${projWithNotes}</strong><span>Projects with notes</span></div>
+        <div class="rpa-hstat"><strong class="ok">${updatedWeek}</strong><span>Updated this week</span></div>
+      </div>
+    </section>
     <div class="notes-container">
       <div class="notes-panel-projects">
         <div class="notes-projects-header">
@@ -12685,6 +12757,7 @@ const renderNotes = () => {
       <div class="notes-panel-editor">
         ${editorHtml}
       </div>
+    </div>
     </div>
   `;
 };
