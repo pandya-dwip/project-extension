@@ -4,7 +4,7 @@
 
 **A local-first project & release tracker — built as a Chrome Extension**
 
-![Version](https://img.shields.io/badge/version-4.0.0-informational?style=flat-square)
+![Version](https://img.shields.io/badge/version-4.1.0-informational?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Chrome%20Extension-4285F4?style=flat-square&logo=googlechrome&logoColor=white)
 ![Manifest](https://img.shields.io/badge/manifest-V3-success?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-Vanilla%20JS%20%2F%20HTML%20%2F%20CSS-F7DF1E?style=flat-square)
@@ -52,6 +52,45 @@ The current app version is displayed in the sidebar footer and is always read di
 ---
 
 ## What's New
+
+### v4.1.0
+
+#### Notifications
+
+A new **Notifications** module tells you what changed in Jira, and when the Jira sync creates a QA task.
+
+- **What you're notified about** — comments ("Viraj Soni commented on AAA-1"), status changes ("AAA-2 moved to Ready for QA"), assignee changes, other field updates (priority, summary, …), and **QA tasks created** by the Jira sync. Your own Jira changes are skipped unless you turn that on.
+- **Near real time** — Jira Cloud can only push webhooks to a public server, so the background worker checks your linked Jira projects **every 30 seconds** (`chrome.alarms`, Chrome's minimum period): one search for recently updated tickets across all linked projects, then the history and newest comments of just those tickets. The first check only records a starting point, so old activity doesn't flood in; after sleep or a restart the next check picks up what changed in between.
+- **Where it shows** — a **bell** in the top bar and a **Notifications** sidebar item, both with an unread badge; a **Notifications** page grouped by day with filters (All / Unread / Comments / Status changes / Updates / QA tasks), mark read / unread, **Mark all read**, **Clear read**, and **Check now**. A Jira notification opens the ticket; a QA-task notification opens the task.
+- **Sound** — a short chime when something arrives (on by default). Browsers only allow sound after one click or keypress in the page, so click once in Clair after opening Chrome.
+- **Desktop notifications** — Windows notifications even when Clair is in the background; clicking one brings Clair forward on the Notifications page. Needs the new `notifications` permission.
+- **Settings → Notifications** — sound, desktop notifications, each notification type, and "include my own changes".
+- Notifications are kept in `chrome.storage.local` (up to 300), not in the SQLite file — so the background worker can add them while Clair is open — and are not part of JSON exports or backups.
+
+#### UI refresh — every page on the same design
+
+- **Top bar** — page title with today's date; only **Import**, **Export** and the **bell** remain. The "Add …" buttons moved to their pages: **New Project** (Projects), **New Task** (Tasks), **New Insight** (Project Insights), **New Release** (Release Management); Test Cases and Release Points already had theirs.
+- **Shared page header** (title, stats, completion ring) and **toolbar cards** on Dashboard, Projects, Tasks, Calendar, Notes, Project Insights, Release Management, Developers and Activity.
+- **Tasks** — equal-width columns with coloured tops that scroll individually (the Done column no longer makes the page thousands of pixels tall).
+- **Projects Kanban** — same board style; compact cards with client · team, up to three statuses, task progress, developer initials, due date (red when overdue) and priority; all five columns fit without sideways scrolling.
+- **Calendar** — month stats, a **Today** button, up to two open tasks per day plus one "✓ N done" line, nothing on other-month days; status chips with counts in the side panel.
+- **Notes** — header with note and folder stats; panels sized to fit below it.
+- **Release Management** — rebuilt: a status pipeline with counts (click a stage to filter), project filter, releases grouped **In flight** / **by month** / **Rolled back** as compact rows (name, status, projects, versions, date, manager, work items, developers) that open the release details.
+- **Developers** — header with team stats. **Activity** — a timeline grouped by day with search and type chips.
+- **Forms** — every modal restyled (fields, dropdowns, pickers, footer) for light and dark, with section headings in the Task, Project and Release forms.
+
+#### Jira QA tasks
+
+- The generated description now leads with the ticket ("Verify T3-165: Reminder Emails Are Sent…"), says what to do, and lists developer, Ready-for-QA time and link per ticket. Older auto-created tasks with the original generated text are rewritten on load; descriptions you edited are left alone.
+
+#### Fixes
+
+- Dark mode: readable project status pills, calendar days outside the month, the selected day, and the calendar task list.
+- Release notes are escaped when shown in the release list.
+
+#### Manifest
+
+- Version **4.1.0**; adds the `notifications` permission (desktop notifications).
 
 ### v4.0.0
 
@@ -323,18 +362,19 @@ Jira status names differ between projects, so each linked project has its own ma
 |---|---|
 | **Dashboard** | Live counts for projects, tasks, insights, releases, and release points; weekly task completion chart; released projects by month; Recent Tasks (status mix, needs attention, recently completed); Test Cases by Project; Active Releases & Plans (stage pipeline, in-flight releases with their release points, recently shipped). |
 | **Projects** | Create web and mobile app projects with platform-specific version fields; support custom metadata (Client, Team, Due Date, Priority); toggle between classic 3-column List view and 5-column lifecycle Kanban board view with HTML5 drag-and-drop; manually reorder projects in List view by dragging; search, filter, edit, delete; open a per-project **Project Details** page with stats, developer involvement, release history, timeline, and task history. |
-| **Tasks** | 4-column Kanban board (To-Do, In Progress, Done, On Hold); drag cards between columns; visual date alerts for overdue, due-today, and due-tomorrow tasks; assign tasks to developers; log a free-text "Work Done" note per task; filter by a Start Date range (From/To). |
+| **Tasks** | 4-column Kanban board (To-Do, In Progress, Done, On Hold) with columns that scroll individually; drag cards between columns; visual date alerts for overdue, due-today, and due-tomorrow tasks; assign tasks to developers; log a free-text "Work Done" note per task; filter by a Start Date range (From/To); **New Task** in the toolbar. |
 | **Project Insights** | Capture issues, enhancements, and notes per project; track each item through a Dev → QA → Done workflow; filter by developer, status, and assignment state. |
-| **Release Management** | Log releases sorted by release date; advance through a seven-stage status workflow (Draft → Released); generate email-style release announcements; copy notes to clipboard. |
+| **Release Management** | Status pipeline with counts (click a stage to filter), search and project filter; releases grouped In flight / by month / Rolled back as compact rows that open the release details; seven-stage workflow (Draft → Released); email-style release notes, copied to the clipboard; **New Release** in the toolbar. |
 | **Release Points** | Accordion list grouped into In progress / Completed; progress ring and bar per release point; full checklist on expand with in-place, keyboard-accessible ticking; project filter chips, Expand/Collapse all, search inside checklist items; shows the release each point belongs to; bulk add and bulk assign in the editor; import Jira tickets as checklist items; ticket links show the ticket key. |
 | **Jira** | Dashboard of every Clair project linked to Jira: per-project cards with ticket counts by category and last sync; a details page with a searchable, filterable, sortable, paginated ticket table (counts follow the filters); per-project status mapping into 10 Clair categories with automatic matching; local cache refreshed on demand and kept if a refresh fails; change a ticket's status and add comments, queued as pending changes and sent with **Sync to Jira**; scheduled sync (9 AM–5 PM) and **Sync Now** create one "Ticket closing" QA task per project for tickets that moved to Ready for QA, never duplicated. |
 | **Notes** | Organize notes by project; create main folders and 1-level subfolders; write notes with a 10-item Markdown toolbar & Edit/Preview mode toggle; move notes across project/folder tree; debounced search & sort by updated date, creation date, or title. |
 | **Test Case Management** | Three levels: a home page of project cards with pass rates; a project overview with KPIs, results donut, priority/type/assignee breakdowns, modules table, and open failures; and a test scenarios page with a module rail, status chips, filters, expandable rows with autosaving fields, bulk selection, and pagination. Import cases from Excel/CSV; bulk update. |
-| **Developers** | Maintain a developer registry; link developers to projects so they appear in context-sensitive dropdowns on tasks and insights. |
-| **Activity Feed** | Timestamped audit trail of every create, update, delete, move, and copy action (capped at 200 entries). |
+| **Developers** | Developer registry with team stats (on projects, not assigned, open tasks, projects staffed); link developers to projects so they appear in context-sensitive dropdowns on tasks and insights. |
+| **Activity Feed** | Timeline of every create, update, delete, move, and copy action, grouped by day, with search and Tasks / Projects / Deletions filters (last 200 entries). |
+| **Notifications** | Jira comments, status changes, assignee and field updates in linked projects (checked every 30 seconds) and QA tasks created by the Jira sync; bell and sidebar badge, sound, desktop notifications, Notifications page with filters and read / unread. |
 | **Data Portability** | Export all collections to a single JSON file; automatic daily JSON backup at a configurable time (default 6:00 PM); restore from any previous export; clear all data after a mandatory backup prompt. Underlying storage is SQLite, but the export/import file shape is unchanged. |
 | **Responsive UI** | Sidebar collapses to a hamburger menu on small screens; card grids and Kanban boards reflow for mobile and tablet. |
-| **Settings** | Section menu (General, Modules, Data & Backups, Integrations, Danger Zone): theme, default startup module, sidebar module visibility, backup/import/report, automatic backup, storage stats, Jira connection, clear database. |
+| **Settings** | Section menu (General, Modules, Data & Backups, Integrations, Notifications, Danger Zone): theme, default startup module, sidebar module visibility, backup/import/report, automatic backup, storage stats, Jira connection, notification sound / desktop / types, clear database. |
 | **Appearance** | Light and dark themes, resolved in JS (System follows the OS setting, or pin Light/Dark explicitly) from Settings → General; choice persists across reloads. |
 | **Global Search** | `Ctrl+K` / `Cmd+K` opens instant search across projects, tasks, and developers from any screen. |
 | **Version Badge** | App version shown in the sidebar footer; auto-read from `manifest.json` — always stays in sync. |
@@ -379,8 +419,9 @@ Clair is a single-page application. Navigation switches the rendered view in pla
 | Jira | `jira` + `state.jiraProjectId` | Linked projects overview → per-project ticket table and status mapping |
 | Notes | `notes` | Project-based notes & Markdown workspace with 1-level subfolder hierarchy |
 | Test Cases | `testcases` + `state.activeTestCaseProjectId` / `state.tcPage` | Home (all projects) → project overview → test scenarios |
-| Activity | `activity` | Chronological audit feed |
-| Settings | `settings` + `state.settingsSection` | General, Modules, Data & Backups, Integrations, Danger Zone |
+| Notifications | `notifications` | Jira change and QA-task notifications, grouped by day |
+| Activity | `activity` | Day-grouped audit timeline with search and type filters |
+| Settings | `settings` + `state.settingsSection` | General, Modules, Data & Backups, Integrations, Notifications, Danger Zone |
 
 ### Dashboard
 
@@ -455,16 +496,21 @@ Filters: project, developer, status, assignment state. Search matches title, des
 
 ### Release Management
 
-Cards are sorted by **release date descending** (most recent date first; undated releases at the end).
-
-Seven-stage release status workflow:
+- **Header** — total, in flight, released, rolled back, and a released ring.
+- **Status pipeline** — Draft → Planned → In Progress → Testing → Approved → Released, plus Rolled Back, each with its count; click a stage to filter, click again to clear.
+- **Toolbar** — search (name, version, project, work items, manager, description), project filter, Clear, result count, **New Release**.
+- **List** — **In flight** first, then released releases **by month** (newest first), then **Rolled back**. Each row: name and status, projects and versions, a one-line description, released / target date, manager, work items, developer initials, and icons to copy the release-notes email, edit, and delete. Click a row (or press Enter) to open the release details.
 
 ```
 Draft  →  Planned  →  In Progress  →  Testing  →  Approved  →  Released
                                                              ↘  Rolled Back
 ```
 
-The release metrics header shows counts per stage group: Draft/Planned, Active/Testing/Approved, Released, Rolled Back.
+### Notifications
+
+The bell (top bar) and the **Notifications** sidebar item show the unread count. The page lists notifications grouped by day — Today, Yesterday, then dates — with filters (All, Unread, Comments, Status changes, Updates, QA tasks), per-item read / unread, **Mark all read**, **Clear read**, **Check now** and a link to the settings. A Jira notification opens the ticket in a new tab; a QA-task notification opens the task.
+
+Clair checks every linked Jira project every 30 seconds while Chrome is running (see [v4.1.0](#v410)); it needs a Jira connection and at least one Clair project linked to a Jira project.
 
 ### Release Points
 
@@ -515,6 +561,7 @@ A section menu on the left (arrow keys move between sections; a horizontal tab s
 - **Modules** — show or hide each sidebar module (hidden modules keep their data; Settings is always on).
 - **Data & Backups** — Export backup (timestamped JSON to the `Backup/` folder), Import backup, Excel report; **Automatic backup** (on/off, backup time with **Save**, last successful backup, Success/Failed with the reason — see [Automatic Backups](#automatic-backups)); storage counts and data size.
 - **Integrations** — **Jira Cloud**: site URL, Atlassian email, API token (masked; blank keeps the saved one), Save Configuration / Test Connection / Disconnect Jira, and the connection status.
+- **Notifications** — Sound (with a Play button to test it), Desktop notifications, and which events to notify about: comments, status changes, other updates, QA tasks created, and your own changes (off by default).
 - **Danger Zone** — Clear database (all SQLite tables, after exporting a backup first).
 
 Developers are managed on the **Developers** page.
@@ -579,6 +626,8 @@ db.js  (ClairDB — persistence layer)
   │          (jiraSync = local Jira ticket cache, jiraPending = unsynced status/comment changes,
   │           jiraQa = sync checkpoints, processed Ready for QA tickets, task batches, run log;
   │           none of them is part of JSON export/backup)
+  └─ (notifications live in chrome.storage.local — clairNotifications, clairNotifySettings,
+      clairJiraWatch, clairJiraWatchProjects — so the worker can add them while a page is open)
   ├─ migrateFromLegacyStorage()  one-time, transactional, verified, idempotent
   ├─ load()/save()/getPref()/setPref()  the only API the rest of the app uses
   └─ loadSnapshot()     read-only copy of the last saved DB, for the background backup
@@ -761,7 +810,7 @@ DEVELOPER ─┬── PROJECT       (developer.projectIds[])
 
 ```
 project-extension/
-├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 4.0.0)
+├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 4.1.0)
 ├── background.js            Service worker — tab lifecycle, scheduled automatic backup, scheduled Jira sync
 ├── backup.js                Shared JSON backup format, Backup/ folder path, auto-backup filename
 ├── jira.js                  Jira Cloud client (API token auth): test connection, projects, issue search, full issue fetch, project statuses, transitions, comments (ADF), changelog
@@ -803,12 +852,14 @@ project-extension/
 | `chrome.storage.local.get / set`, `chrome.storage.onChanged` | Automatic-backup settings and status only (`autoBackupEnabled`, `autoBackupTime`, `autoBackupLastAttemptAt`, `autoBackupStatus`, `autoBackupLastSuccessAt`, `autoBackupLastFile`, `autoBackupLastError`, `autoBackupLastFailedAt`). Kept out of SQLite so the service worker never writes to the database file an open Clair tab is saving. |
 | `chrome.downloads.download` | Saves manual exports and automatic backups to the `Backup/` folder |
 | `chrome.downloads.search / onChanged` | Confirms an automatic backup actually finished before reporting Success |
-| `chrome.alarms` | One-shot alarms at the next scheduled backup time and the next Jira sync slot, re-armed after each run (`alarms` permission) |
+| `chrome.alarms` | One-shot alarms at the next scheduled backup time and the next Jira sync slot, re-armed after each run; a repeating 30-second alarm for the Jira change watcher (`alarms` permission) |
+| `chrome.notifications.create / onClicked / clear` | Desktop notifications for new Jira changes and QA tasks; clicking one opens Clair on the Notifications page (`notifications` permission) |
+| `chrome.storage.local` + `chrome.storage.onChanged` (notifications) | `clairNotifications` (up to 300), `clairNotifySettings`, `clairJiraWatch` (last check, seen events), `clairJiraWatchProjects` (linked Jira projects, written by the page); open pages update instantly on change |
 | `chrome.offscreen.createDocument / closeDocument` | Hidden page that builds the backup blob — service workers can't create blob URLs (`offscreen` permission, reason `BLOBS`) |
 | `chrome.runtime.getContexts / sendMessage / onMessage` | Detects an existing offscreen page; service worker ↔ offscreen messaging |
 | `chrome.runtime.onInstalled / onStartup` | Ensures the backup and Jira sync alarms exist and catches up a missed backup / Jira sync slot |
 | `chrome.runtime.sendMessage / onMessage` (`clair-jira-qa-sync`) | The service worker hands a scheduled Jira sync to an open Clair tab |
-| `navigator.locks` (Web Locks) | One Jira sync at a time across the page and the service worker |
+| `navigator.locks` (Web Locks) | One Jira sync and one change check at a time across the page and the service worker; serialises updates to the notification list |
 | `chrome.runtime.getURL` | Resolves the extension-relative `index.html` and `sql-wasm.wasm` URLs |
 | `chrome.permissions.request / contains / remove` | Optional `https://*.atlassian.net/*` host permission — requested when saving a Jira configuration, removed on disconnect |
 | `chrome.storage.local` (`jiraConfig`) | Jira site, email, API token, and connected account name — unencrypted, never exported |
@@ -827,7 +878,7 @@ In **Settings**, click **Export Data**. A timestamped JSON file is downloaded to
 clair-export-2026-06-20.json
 ```
 
-The export includes: `projects`, `tasks`, `tests` (insights), `developers`, `releases`, `testCases`, `modules`, `releasePoints`, `noteFolders`, `notes`, and `activity`. The Jira ticket cache (`jiraSync`), unsynced Jira changes (`jiraPending`), Jira sync bookkeeping (`jiraQa`) and Jira credentials are not exported (generated QA tasks are ordinary tasks and are exported); after restoring on another machine, connect Jira and press Refresh on the Jira page (manual status-mapping choices are not restored).
+The export includes: `projects`, `tasks`, `tests` (insights), `developers`, `releases`, `testCases`, `modules`, `releasePoints`, `noteFolders`, `notes`, and `activity`. The Jira ticket cache (`jiraSync`), unsynced Jira changes (`jiraPending`), Jira sync bookkeeping (`jiraQa`), notifications and their settings, and Jira credentials are not exported (generated QA tasks are ordinary tasks and are exported); after restoring on another machine, connect Jira and press Refresh on the Jira page (manual status-mapping choices are not restored).
 
 ### Automatic Backups
 
@@ -942,6 +993,8 @@ Clair follows a no-build, no-framework approach. Keep contributions consistent w
 - [ ] Project Details: opens from the **Project Details** button in both List and Kanban views; stats match the project's tasks (tasks linked to multiple projects are counted per project, nothing from other projects); release history is newest first; editing a task/release/project from the page updates it immediately; **Projects** returns to the list; works in light and dark and at phone width.
 - [ ] Client Name: create a project with and without a client; it shows on List and Kanban cards, the detail modal, and Project Details; it survives export → import.
 - [ ] Jira: Save with a wrong token shows "rejected the email or API token" and stores nothing; a valid token connects and shows the account/workspace; the token field is empty afterwards; link a project, open a Release Point for it, Import from Jira, search/select/add tickets, save — the card shows each key as a link opening Jira in a new tab plus the assignee; importing the same ticket again in that project is blocked; Disconnect removes the credentials; an exported JSON contains no token.
+- [ ] Notifications: with Jira connected and a project linked, a comment / status change / assignee change by someone else appears within about 30 seconds (or after **Check now**) with a chime, a desktop notification and badge counts; your own changes don't appear; mark read / Mark all read / Clear read work; switching a type off in Settings → Notifications stops it; Sync Now that creates a QA task adds a "QA task created" notification that opens the task; `chrome.alarms.get('clair-jira-watch')` in the service worker shows `periodInMinutes: 0.5`.
+- [ ] Top bar and pages: only Import, Export and the bell in the top bar; New Project / New Task / New Insight / New Release are in their pages' toolbars; Projects Kanban, Calendar, Release Management and the forms look right in light and dark and at phone width.
 - [ ] Jira sync & QA tasks: Sync Now creates one "Ticket closing - {project}" task per project with new Ready for QA tickets (tag Auto Task Creation, To-Do, Medium, start = earliest entry, end = +2 days, developers matched, description with keys and links); a second Sync Now creates nothing; a ticket that leaves and re-enters Ready for QA creates nothing; `chrome.alarms.get('clair-jira-qa-sync')` in the service worker shows the next slot; a failed project is reported and retried on the next sync without duplicating the others.
 - [ ] Jira ticket panel: clicking a ticket row opens it; the status dropdown lists only transitions Jira allows; choosing one and adding comments marks the ticket Pending without changing anything in Jira; pending changes survive leaving the page and reloading; Sync to Jira applies the status and posts the comments (check in Jira), refreshes the row and comments, and clears the pending state; with a failing comment the status change is kept, the comment stays pending, and Sync again posts it once.
 - [ ] Jira page: only linked projects appear; Refresh fetches every ticket (Epics and Sub-tasks included) and updates the counts and last-synced time; a failed refresh keeps the previous data and says so; View Details shows the table — search, type, assignee, category chips, sort, and pagination work, and the totals follow the filters; keys and the action icon open the ticket in Jira; unrecognised statuses show as Unmapped and can be mapped in Status mapping (saved per project, kept across refresh, Reset all to Automatic clears them); Release Points are unchanged; an exported JSON contains no `jiraSync`; light and dark themes and phone width look right.
