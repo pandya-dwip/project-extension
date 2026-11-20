@@ -165,7 +165,7 @@
       </nav>
 
       <div class="sidebar-footer">
-        <div class="app-version-tag" id="appVersion">Version 4.2.0</div>
+        <div class="app-version-tag" id="appVersion">Version 4.3.0</div>
       </div>
     </aside>
 
@@ -186,6 +186,10 @@
         </div>
         <div class="topbar-right">
           <input type="file" id="importInput" style="display: none;" accept=".json" />
+          <button class="topbar-btn topbar-search" id="paletteBtn" title="Search everything (Ctrl+K)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" /></svg>
+            <span>Search</span><kbd>Ctrl K</kbd>
+          </button>
           <div class="topbar-group" role="group" aria-label="Data">
             <button class="topbar-btn" id="importBtn" title="Import data from a JSON backup">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1519,7 +1523,28 @@
   <script src="backup.js"></script>
   <script src="jira.js"></script>
   <script src="jiracore.js"></script>
-  <script src="app.js?v=7"></script>
+  <!-- App code, in this order (classic scripts share one global scope) -->
+  <script src="js/core.js"></script>
+  <script src="js/excel-report.js"></script>
+  <script src="js/jira-page.js"></script>
+  <script src="js/notifications.js"></script>
+  <script src="js/qa.js"></script>
+  <script src="js/search.js"></script>
+  <script src="js/navigation.js"></script>
+  <script src="js/dashboard.js"></script>
+  <script src="js/projects.js"></script>
+  <script src="js/tasks.js"></script>
+  <script src="js/insights.js"></script>
+  <script src="js/dnd.js"></script>
+  <script src="js/activity.js"></script>
+  <script src="js/settings.js"></script>
+  <script src="js/events.js"></script>
+  <script src="js/modals.js"></script>
+  <script src="js/releases.js"></script>
+  <script src="js/release-points.js"></script>
+  <script src="js/test-cases.js"></script>
+  <script src="js/notes.js"></script>
+  <script src="js/boot.js"></script>
 </body>
 
 </html>

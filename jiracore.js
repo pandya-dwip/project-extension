@@ -1,6 +1,6 @@
-// jiracore.js — Jira logic shared by the Clair page (app.js) and the background worker:
+// jiracore.js — Jira logic shared by the Clair page (js/*.js) and the background worker:
 // status categories and automatic status mapping, and the Jira sync / automatic QA task
-// pipeline. Loaded as a classic script (top-level names are shared with app.js).
+// pipeline. Loaded as a classic script (top-level names are shared with the page scripts in js/).
 // Clair categories a Jira status can be mapped to (order = display order). Colour drives
 // cards, KPI tiles, the stacked bar and pills. "core" ones always show on cards/banner;
 // the others show there only when they have tickets (the details page shows all).
@@ -255,7 +255,7 @@ const jiraCreateQaTask = (data, project, entries, trigger, runAt, part = '') => 
       startDate: jiraLocalDate(start), endDate: jiraLocalDate(start + 2 * 86400000),
       status: 'To-Do', priority: 'Medium', projectIds: [project.id], developerIds: devIds,
       completedDate: null, createdAt: now, updatedAt: now,
-      autoQa: { batchId, issueIds: entries.map(e => e.issueId), keys: entries.map(e => e.key), trigger, tickets }
+      autoQa: { batchId, issueIds: entries.map(e => e.issueId), keys: entries.map(e => e.key), trigger, tickets, routed: true }
     }, ...(data.tasks || [])];
     data.activity = [{ id: Math.random().toString(36).slice(2, 10), text: `Added task "Ticket closing - ${project.name}${part}" (${entries.length} Ready for QA ticket${entries.length === 1 ? '' : 's'} from Jira)`, type: 'task', at: now }, ...(data.activity || [])].slice(0, 200);
     created = true;
@@ -270,6 +270,7 @@ const jiraCreateQaTask = (data, project, entries, trigger, runAt, part = '') => 
 const jiraQaSync = async ({ data, trigger, save, onProgress = () => {} }) => {
   const runAt = Date.now();
   const projects = (data.projects || []).filter(p => p.jira && p.jira.projectKey);
+  jiraQaReroute(data); // earlier tasks in the wrong one of several projects sharing a Jira project
   const qaEvents = [];
   const sum = { kind: 'run', id: `run:${runAt}`, trigger, startedAt: new Date(runAt).toISOString(), finishedAt: '', projects: projects.length, synced: 0, tickets: 0, newQa: 0, tasks: 0, taskProjects: [], skipped: 0, failures: [], ok: false };
   for (const [n, p] of projects.entries()) {
@@ -312,6 +313,9 @@ const jiraQaSync = async ({ data, trigger, save, onProgress = () => {} }) => {
       try { await save(); } catch (e2) { /* the run summary below reports it */ }
     }
   }
+  // Tickets closed or sent back directly in Jira complete their QA task too.
+  const autoCompleted = jiraQaReconcile(data);
+  sum.qaCompleted = autoCompleted.length;
   sum.finishedAt = new Date().toISOString();
   sum.ok = !sum.failures.length;
   const runs = (data.jiraQa || []).filter(r => r.kind === 'run').sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, 19);
@@ -453,3 +457,124 @@ const jiraWatchPoll = async () => {
   return { checked: issues.length, added: added.length };
 };
 const jiraWatchPollLocked = () => navigator.locks.request('clair-jira-watch', { ifAvailable: true }, async (lock) => lock ? jiraWatchPoll() : { busy: true });
+
+// ─── QA checklist on "Ticket closing" tasks (shared by page and worker) ───
+// Each ticket of an automatic QA task gets an outcome — verified (closed) or reopened —
+// recorded in task.autoQa.outcomes[key] = { result, at, by: 'clair' | 'jira', note },
+// with a line appended to the task's Work Done. When every ticket has an outcome the
+// task is completed. Tickets handled directly in Jira are recognised from their current
+// status (via the project's status mapping) whenever the ticket cache is refreshed.
+const QA_CLOSED_CATS = ['done', 'wontdo', 'notapplicable'];       // counted as verified & closed
+const QA_SENT_BACK_CATS = ['todo', 'inprogress', 'reopen', 'inreview']; // counted as reopened
+const jiraQaTickets = (task) => (task.autoQa && task.autoQa.tickets && task.autoQa.tickets.length)
+  ? task.autoQa.tickets
+  : ((task.autoQa && task.autoQa.keys) || []).map(key => ({ key, summary: '', assignee: '', readyAt: '', url: '' }));
+const jiraQaOutcome = (task, key) => (task.autoQa && task.autoQa.outcomes && task.autoQa.outcomes[key]) || null;
+
+const jiraQaRecord = (data, task, key, result, by, note = '') => {
+  if (jiraQaOutcome(task, key)) return false;
+  const now = new Date().toISOString();
+  task.autoQa = { ...task.autoQa, outcomes: { ...(task.autoQa.outcomes || {}), [key]: { result, at: now, by, note } } };
+  const line = `${result === 'verified' ? '✓' : '↺'} ${key} — ${result === 'verified' ? 'Verified and closed' : 'Reopened'}${by === 'jira' ? ' in Jira' : ''} · ${jiraFmt(Date.now())}${note ? `\n   ${note}` : ''}`;
+  task.workDone = task.workDone ? `${task.workDone}\n${line}` : line;
+  task.updatedAt = now;
+  return true;
+};
+
+const jiraQaMaybeComplete = (data, task) => {
+  const tickets = jiraQaTickets(task);
+  if (!tickets.length || task.status === 'Done' || !tickets.every(t => jiraQaOutcome(task, t.key))) return false;
+  const now = new Date().toISOString();
+  task.status = 'Done';
+  task.completedDate = now;
+  task.updatedAt = now;
+  const v = tickets.filter(t => jiraQaOutcome(task, t.key).result === 'verified').length;
+  data.activity = [{ id: Math.random().toString(36).slice(2, 10), text: `Completed task "${task.title}" — ${v} verified, ${tickets.length - v} reopened`, type: 'task', at: now }, ...(data.activity || [])].slice(0, 200);
+  return true;
+};
+
+// Outcomes for tickets someone already closed or sent back in Jira. Returns completed tasks.
+const jiraQaReconcile = (data) => {
+  const completed = [];
+  (data.tasks || []).forEach(task => {
+    if (!task.autoQa || task.status === 'Done') return;
+    const rec = (data.jiraSync || []).find(r => r.id === (task.projectIds || [])[0]);
+    if (!rec) return;
+    jiraQaTickets(task).forEach(t => {
+      if (jiraQaOutcome(task, t.key)) return;
+      const iss = rec.issues.find(i => i.key === t.key);
+      if (!iss) return;
+      const cat = jiraCategoryOf(rec, iss.statusId, iss.status);
+      if (QA_CLOSED_CATS.includes(cat)) jiraQaRecord(data, task, t.key, 'verified', 'jira', `Jira status: ${iss.status}`);
+      else if (QA_SENT_BACK_CATS.includes(cat)) jiraQaRecord(data, task, t.key, 'reopened', 'jira', `Jira status: ${iss.status}`);
+    });
+    if (jiraQaMaybeComplete(data, task)) completed.push(task);
+  });
+  return completed;
+};
+
+// QA comment templates (chrome.storage.local). Placeholders: {key} {summary} {developer} {project} {date}.
+const QA_TEMPLATES_KEY = 'clairQaTemplates';
+const QA_DEFAULT_TEMPLATES = [
+  { id: 'verified-default', name: 'Verified and closed', kind: 'verified', text: 'Verified the fix for {key} — {summary}.\n\n- Tested the reported scenario; it now works as expected.\n- Checked the related flows for regressions.\n\n**QA verification completed and ticket closed.**' },
+  { id: 'reopen-default', name: 'Reopen — still failing', kind: 'reopen', text: 'Reopening {key} — the issue still occurs.\n\n- Steps: \n- Expected: \n- Actual: \n\nPlease fix and move it back to Ready for QA.' }
+];
+const qaFillTemplate = (text, vars) => String(text || '').replace(/\{(key|summary|developer|project|date)\}/g, (m, k) => vars[k] != null ? vars[k] : m);
+
+// Open QA tasks created before assignee routing may sit in the wrong Clair project when
+// several Clair projects share one Jira project (e.g. CIMTrack / CIMTrack Dashboard).
+// Moves each such task to the project its tickets belong to — or splits it, one task per
+// project, when its tickets belong to different ones. Outcomes already recorded travel
+// with their tickets. Idempotent: does nothing once every task is in the right place.
+// Returns the number of tasks moved or created.
+const jiraQaReroute = (data) => {
+  let changed = 0;
+  const linked = (data.projects || []).filter(p => p.jira && p.jira.projectKey);
+  const devIdsFor = (tickets) => [...new Set(tickets.map(t => {
+    const n = String(t.assignee || '').trim().toLowerCase();
+    const d = n && (data.developers || []).find(x => (x.name || '').trim().toLowerCase() === n);
+    return d ? d.id : null;
+  }).filter(Boolean))];
+  [...(data.tasks || [])].forEach(task => {
+    // Each task is checked once (autoQa.routed), so a project you set by hand is never undone.
+    if (!task.autoQa || task.autoQa.routed || task.status === 'Done') return;
+    if (!(task.autoQa.tickets && task.autoQa.tickets.length)) return; // no assignee info to route by
+    task.autoQa = { ...task.autoQa, routed: true };
+    changed++;
+    const cur = linked.find(p => p.id === (task.projectIds || [])[0]);
+    if (!cur) return;
+    const group = linked.filter(x => x.jira.site === cur.jira.site && String(x.jira.projectId) === String(cur.jira.projectId));
+    if (group.length < 2) return;
+    const tickets = jiraQaTickets(task);
+    const ids = task.autoQa.issueIds || [];
+    const byOwner = new Map();
+    tickets.forEach((t, k) => {
+      const owner = jiraQaOwner(data, group, t.assignee);
+      if (!byOwner.has(owner)) byOwner.set(owner, []);
+      byOwner.get(owner).push({ t, issueId: ids[k] });
+    });
+    if (byOwner.size === 1 && byOwner.has(cur.id)) return;
+    const now = new Date().toISOString();
+    const createdAt = Date.parse(task.createdAt) || Date.now();
+    const split = byOwner.size > 1;
+    [...byOwner].forEach(([ownerId, items], n) => {
+      const owner = group.find(p => p.id === ownerId);
+      const tks = items.map(x => x.t);
+      const outcomes = Object.fromEntries(Object.entries(task.autoQa.outcomes || {}).filter(([key]) => tks.some(t => t.key === key)));
+      const target = n === 0 ? task : { ...task, id: `${task.id}-${n}`, workDone: '', createdAt: now };
+      target.projectIds = [ownerId];
+      target.title = `Ticket closing - ${owner.name}`;
+      target.developerIds = devIdsFor(tks);
+      target.updatedAt = now;
+      target.autoQa = { ...task.autoQa, routed: true, keys: tks.map(t => t.key), issueIds: items.map(x => x.issueId).filter(Boolean), tickets: tks, outcomes,
+        batchId: n === 0 ? task.autoQa.batchId : `${task.autoQa.batchId}-${n}` };
+      if (split) target.description = jiraQaDescription({ projectKey: owner.jira.projectKey, tickets: tks, trigger: task.autoQa.trigger, at: jiraFmt(createdAt) });
+      if (n > 0) data.tasks = [target, ...data.tasks];
+      // Keep the processed-ticket records pointing at the right task and project.
+      (data.jiraQa || []).forEach(r => { if (r.kind === 'issue' && r.taskId === task.id && tks.some(t => t.key === r.key)) { r.taskId = target.id; r.projectId = ownerId; } });
+      changed++;
+    });
+    data.activity = [{ id: Math.random().toString(36).slice(2, 10), text: split ? `Split QA task "${task.title}" by project (${[...byOwner.keys()].map(id => group.find(p => p.id === id).name).join(', ')})` : `Moved QA task to ${group.find(p => p.id === [...byOwner.keys()][0]).name}`, type: 'task', at: now }, ...(data.activity || [])].slice(0, 200);
+  });
+  return changed;
+};

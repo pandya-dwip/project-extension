@@ -4,7 +4,7 @@
 
 **A local-first project & release tracker — built as a Chrome Extension**
 
-![Version](https://img.shields.io/badge/version-4.2.0-informational?style=flat-square)
+![Version](https://img.shields.io/badge/version-4.3.0-informational?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Chrome%20Extension-4285F4?style=flat-square&logo=googlechrome&logoColor=white)
 ![Manifest](https://img.shields.io/badge/manifest-V3-success?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-Vanilla%20JS%20%2F%20HTML%20%2F%20CSS-F7DF1E?style=flat-square)
@@ -52,6 +52,43 @@ The current app version is displayed in the sidebar footer and is always read di
 ---
 
 ## What's New
+
+### v4.3.0
+
+#### QA checklist in "Ticket closing" tasks
+
+- Open an automatic QA task and a **QA checklist** lists its tickets (developer, current Jira status) with **Verified & closed** and **Reopen** for each.
+- Choosing one opens a comment box filled from a **QA comment template** (editable). Confirming:
+  - moves the ticket in Jira — to the project's **Done** status, or back to **Reopen / In Progress** (Jira notifies the developer of the comment);
+  - posts the comment (lists and **bold** formatted for Jira);
+  - adds a line to the task's **Work Done**, e.g. `✓ CIMTRACK-482 — Verified and closed · 20 Nov 2026, 4:35 pm` or `↺ … — Reopened` with the first line of the comment as the reason.
+- If Jira's workflow has no move to Done (or back), Clair says so instead of guessing; if the status changed but the comment failed, it tells you.
+
+#### Auto-complete
+
+- Tickets closed or sent back **directly in Jira** are recognised (via the project's status mapping) when you open the task, click **Refresh from Jira**, refresh the project, use **Sync Now**, or a scheduled sync runs — the Work Done line says "…in Jira".
+- When every ticket of a QA task is handled, the task becomes **Done** with today's completion date.
+
+#### QA comment templates
+
+- **Settings → QA workflow** — edit, add, delete or restore the default **Verified** and **Reopen** templates. Placeholders: `{key}`, `{summary}`, `{developer}`, `{project}`, `{date}`.
+
+#### Weekly QA report
+
+- **Weekly QA report** (Jira page → sync card, or search): Monday–Sunday with previous / next / this week; verified, reopened and still-pending tickets, QA tasks created and completed, average time from Ready for QA to verified; per-project breakdown and tables. **Copy for email** (plain text) and **Download CSV**.
+
+#### Global search (Ctrl+K)
+
+- **Ctrl+K** anywhere (or **Search** in the top bar) opens one search box for pages, projects, tasks, Jira tickets (key or summary), test cases, notes, releases, release points and developers. Arrow keys, Enter, Esc. A Jira ticket opens on the Jira page with its panel expanded.
+
+#### Code structure
+
+- The 14,400-line `app.js` is split into **21 files in [`js/`](js/)** (core, jira-page, notifications, qa, search, navigation, dashboard, projects, tasks, insights, dnd, activity, settings, events, modals, releases, release-points, test-cases, notes, excel-report, boot). The code is unchanged — cut at its own section headings and loaded in the original order by `index.html` (classic scripts share one global scope).
+
+#### Fixes
+
+- **QA tasks in the wrong project** — tasks created before assignee routing are moved once to the right Clair project (CIMTrack vs CIMTrack Dashboard), or split per project when their tickets belong to both; recorded outcomes move with their tickets. Each task is checked only once, so a project you set by hand is kept.
+- **Task form dropped developers** — the developer list showed only developers linked to the selected project, so saving could silently remove an assigned developer from another project. Developers already on the task now always appear, ticked.
 
 ### v4.2.0
 
@@ -389,7 +426,7 @@ Jira status names differ between projects, so each linked project has its own ma
 |---|---|
 | **Dashboard** | Live counts for projects, tasks, insights, releases, and release points; weekly task completion chart; released projects by month; Recent Tasks (status mix, needs attention, recently completed); Test Cases by Project; Active Releases & Plans (stage pipeline, in-flight releases with their release points, recently shipped). |
 | **Projects** | Create web and mobile app projects with platform-specific version fields; support custom metadata (Client, Team, Due Date, Priority); toggle between classic 3-column List view and 5-column lifecycle Kanban board view with HTML5 drag-and-drop; manually reorder projects in List view by dragging; search, filter, edit, delete; open a per-project **Project Details** page with stats, developer involvement, release history, timeline, and task history.; optional QA and Production URL, login and password per project, shown on the project card and on Project Details. |
-| **Tasks** | 4-column Kanban board (To-Do, In Progress, Done, On Hold) with columns that scroll individually; drag cards between columns; visual date alerts for overdue, due-today, and due-tomorrow tasks; assign tasks to developers; log a free-text "Work Done" note per task; filter by a Start Date range (From/To); **New Task** in the toolbar. |
+| **Tasks** | 4-column Kanban board (To-Do, In Progress, Done, On Hold) with columns that scroll individually; drag cards between columns; visual date alerts for overdue, due-today, and due-tomorrow tasks; assign tasks to developers; log a free-text "Work Done" note per task; filter by a Start Date range (From/To); **New Task** in the toolbar.; automatic "Ticket closing" tasks have a QA checklist (Verified & closed / Reopen in Jira, Work Done filled in, auto-complete). |
 | **Project Insights** | Capture issues, enhancements, and notes per project; track each item through a Dev → QA → Done workflow; filter by developer, status, and assignment state. |
 | **Release Management** | Status pipeline with counts (click a stage to filter), search and project filter; releases grouped In flight / by month / Rolled back as compact rows that open the release details; seven-stage workflow (Draft → Released); email-style release notes, copied to the clipboard; **New Release** in the toolbar. |
 | **Release Points** | Accordion list grouped into In progress / Completed; progress ring and bar per release point; full checklist on expand with in-place, keyboard-accessible ticking; project filter chips, Expand/Collapse all, search inside checklist items; shows the release each point belongs to; bulk add and bulk assign in the editor; import Jira tickets as checklist items; ticket links show the ticket key. |
@@ -403,7 +440,8 @@ Jira status names differ between projects, so each linked project has its own ma
 | **Responsive UI** | Sidebar collapses to a hamburger menu on small screens; card grids and Kanban boards reflow for mobile and tablet. |
 | **Settings** | Section menu (General, Modules, Data & Backups, Integrations, Notifications, Danger Zone): theme, default startup module, sidebar module visibility, backup/import/report, automatic backup, storage stats, Jira connection, notification sound / desktop / types, clear database. |
 | **Appearance** | Light and dark themes, resolved in JS (System follows the OS setting, or pin Light/Dark explicitly) from Settings → General; choice persists across reloads. |
-| **Global Search** | `Ctrl+K` / `Cmd+K` opens instant search across projects, tasks, and developers from any screen. |
+| **Global Search** | `Ctrl+K` / `Cmd+K` (or **Search** in the top bar) finds pages, projects, tasks, Jira tickets, test cases, notes, releases, release points and developers; arrow keys + Enter. |
+| **Weekly QA report** | Verified / reopened / pending tickets, QA tasks created and completed, average time to verify, by project; copy for email or download CSV. |
 | **Version Badge** | App version shown in the sidebar footer; auto-read from `manifest.json` — always stays in sync. |
 
 ---
@@ -447,6 +485,7 @@ Clair is a single-page application. Navigation switches the rendered view in pla
 | Notes | `notes` | Project-based notes & Markdown workspace with 1-level subfolder hierarchy |
 | Test Cases | `testcases` + `state.activeTestCaseProjectId` / `state.tcPage` | Home (all projects) → project overview → test scenarios |
 | Notifications | `notifications` | Jira change and QA-task notifications, grouped by day |
+| Weekly QA report | `qareport` + `state.qaReportWeek` | QA outcomes of a week (opened from the Jira page or search) |
 | Activity | `activity` | Day-grouped audit timeline with search and type filters |
 | Settings | `settings` + `state.settingsSection` | General, Modules, Data & Backups, Integrations, Notifications, Danger Zone |
 
@@ -590,6 +629,7 @@ A section menu on the left (arrow keys move between sections; a horizontal tab s
 - **Modules** — show or hide each sidebar module (hidden modules keep their data; Settings is always on).
 - **Data & Backups** — Export backup (timestamped JSON to the `Backup/` folder), Import backup, Excel report; **Automatic backup** (on/off, backup time with **Save**, last successful backup, Success/Failed with the reason — see [Automatic Backups](#automatic-backups)); storage counts and data size.
 - **Integrations** — **Jira Cloud**: site URL, Atlassian email, API token (masked; blank keeps the saved one), Save Configuration / Test Connection / Disconnect Jira, and the connection status.
+- **QA workflow** — QA comment templates (Verified / Reopen) used by the QA checklist; placeholders `{key}`, `{summary}`, `{developer}`, `{project}`, `{date}`.
 - **Notifications** — Sound (with a Play button to test it), Desktop notifications, and which events to notify about: comments, status changes, other updates, QA tasks created, and your own changes (off by default).
 - **Danger Zone** — Clear database (all SQLite tables, after exporting a backup first).
 
@@ -632,7 +672,7 @@ index.html  (static shell)
   └─ Modal layer (forms, detail views, confirmations)
         │
         ▼
-app.js  (single-page controller)
+js/*.js  (single-page controller — 21 classic scripts, loaded in order, one global scope)
   ├─ state {}           in-memory store for all collections
   ├─ storage            thin wrapper → delegates to ClairDB (db.js)
   ├─ render*()          string-template view renderers
@@ -842,14 +882,34 @@ DEVELOPER ─┬── PROJECT       (developer.projectIds[])
 
 ```
 project-extension/
-├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 4.2.0)
+├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 4.3.0)
 ├── background.js            Service worker — tab lifecycle, scheduled automatic backup, scheduled Jira sync
 ├── backup.js                Shared JSON backup format, Backup/ folder path, auto-backup filename
 ├── jira.js                  Jira Cloud client (API token auth): test connection, projects, issue search, full issue fetch, project statuses, transitions, comments (ADF), changelog
 ├── jiracore.js              Shared by page + service worker: status categories/auto-mapping, Jira sync + automatic QA task pipeline, schedule slots
 ├── offscreen.html / .js     Hidden page that builds the auto-backup file (blob URL) for the service worker
 ├── index.html               Static shell: sidebar, top bar, modals, form controls
-├── app.js                   Single-page controller (~12 900 lines)
+├── js/                      Single-page controller, split by area (loaded in this order by index.html):
+│   ├── core.js              Constants, state, storage, theme, utilities, import/export, toasts
+│   ├── excel-report.js      Excel report export
+│   ├── jira-page.js         Jira page: dashboard, Sync Now card, ticket panel
+│   ├── notifications.js     Notifications page, bell, sound, settings
+│   ├── qa.js                QA checklist, QA comment templates, weekly QA report
+│   ├── search.js            Global search (Ctrl+K)
+│   ├── navigation.js        Navigation, render dispatcher, shared page header
+│   ├── dashboard.js         Dashboard
+│   ├── projects.js          Projects (list, Kanban, environments, Project Details)
+│   ├── tasks.js             Tasks board, Calendar
+│   ├── insights.js          Project Insights
+│   ├── dnd.js / activity.js Drag and drop / Activity timeline
+│   ├── settings.js          Settings, modules, Developers page, Jira settings
+│   ├── events.js            Event delegation for page actions, filters
+│   ├── modals.js            Developer, project and task forms; detail modal
+│   ├── releases.js          Release Management
+│   ├── release-points.js    Release Points
+│   ├── test-cases.js        Test Case Management, Excel import
+│   ├── notes.js             Notes
+│   └── boot.js              Start-up (init) and global listeners
 ├── db.js                    ClairDB — SQLite persistence layer, schema, migration, snapshot (~260 lines)
 ├── style.css                Complete stylesheet with CSS custom properties (~10 600 lines)
 ├── sql-wasm.js              sql.js (SQLite → WebAssembly) loader, vendored
@@ -983,11 +1043,11 @@ Keys appear in the order defined by `ClairBackup.KEYS` in [backup.js](backup.js)
 
 Clair follows a no-build, no-framework approach. Keep contributions consistent with that.
 
-1. Edit [index.html](index.html), [style.css](style.css), [app.js](app.js), [db.js](db.js), or [background.js](background.js) directly.
+1. Edit [index.html](index.html), [style.css](style.css), the page scripts in [js/](js/), [db.js](db.js), [jiracore.js](jiracore.js) or [background.js](background.js) directly. New page code goes into the matching `js/` file; a new file must be added to the script list in `index.html` (order matters — code that runs at load can only use what earlier files define).
 2. Bump the `"version"` field in [manifest.json](manifest.json) for any user-visible change — the sidebar badge updates automatically.
 3. Reload the unpacked extension at `chrome://extensions`.
 4. Test both **extension mode** and **standalone `index.html` mode** after any storage or persistence change.
-5. All persistence goes through `ClairDB` in [db.js](db.js) — don't call `chrome.storage`/`localStorage` directly from `app.js`; add a `ClairDB` method instead. If you add a new collection, add its table to the schema in `ensureSchema()` and to the `TABLES` array, **and** to `ClairBackup.KEYS` in [backup.js](backup.js) so exports and automatic backups include it. The one deliberate exception is the automatic-backup settings/status in `chrome.storage.local`, which the service worker must write without touching the SQLite file.
+5. All persistence goes through `ClairDB` in [db.js](db.js) — don't call `chrome.storage`/`localStorage` directly from the page scripts; add a `ClairDB` method instead. If you add a new collection, add its table to the schema in `ensureSchema()` and to the `TABLES` array, **and** to `ClairBackup.KEYS` in [backup.js](backup.js) so exports and automatic backups include it. The one deliberate exception is the automatic-backup settings/status in `chrome.storage.local`, which the service worker must write without touching the SQLite file.
 6. Keep storage shape changes backward-compatible with existing backup files where possible.
 7. Update this README when adding views, form fields, storage collections, Chrome permissions, or browser APIs.
 
@@ -1025,6 +1085,8 @@ Clair follows a no-build, no-framework approach. Keep contributions consistent w
 - [ ] Project Details: opens from the **Project Details** button in both List and Kanban views; stats match the project's tasks (tasks linked to multiple projects are counted per project, nothing from other projects); release history is newest first; editing a task/release/project from the page updates it immediately; **Projects** returns to the list; works in light and dark and at phone width.
 - [ ] Client Name: create a project with and without a client; it shows on List and Kanban cards, the detail modal, and Project Details; it survives export → import.
 - [ ] Jira: Save with a wrong token shows "rejected the email or API token" and stores nothing; a valid token connects and shows the account/workspace; the token field is empty afterwards; link a project, open a Release Point for it, Import from Jira, search/select/add tickets, save — the card shows each key as a link opening Jira in a new tab plus the assignee; importing the same ticket again in that project is blocked; Disconnect removes the credentials; an exported JSON contains no token.
+- [ ] QA checklist: open a "Ticket closing" task; Verified & closed moves the ticket to Done in Jira and posts the template comment; Reopen moves it back with the comment; each adds a Work Done line; closing the remaining tickets in Jira and clicking Refresh from Jira completes the task. Settings → QA workflow templates can be edited.
+- [ ] Weekly QA report and search: the report shows this week's outcomes, Copy for email and Download CSV work; Ctrl+K finds a Jira ticket by key and opens it.
 - [ ] Project environments: fill QA / Production URL, login and password in the project form; the List card and Project Details show them with working links, copy buttons and show/hide for the password; a new project starts with empty, masked fields.
 - [ ] Comment formatting: a comment with "- " bullets and **bold** sent with Sync to Jira looks like a bullet list with bold text in Jira.
 - [ ] Notifications: with Jira connected and a project linked, a comment / status change / assignee change by someone else appears within about 30 seconds (or after **Check now**) with a chime, a desktop notification and badge counts; your own changes don't appear; mark read / Mark all read / Clear read work; switching a type off in Settings → Notifications stops it; Sync Now that creates a QA task adds a "QA task created" notification that opens the task; `chrome.alarms.get('clair-jira-watch')` in the service worker shows `periodInMinutes: 0.5`.
