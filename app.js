@@ -1879,7 +1879,7 @@ const renderJiraQaCard = (connected) => {
       <div class="jd-qa-head">
         <div>
           <h3 class="tco-card-title">Jira sync &amp; QA tasks</h3>
-          <p class="jd-qa-sub">Automatic sync every day at 9 AM, 11 AM, 1 PM, 3 PM and 5 PM · next ${jiraWhen(new Date(nextAt).toISOString())}.
+          <p class="jd-qa-sub">Automatic sync every day at 9:30 AM, 11:30 AM, 1:30 PM, 3:30 PM and 5:30 PM · next ${jiraWhen(new Date(nextAt).toISOString())}.
             Tickets that move to <strong>Ready for QA</strong> become one “Ticket closing” task per project.</p>
           ${last && !jiraQaRunning ? `<p class="jd-qa-sub">Last run: ${trig(last)}, ${jiraWhen(last.finishedAt || last.startedAt)} — <span class="${last.ok ? 'jd-qa-ok' : 'jd-qa-bad'}">${last.ok ? 'completed' : 'completed with failures'}</span>${lastOk && lastOk !== last ? ` · last fully successful: ${jiraWhen(lastOk.finishedAt)}` : ''}</p>` : ''}
         </div>
@@ -2229,7 +2229,8 @@ const jiraSyncIssue = async (issueId) => {
         let already = false;
         if (c.attemptedAt) { // an earlier attempt may have reached Jira — check before sending again
           const since = Date.parse(c.attemptedAt) - 10 * 60 * 1000; // allow for clock skew
-          already = (await ClairJira.getComments(key)).some(x => jiraNormText(x.text) === jiraNormText(c.text) && jiraTime(x.created) >= since);
+          const sent = jiraNormText(ClairJira.adfPlain(c.text)); // how Jira stores it (lists, bold … converted)
+          already = (await ClairJira.getComments(key)).some(x => jiraNormText(x.text) === sent && jiraTime(x.created) >= since);
         }
         if (!already) {
           c.attemptedAt = new Date().toISOString();
@@ -2422,6 +2423,15 @@ if (hasChromeStorage()) {
 if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
   chrome.runtime.onMessage.addListener((msg) => { if (msg && msg.type === 'clair-open-notifications') setView('notifications'); });
 }
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-pw-toggle]');
+  if (!t) return;
+  const input = document.getElementById(t.dataset.pwToggle);
+  if (!input) return;
+  input.type = input.type === 'password' ? 'text' : 'password';
+  t.setAttribute('aria-label', input.type === 'password' ? 'Show password' : 'Hide password');
+  t.classList.toggle('on', input.type === 'text');
+});
 const topbarDate = document.getElementById('topbarDate');
 if (topbarDate) topbarDate.textContent = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 const notifBellBtn = document.getElementById('notifBellBtn');
@@ -3478,6 +3488,7 @@ const renderProjects = () => {
         p.name.toLowerCase().includes(q) ||
         (p.description || '').toLowerCase().includes(q) ||
         (p.clientName || '').toLowerCase().includes(q) ||
+        [p.qaUrl, p.prodUrl, p.qaUser, p.prodUser].some(v => (v || '').toLowerCase().includes(q)) ||
         (p.assignedTeam || '').toLowerCase().includes(q) ||
         (p.previousVersion || '').toLowerCase().includes(q) ||
         (p.upcomingVersion || '').toLowerCase().includes(q) ||
@@ -3677,6 +3688,48 @@ const renderKanbanCard = (p, q = '') => {
   `;
 };
 
+// ─── Project environments (QA / Production URL and login) ───
+const PROJECT_ENVS = [{ key: 'qa', label: 'QA', field: 'Qa' }, { key: 'prod', label: 'Production', field: 'Prod' }];
+const envHas = (p, e) => !!(p[e.key + 'Url'] || p[e.key + 'User'] || p[e.key + 'Password']);
+const envHost = (url) => { try { return new URL(url).host + (new URL(url).pathname.length > 1 ? new URL(url).pathname : ''); } catch (e) { return url; } };
+const envNormalizeUrl = (v) => { v = String(v || '').trim(); return v && !/^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? 'https://' + v : v; };
+const setProjectEnvFields = (p = {}) => PROJECT_ENVS.forEach(e => ['Url', 'User', 'Password'].forEach(f => {
+  const el = document.getElementById(`project${e.field}${f}`);
+  if (el) { el.value = p[e.key + f] || ''; if (f === 'Password') el.type = 'password'; }
+}));
+const readProjectEnvFields = () => Object.fromEntries(PROJECT_ENVS.flatMap(e => [
+  [e.key + 'Url', envNormalizeUrl(document.getElementById(`project${e.field}Url`).value)],
+  [e.key + 'User', document.getElementById(`project${e.field}User`).value.trim()],
+  [e.key + 'Password', document.getElementById(`project${e.field}Password`).value]
+]));
+// Rows for the project card ('card') or the Project Details page ('page'). Passwords are
+// never written into the page: dots, plus show/copy buttons that read them from state.
+const ENV_I = {
+  copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>',
+  eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+  ext: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>'
+};
+const renderProjectEnv = (p, variant = 'card') => {
+  const envs = PROJECT_ENVS.filter(e => envHas(p, e));
+  if (!envs.length) return variant === 'page' ? '<div class="po-empty"><span>No QA or production details yet — add them from Edit Project.</span></div>' : '';
+  const shown = state.envRevealed || (state.envRevealed = new Set());
+  const btn = (action, e, field, icon, label) => `<button type="button" class="env-btn" data-action="${action}" data-id="${p.id}" data-env="${e.key}" data-field="${field}" title="${label}" aria-label="${label}">${icon}</button>`;
+  const line = (label, value, acts, cls = '') => `<div class="env-line"><span class="env-label">${label}</span><span class="env-val ${cls}" title="${cls ? '' : value}">${value}</span><span class="env-acts">${acts}</span></div>`;
+  return `<div class="env-list ${variant}">${envs.map(e => {
+    const url = p[e.key + 'Url'], user = p[e.key + 'User'], pw = p[e.key + 'Password'];
+    const open = shown.has(p.id + ':' + e.key);
+    return `
+      <div class="env-card ${e.key}">
+        <div class="env-card-head">
+          <span class="env-tag ${e.key}">${e.label}</span>
+          ${url ? `<a class="env-url" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" title="Open ${escapeHtml(url)}"><span>${escapeHtml(envHost(url))}</span>${ENV_I.ext}</a>` : '<span class="env-muted">No URL</span>'}
+        </div>
+        ${user ? line('User', escapeHtml(user), btn('env-copy', e, 'User', ENV_I.copy, 'Copy username')) : ''}
+        ${pw ? line('Password', open ? escapeHtml(pw) : '••••••••', btn('env-reveal', e, 'Password', ENV_I.eye, open ? 'Hide password' : 'Show password') + btn('env-copy', e, 'Password', ENV_I.copy, 'Copy password'), open ? '' : 'masked') : ''}
+      </div>`;
+  }).join('')}</div>`;
+};
+
 const renderProjectCard = (p, q = '') => {
   const isApp = p.projectType === 'app';
   const assignedDevs = (state.developers || []).filter(d => (d.projectIds || []).some(pid => String(pid) === String(p.id)));
@@ -3808,6 +3861,7 @@ const renderProjectCard = (p, q = '') => {
     <!-- Col 2: Version -->
     <div class="pc-version">
       ${versionPanel}
+      ${renderProjectEnv(p, 'card')}
     </div>
 
     <!-- Col 3: Release history + action -->
@@ -4161,6 +4215,13 @@ const renderProjectOverview = () => {
       <div class="po-legend"><span><i class="done"></i>Completed</span><span><i class="progress"></i>In Progress</span><span><i class="todo"></i>To-Do</span><span><i class="hold"></i>On Hold</span></div>`}
     </section>`;
 
+  // ── Environments & access ──
+  const envSection = `
+    <section class="po-card">
+      ${cardHead('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>', 'Environments & access', null, '<button type="button" class="po-card-note po-card-link" data-action="edit-project" data-id="' + p.id + '">Edit</button>')}
+      ${renderProjectEnv(p, 'page')}
+    </section>`;
+
   // ── Timeline ──
   const timelineSection = `
     <section class="po-card">
@@ -4184,6 +4245,7 @@ const renderProjectOverview = () => {
     <div class="po-page">
       ${hero}
       ${stats}
+      ${envSection}
       <div class="po-layout">
         <div class="po-main">${releaseSection}</div>
         <aside class="po-side">${teamSection}${timelineSection}</aside>
@@ -6197,7 +6259,21 @@ const attachCardListeners = () => {
       const card = btn.closest('[data-id]');
       const cardId = id || (card ? card.dataset.id : null);
 
-      if (action === 'new-project') openProjectModal();
+      if (action === 'env-copy' || action === 'env-reveal') {
+        const proj = state.projects.find(x => x.id === btn.dataset.id);
+        if (proj) {
+          const key = btn.dataset.env + btn.dataset.field;
+          if (action === 'env-copy') {
+            navigator.clipboard.writeText(proj[key] || '').then(() => showToast(btn.dataset.field === 'Password' ? 'Password copied' : 'Username copied'), () => showToast('Could not copy', 'error'));
+          } else {
+            const set = state.envRevealed || (state.envRevealed = new Set());
+            const k = proj.id + ':' + btn.dataset.env;
+            if (set.has(k)) set.delete(k); else set.add(k);
+            render();
+          }
+        }
+      }
+      else if (action === 'new-project') openProjectModal();
       else if (action === 'new-task') openTaskModal();
       else if (action === 'new-insight') openTestModal();
       else if (action === 'new-release') openReleaseModal();
@@ -7373,6 +7449,7 @@ const openProjectModal = (id = null) => {
 
     document.getElementById('projectClient').value = p.clientName || '';
     document.getElementById('projectTeam').value = p.assignedTeam || '';
+    setProjectEnvFields(p);
     document.getElementById('projectDueDate').value = p.dueDate || '';
     document.getElementById('projectPriority').value = p.priority || '';
     document.getElementById('projectOverallStatus').value = p.overallProjectStatus || 'YET_TO_START';
@@ -7382,6 +7459,7 @@ const openProjectModal = (id = null) => {
   } else {
     projectJiraSelection = null;
     title.textContent = 'New Project';
+    setProjectEnvFields({});
     document.getElementById('projectId').value = '';
     document.getElementById('projectName').value = '';
     document.getElementById('projectDesc').value = '';
@@ -7445,6 +7523,7 @@ const saveProject = async () => {
   const dueDate = document.getElementById('projectDueDate').value;
   const priority = document.getElementById('projectPriority').value;
   const overallProjectStatus = document.getElementById('projectOverallStatus').value;
+  const envData = readProjectEnvFields();
 
   if (!name) { showToast('Project name is required', 'error'); return; }
 
@@ -7492,6 +7571,7 @@ const saveProject = async () => {
       dueDate,
       priority,
       overallProjectStatus,
+      ...envData,
       updatedAt: now
     };
     if (projectJiraSelection) state.projects[idx].jira = { ...projectJiraSelection };
@@ -7522,6 +7602,7 @@ const saveProject = async () => {
       dueDate,
       priority,
       overallProjectStatus,
+      ...envData,
       ...(projectJiraSelection ? { jira: { ...projectJiraSelection } } : {}),
       createdAt: now,
       updatedAt: now

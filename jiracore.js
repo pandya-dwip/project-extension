@@ -80,8 +80,9 @@ const jiraCategoryOf = (rec, statusId, statusName) => {
 //   run         the last runs' summaries (shown on the Jira page)
 // A task and the records that mark its tickets processed are saved in the same
 // whole-state save, so a crash can't leave one without the other.
-const JIRA_QA_SLOTS = [9, 11, 13, 15, 17];  // local hours of the scheduled runs
-const JIRA_QA_END_HOUR = 18;                // operating window 9:00–18:00
+// Local [hour, minute] of the scheduled runs: office opens at 9:30, then every two hours.
+const JIRA_QA_SLOTS = [[9, 30], [11, 30], [13, 30], [15, 30], [17, 30]];
+const JIRA_QA_END_HOUR = 18;                // operating window 9:30–18:00
 const JIRA_QA_TAG = 'Auto Task Creation';
 const JIRA_QA_LOCK = 'clair-jira-qa-sync';
 const JIRA_QA_SKEW_MS = 10 * 60 * 1000;     // overlap between checkpoints (clock skew); duplicates are filtered
@@ -92,13 +93,13 @@ const jiraTime = (s) => Date.parse(String(s || '').replace(/([+-]\d\d)(\d\d)$/, 
 const jiraQaDueSlot = (now, lastSlotMs) => {
   if (now.getHours() >= JIRA_QA_END_HOUR) return 0;
   let due = 0;
-  JIRA_QA_SLOTS.forEach(h => { const d = new Date(now); d.setHours(h, 0, 0, 0); if (d <= now) due = d.getTime(); });
+  JIRA_QA_SLOTS.forEach(([h, m]) => { const d = new Date(now); d.setHours(h, m, 0, 0); if (d <= now) due = d.getTime(); });
   return due && due > (lastSlotMs || 0) ? due : 0;
 };
 const jiraQaNextSlot = (from = new Date()) => {
   for (let add = 0; add < 3; add++) {
-    for (const h of JIRA_QA_SLOTS) {
-      const d = new Date(from); d.setDate(d.getDate() + add); d.setHours(h, 0, 0, 0);
+    for (const [h, m] of JIRA_QA_SLOTS) {
+      const d = new Date(from); d.setDate(d.getDate() + add); d.setHours(h, m, 0, 0);
       if (d > from) return d.getTime();
     }
   }
@@ -147,12 +148,12 @@ const jiraRefreshProjectCache = async (data, project, onProgress) => {
 const jiraFindQaEntries = async (data, project, rec, sinceMs) => {
   const from = sinceMs - JIRA_QA_SKEW_MS;
   const out = [];
-  let skipped = 0;
+  const skipped = []; // assignees of tickets that already produced a QA task
   for (const i of rec.issues.filter(x => jiraTime(x.updated) >= from)) {
     const changes = await ClairJira.getStatusChanges(i.id);
     const entries = changes.filter(c => jiraTime(c.created) >= from && jiraCategoryOf(rec, c.toId, c.toName) === 'qa');
     if (!entries.length) continue;
-    if (jiraQaRec(data, `issue:${rec.site}|${i.id}`)) { skipped++; continue; } // already produced a QA task
+    if (jiraQaRec(data, `issue:${rec.site}|${i.id}`)) { skipped.push(i.assignee || ''); continue; } // already produced a QA task
     const first = entries[0]; // earliest entry in this window (changelog is oldest first)
     out.push({
       eventId: `${rec.site}|${i.id}|${first.historyId}`, issueId: i.id, key: i.key, summary: i.summary,
@@ -213,8 +214,22 @@ const jiraQaUpgradeDescriptions = (data) => {
   return changed;
 };
 
+// When several Clair projects are linked to the same Jira project (e.g. CIMTrack — the
+// app — and CIMTrack Dashboard — the web software — both on CIMTRACK), a ticket belongs to
+// the Clair project its Jira assignee works on (Developers page). If the assignee is on
+// none or several of them, or there is no assignee, it goes to the first of those
+// projects in Clair's project order.
+const jiraQaOwner = (data, group, assignee) => {
+  if (group.length < 2) return group[0] && group[0].id;
+  const n = String(assignee || '').trim().toLowerCase();
+  const dev = n && (data.developers || []).find(d => (d.name || '').trim().toLowerCase() === n);
+  const onIt = dev ? group.filter(p => (dev.projectIds || []).map(String).includes(String(p.id))) : [];
+  return (onIt.length === 1 ? onIt[0] : group[0]).id;
+};
+
 // Create (or recognise) the consolidated task for one project's batch. Returns the task id.
-const jiraCreateQaTask = (data, project, entries, trigger, runAt) => {
+const JIRA_QA_MAX_PER_TASK = 5; // tickets per "Ticket closing" task; more are split into further tasks
+const jiraCreateQaTask = (data, project, entries, trigger, runAt, part = '') => {
   const eventIds = entries.map(e => e.eventId).sort();
   const batchId = `qa-${jiraHash(project.id + '|' + eventIds.join(','))}`;
   const existing = jiraQaRec(data, `batch:${batchId}`) || null;
@@ -234,7 +249,7 @@ const jiraCreateQaTask = (data, project, entries, trigger, runAt) => {
     taskId = `qa${jiraHash(batchId + now)}${Math.random().toString(36).slice(2, 6)}`;
     data.tasks = [{
       id: taskId,
-      title: `Ticket closing - ${project.name}`,
+      title: `Ticket closing - ${project.name}${part}`,
       description: jiraQaDescription({ projectKey: project.jira.projectKey, tickets, trigger, at: jiraFmt(runAt) }),
       workDone: '', tags: [JIRA_QA_TAG],
       startDate: jiraLocalDate(start), endDate: jiraLocalDate(start + 2 * 86400000),
@@ -242,7 +257,7 @@ const jiraCreateQaTask = (data, project, entries, trigger, runAt) => {
       completedDate: null, createdAt: now, updatedAt: now,
       autoQa: { batchId, issueIds: entries.map(e => e.issueId), keys: entries.map(e => e.key), trigger, tickets }
     }, ...(data.tasks || [])];
-    data.activity = [{ id: Math.random().toString(36).slice(2, 10), text: `Added task "Ticket closing - ${project.name}" (${entries.length} Ready for QA ticket${entries.length === 1 ? '' : 's'} from Jira)`, type: 'task', at: now }, ...(data.activity || [])].slice(0, 200);
+    data.activity = [{ id: Math.random().toString(36).slice(2, 10), text: `Added task "Ticket closing - ${project.name}${part}" (${entries.length} Ready for QA ticket${entries.length === 1 ? '' : 's'} from Jira)`, type: 'task', at: now }, ...(data.activity || [])].slice(0, 200);
     created = true;
   }
   jiraQaPut(data, { id: `batch:${batchId}`, kind: 'batch', batchId, projectId: project.id, taskId, eventIds, createdAt: new Date().toISOString() });
@@ -269,17 +284,26 @@ const jiraQaSync = async ({ data, trigger, save, onProgress = () => {} }) => {
       // First run for this link: start from the beginning of today (no flood of old tickets).
       const since = cp && cp.link === linkSig ? jiraTime(cp.at) : new Date(new Date(runAt).setHours(0, 0, 0, 0)).getTime();
       onProgress(`Checking ${p.name} for new Ready for QA tickets…`);
-      const { entries, skipped } = await jiraFindQaEntries(data, p, rec, since);
-      sum.skipped += skipped;
+      const found = await jiraFindQaEntries(data, p, rec, since);
+      // Jira project shared by several Clair projects → keep only this project's tickets.
+      const group = projects.filter(x => x.jira.site === p.jira.site && String(x.jira.projectId) === String(p.jira.projectId));
+      const entries = found.entries.filter(e => jiraQaOwner(data, group, e.assignee) === p.id);
+      sum.skipped += found.skipped.filter(a => jiraQaOwner(data, group, a) === p.id).length;
       sum.newQa += entries.length;
-      if (entries.length) {
-        const { created, taskId, batchId } = jiraCreateQaTask(data, p, entries, trigger, runAt);
+      // At most JIRA_QA_MAX_PER_TASK tickets per task (earliest Ready-for-QA first).
+      entries.sort((a, b) => a.enteredAt - b.enteredAt || a.key.localeCompare(b.key, undefined, { numeric: true }));
+      const chunks = [];
+      for (let k = 0; k < entries.length; k += JIRA_QA_MAX_PER_TASK) chunks.push(entries.slice(k, k + JIRA_QA_MAX_PER_TASK));
+      chunks.forEach((chunk, n) => {
+        const part = chunks.length > 1 ? ` (${n + 1}/${chunks.length})` : '';
+        const { created, taskId, batchId } = jiraCreateQaTask(data, p, chunk, trigger, runAt, part);
         if (created) {
-          sum.tasks++; sum.taskProjects.push(p.name);
-          qaEvents.push({ id: `qa:${batchId}`, type: 'qa-task', taskId, title: `QA task created: ${p.name}`,
-            body: `${entries.length} ticket${entries.length === 1 ? '' : 's'} ready for QA: ${entries.map(e => e.key).join(', ')}` });
+          sum.tasks++;
+          if (!sum.taskProjects.includes(p.name)) sum.taskProjects.push(p.name);
+          qaEvents.push({ id: `qa:${batchId}`, type: 'qa-task', taskId, title: `QA task created: ${p.name}${part}`,
+            body: `${chunk.length} ticket${chunk.length === 1 ? '' : 's'} ready for QA: ${chunk.map(e => e.key).join(', ')}` });
         }
-      }
+      });
       // Advance only after this project's work is done; saved together with its task.
       jiraQaPut(data, { id: cpId, kind: 'checkpoint', projectId: p.id, link: linkSig, at: new Date(runAt).toISOString() });
       await save();
@@ -400,12 +424,25 @@ const jiraWatchPoll = async () => {
         }
       }
     }
+    // A ticket created since the last check (it has no history yet).
+    if (st.updates && jiraTime(i.created) >= since && !mine(i.creatorId)) {
+      events.push({ id: `${base}:new`, type: 'update', at: new Date(jiraTime(i.created) || now).toISOString(), issueKey: i.key, url: i.url, author: i.creator,
+        title: `New ticket ${i.key}`, body: `${i.creator || 'Someone'} created ${i.type ? `a ${i.type}` : 'it'}: ${i.summary}` });
+    }
     if (st.comments) {
       for (const c of await ClairJira.getRecentComments(i.id)) {
-        if (jiraTime(c.created) < since || mine(c.authorId)) continue;
         const text = String(c.text || '').replace(/\s+/g, ' ').trim();
-        events.push({ id: `${base}:c:${c.id}`, type: 'comment', at: new Date(jiraTime(c.created) || now).toISOString(), issueKey: i.key, url: i.url, author: c.author,
-          title: `${c.author} commented on ${i.key}`, body: text.length > 160 ? text.slice(0, 157) + '…' : (text || i.summary) });
+        const short = text.length > 160 ? text.slice(0, 157) + '…' : (text || i.summary);
+        if (jiraTime(c.created) >= since && !mine(c.authorId)) {
+          events.push({ id: `${base}:c:${c.id}`, type: 'comment', at: new Date(jiraTime(c.created) || now).toISOString(), issueKey: i.key, url: i.url, author: c.author,
+            title: `${c.author} commented on ${i.key}`, body: short });
+        }
+        // An existing comment edited since the last check (not just the edit right after posting).
+        const edited = jiraTime(c.updated) - jiraTime(c.created) > 60000 && jiraTime(c.updated) >= since;
+        if (edited && !mine(c.editorId || c.authorId)) {
+          events.push({ id: `${base}:c:${c.id}:e:${jiraTime(c.updated)}`, type: 'comment', at: new Date(jiraTime(c.updated)).toISOString(), issueKey: i.key, url: i.url, author: c.editor || c.author,
+            title: `${c.editor || c.author} edited a comment on ${i.key}`, body: short });
+        }
       }
     }
   }

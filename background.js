@@ -182,10 +182,10 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
 syncBackupAlarm();
 maybeBackup();
 
-// ─── Scheduled Jira sync + automatic QA tasks (9, 11, 13, 15, 17 h local) ──────
+// ─── Scheduled Jira sync + automatic QA tasks (9:30, 11:30, 13:30, 15:30, 17:30 local) ──
 // One one-shot alarm at the next slot (same name replaces → never duplicated). A missed
 // slot is caught up once, when the worker next starts or an alarm fires, but only inside
-// the 9:00–18:00 window. The pipeline itself (jiracore.js) is shared with "Sync Now";
+// the 9:30–18:00 window. The pipeline itself (jiracore.js) is shared with "Sync Now";
 // both take the same Web Lock, so runs never overlap, and duplicate prevention lives in
 // Clair's SQLite data (jiraQa), not here. If a Clair page is open it does the run (its
 // in-memory state stays the only writer); otherwise the worker loads the database, runs

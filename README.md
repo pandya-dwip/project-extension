@@ -4,7 +4,7 @@
 
 **A local-first project & release tracker — built as a Chrome Extension**
 
-![Version](https://img.shields.io/badge/version-4.1.0-informational?style=flat-square)
+![Version](https://img.shields.io/badge/version-4.2.0-informational?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Chrome%20Extension-4285F4?style=flat-square&logo=googlechrome&logoColor=white)
 ![Manifest](https://img.shields.io/badge/manifest-V3-success?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-Vanilla%20JS%20%2F%20HTML%20%2F%20CSS-F7DF1E?style=flat-square)
@@ -52,6 +52,33 @@ The current app version is displayed in the sidebar footer and is always read di
 ---
 
 ## What's New
+
+### v4.2.0
+
+#### Project environments & access
+
+- **New optional project fields** (project form → **Environments & access**): **QA URL**, **QA login** (username / email / emp code), **QA password**, and the same three for **Production**. Password fields have a show/hide toggle; a URL without a scheme gets `https://`.
+- **Project cards** (List view) show QA and Production as two small cards under the versions: the link, then aligned **User** and **Password** lines with copy buttons, and show/hide for the password.
+- **Project Details** has an **Environments & access** card with QA and Production side by side, plus an Edit link.
+- Project search also matches the environment URLs and logins.
+- Passwords are never written into the page until you click show. They are stored **unencrypted** in Clair's local database and **included in JSON backups** — anyone with a backup file can read them (the form says so).
+
+#### Automatic QA tasks
+
+- **Schedule moved to office hours** — the automatic Jira sync now runs at **9:30 AM, 11:30 AM, 1:30 PM, 3:30 PM and 5:30 PM**; a missed run is caught up only between 9:30 AM and 6 PM. An existing alarm moves to the new time on its own.
+- **At most 5 tickets per task** — more new Ready-for-QA tickets in one project are split into further tasks, earliest first, titled "Ticket closing - {project} (1/3)", "(2/3)", …; each part has its own batch id and notification, so duplicate prevention is unchanged.
+- **Shared Jira projects are routed by assignee** — when several Clair projects are linked to the same Jira project (e.g. **CIMTrack**, the app, and **CIMTrack Dashboard**, the web software, both on CIMTRACK), each ticket goes to the Clair project its Jira assignee works on (Developers page): Rutvik Panchal → CIMTrack, Sanket Bhimani → CIMTrack Dashboard. A ticket with no assignee, or whose assignee is on none or several of them, goes to the first of those projects in Clair's project order.
+
+#### Comments look right in Jira
+
+- Comments sent from Clair are converted to Jira's document format: `- ` / `* ` bullet lists, `1.` numbered lists, `#` headings, `>` quotes, ` ``` ` code blocks, **bold**, *italic*, `code`, `[text](url)` and bare URLs as links. Underscores inside words (`LONG_ANSWER_STEER_WORDS`) stay as typed; plain lines and blank-line paragraphs work as before.
+- Clair's own comment list shows lists with bullets and numbers. The retry check that prevents posting a comment twice compares against the converted text.
+
+#### More notifications
+
+- **New ticket** — "New ticket AAA-4 — Viraj Soni created a Bug: …".
+- **Edited comment** — "Viraj Soni edited a comment on AAA-1".
+- As before, your own changes are skipped unless **Settings → Notifications → Include my own changes** is on.
 
 ### v4.1.0
 
@@ -361,7 +388,7 @@ Jira status names differ between projects, so each linked project has its own ma
 | Area | What you can do |
 |---|---|
 | **Dashboard** | Live counts for projects, tasks, insights, releases, and release points; weekly task completion chart; released projects by month; Recent Tasks (status mix, needs attention, recently completed); Test Cases by Project; Active Releases & Plans (stage pipeline, in-flight releases with their release points, recently shipped). |
-| **Projects** | Create web and mobile app projects with platform-specific version fields; support custom metadata (Client, Team, Due Date, Priority); toggle between classic 3-column List view and 5-column lifecycle Kanban board view with HTML5 drag-and-drop; manually reorder projects in List view by dragging; search, filter, edit, delete; open a per-project **Project Details** page with stats, developer involvement, release history, timeline, and task history. |
+| **Projects** | Create web and mobile app projects with platform-specific version fields; support custom metadata (Client, Team, Due Date, Priority); toggle between classic 3-column List view and 5-column lifecycle Kanban board view with HTML5 drag-and-drop; manually reorder projects in List view by dragging; search, filter, edit, delete; open a per-project **Project Details** page with stats, developer involvement, release history, timeline, and task history.; optional QA and Production URL, login and password per project, shown on the project card and on Project Details. |
 | **Tasks** | 4-column Kanban board (To-Do, In Progress, Done, On Hold) with columns that scroll individually; drag cards between columns; visual date alerts for overdue, due-today, and due-tomorrow tasks; assign tasks to developers; log a free-text "Work Done" note per task; filter by a Start Date range (From/To); **New Task** in the toolbar. |
 | **Project Insights** | Capture issues, enhancements, and notes per project; track each item through a Dev → QA → Done workflow; filter by developer, status, and assignment state. |
 | **Release Management** | Status pipeline with counts (click a stage to filter), search and project filter; releases grouped In flight / by month / Rolled back as compact rows that open the release details; seven-stage workflow (Draft → Released); email-style release notes, copied to the clipboard; **New Release** in the toolbar. |
@@ -460,6 +487,8 @@ Filters: project status, previous version, upcoming version. Search matches name
 
 Opened from the **Project Details** button on any List or Kanban card; the top bar reads "Project Details" and a **Projects** button returns to the list (scroll position restored). Using the sidebar also leaves the page. It is a sub-page of the `projects` view (`state.overviewProjectId`), not a separate nav item.
 
+An **Environments & access** card (above Release History) shows the project's QA and Production URL, login and password (masked; show and copy buttons), with an Edit link. Empty until those fields are filled in the project form.
+
 | Section | Contents |
 |---|---|
 | Hero | Type, overall status, priority, client, description, statuses, task-completion ring; team, due date, previous → current version (Android/iOS separately for App), created, last updated; **Edit Project** |
@@ -535,7 +564,7 @@ Requires a Jira connection (Settings → Integrations) and at least one project 
 - **Details** (breadcrumb Jira / Project) — header with **Open in Jira**, **Status mapping**, and **Refresh from Jira**; category tiles; search, issue type, assignee, and sort controls; category chips; the ticket table; rows per page and Prev/Next. Totals and chips reflect the search/type/assignee filters.
 - **Status mapping** — one row per Jira status: name, Jira's own category, ticket count, and a dropdown (**Automatic — *category*** or a fixed category). Saved per linked project; **Reset all to Automatic** clears manual choices.
 
-- **Jira sync & QA tasks** card — **Sync Now**, the schedule (9 AM–5 PM, every two hours) with the next run, and the last run's results. See [v4.0.0](#v400).
+- **Jira sync & QA tasks** card — **Sync Now**, the schedule (9:30 AM–5:30 PM, every two hours) with the next run, and the last run's results. See [v4.0.0](#v400).
 - **Ticket table** — # column, newest tickets first by default; click anywhere on a row to open its panel (the ↗ icon opens Jira).
 - **Ticket panel** — click a ticket row: current Jira status, **Change status** (available transitions only), comments, a comment box, pending changes, and **Sync to Jira** with the result. See [v3.1.0](#v310).
 
@@ -591,7 +620,7 @@ background.js  (MV3 service worker)
   ├─ Opens a Clair tab on first click
   ├─ Focuses the existing tab on subsequent clicks
   ├─ Scheduled backup: chrome.alarms → offscreen.html builds the file → chrome.downloads
-  └─ Scheduled Jira sync: chrome.alarms (9/11/13/15/17 h) → open Clair tab runs it, or the worker
+  └─ Scheduled Jira sync: chrome.alarms (9:30/11:30/13:30/15:30/17:30) → open Clair tab runs it, or the worker
      runs jiracore.js on the saved database (ClairDB.reload → load → save)
        (settings + status in chrome.storage.local, read by Settings)
         │
@@ -673,6 +702,9 @@ chrome.storage.local / localStorage   (legacy data source, cleared after migrati
   "dueDate": "YYYY-MM-DD",
   "priority": "Critical | High | Medium | Low",
   "overallProjectStatus": "YET_TO_START | ON_GOING | COMPLETED | MONITORING | ON_HOLD",
+  "qaUrl": "string", "qaUser": "string", "qaPassword": "string (plain text)",
+  "prodUrl": "string", "prodUser": "string", "prodPassword": "string (plain text)",
+  "jira": { "site": "string", "projectId": "string", "projectKey": "string", "projectName": "string" },
   "releaseHistory": [{ "version": "string", "platform": "string", "releasedAt": "ISO 8601", "log": "string" }],
   "createdAt": "ISO 8601",
   "updatedAt": "ISO 8601"
@@ -810,7 +842,7 @@ DEVELOPER ─┬── PROJECT       (developer.projectIds[])
 
 ```
 project-extension/
-├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 4.1.0)
+├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 4.2.0)
 ├── background.js            Service worker — tab lifecycle, scheduled automatic backup, scheduled Jira sync
 ├── backup.js                Shared JSON backup format, Backup/ folder path, auto-backup filename
 ├── jira.js                  Jira Cloud client (API token auth): test connection, projects, issue search, full issue fetch, project statuses, transitions, comments (ADF), changelog
@@ -993,9 +1025,11 @@ Clair follows a no-build, no-framework approach. Keep contributions consistent w
 - [ ] Project Details: opens from the **Project Details** button in both List and Kanban views; stats match the project's tasks (tasks linked to multiple projects are counted per project, nothing from other projects); release history is newest first; editing a task/release/project from the page updates it immediately; **Projects** returns to the list; works in light and dark and at phone width.
 - [ ] Client Name: create a project with and without a client; it shows on List and Kanban cards, the detail modal, and Project Details; it survives export → import.
 - [ ] Jira: Save with a wrong token shows "rejected the email or API token" and stores nothing; a valid token connects and shows the account/workspace; the token field is empty afterwards; link a project, open a Release Point for it, Import from Jira, search/select/add tickets, save — the card shows each key as a link opening Jira in a new tab plus the assignee; importing the same ticket again in that project is blocked; Disconnect removes the credentials; an exported JSON contains no token.
+- [ ] Project environments: fill QA / Production URL, login and password in the project form; the List card and Project Details show them with working links, copy buttons and show/hide for the password; a new project starts with empty, masked fields.
+- [ ] Comment formatting: a comment with "- " bullets and **bold** sent with Sync to Jira looks like a bullet list with bold text in Jira.
 - [ ] Notifications: with Jira connected and a project linked, a comment / status change / assignee change by someone else appears within about 30 seconds (or after **Check now**) with a chime, a desktop notification and badge counts; your own changes don't appear; mark read / Mark all read / Clear read work; switching a type off in Settings → Notifications stops it; Sync Now that creates a QA task adds a "QA task created" notification that opens the task; `chrome.alarms.get('clair-jira-watch')` in the service worker shows `periodInMinutes: 0.5`.
 - [ ] Top bar and pages: only Import, Export and the bell in the top bar; New Project / New Task / New Insight / New Release are in their pages' toolbars; Projects Kanban, Calendar, Release Management and the forms look right in light and dark and at phone width.
-- [ ] Jira sync & QA tasks: Sync Now creates one "Ticket closing - {project}" task per project with new Ready for QA tickets (tag Auto Task Creation, To-Do, Medium, start = earliest entry, end = +2 days, developers matched, description with keys and links); a second Sync Now creates nothing; a ticket that leaves and re-enters Ready for QA creates nothing; `chrome.alarms.get('clair-jira-qa-sync')` in the service worker shows the next slot; a failed project is reported and retried on the next sync without duplicating the others.
+- [ ] Jira sync & QA tasks: Sync Now creates one "Ticket closing - {project}" task per project with new Ready for QA tickets (tag Auto Task Creation, To-Do, Medium, start = earliest entry, end = +2 days, developers matched, description with keys and links); a second Sync Now creates nothing; a ticket that leaves and re-enters Ready for QA creates nothing; `chrome.alarms.get('clair-jira-qa-sync')` in the service worker shows the next slot; a failed project is reported and retried on the next sync without duplicating the others. More than five new tickets in a project become several tasks of at most five ("(1/2)", "(2/2)"). With two Clair projects on the same Jira project, tickets go to the project of their assignee (Developers page).
 - [ ] Jira ticket panel: clicking a ticket row opens it; the status dropdown lists only transitions Jira allows; choosing one and adding comments marks the ticket Pending without changing anything in Jira; pending changes survive leaving the page and reloading; Sync to Jira applies the status and posts the comments (check in Jira), refreshes the row and comments, and clears the pending state; with a failing comment the status change is kept, the comment stays pending, and Sync again posts it once.
 - [ ] Jira page: only linked projects appear; Refresh fetches every ticket (Epics and Sub-tasks included) and updates the counts and last-synced time; a failed refresh keeps the previous data and says so; View Details shows the table — search, type, assignee, category chips, sort, and pagination work, and the totals follow the filters; keys and the action icon open the ticket in Jira; unrecognised statuses show as Unmapped and can be mapped in Status mapping (saved per project, kept across refresh, Reset all to Automatic clears them); Release Points are unchanged; an exported JSON contains no `jiraSync`; light and dark themes and phone width look right.
 - [ ] Automatic backup: Settings shows Enabled, schedule, last success, and status; saving a new time moves the alarm (`chrome.alarms.get('clair-daily-backup')` in the service worker console); disabling clears it; a backup file appears in `Backup/` and imports successfully; it matches a manual export apart from `exportedAt`.

@@ -298,20 +298,71 @@ const ClairJira = (() => {
     await request(cfg, `${issuePath(key)}/transitions`, {}, { method: 'POST', body: { transition: { id: String(transitionId) } } });
   };
 
-  // Plain text → Atlassian Document Format: blank lines split paragraphs, single
-  // newlines become hard breaks.
-  const toAdf = (text) => ({
-    type: 'doc', version: 1,
-    content: String(text).replace(/\r\n?/g, '\n').split(/\n{2,}/).map(par => {
-      const content = [];
-      par.split('\n').forEach((line, i) => {
-        if (i) content.push({ type: 'hardBreak' });
-        if (line) content.push({ type: 'text', text: line });
-      });
-      return { type: 'paragraph', content };
-    })
-  });
-  // ADF → plain text for display (text nodes, mentions, emoji; breaks and blocks as newlines).
+  // Comment text (light Markdown) → Atlassian Document Format, so comments look in Jira
+  // the way they were written: "- " / "* " bullet lists, "1. " numbered lists, "# "
+  // headings, "> " quotes, ``` code blocks, **bold**, *italic* / _italic_, `code`,
+  // [text](url) and bare URLs as links. Other lines: blank lines split paragraphs,
+  // single newlines become hard breaks. Underscores inside words (LONG_ANSWER) stay text.
+  const INLINE_RE = /(\*\*[^*\n]+?\*\*|__[^_\n]+?__|`[^`\n]+`|\[[^\]\n]+\]\((?:https?:\/\/|mailto:)[^)\s]+\)|https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"]|(?<![\w*])\*[^*\s](?:[^*\n]*[^*\s])?\*(?![\w*])|(?<![\w_])_[^_\s](?:[^_\n]*[^_\s])?_(?![\w_]))/g;
+  const adfInline = (line) => {
+    const out = [];
+    const text = (t, marks) => { if (t) out.push(marks ? { type: 'text', text: t, marks } : { type: 'text', text: t }); };
+    let last = 0;
+    for (const m of line.matchAll(INLINE_RE)) {
+      text(line.slice(last, m.index));
+      const tok = m[0];
+      let link;
+      if (tok.startsWith('**') || tok.startsWith('__')) text(tok.slice(2, -2), [{ type: 'strong' }]);
+      else if (tok.startsWith('`')) text(tok.slice(1, -1), [{ type: 'code' }]);
+      else if ((link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(tok))) text(link[1], [{ type: 'link', attrs: { href: link[2] } }]);
+      else if (/^https?:\/\//.test(tok)) text(tok, [{ type: 'link', attrs: { href: tok } }]);
+      else text(tok.slice(1, -1), [{ type: 'em' }]);
+      last = m.index + tok.length;
+    }
+    text(line.slice(last));
+    return out;
+  };
+  const toAdf = (input) => {
+    const lines = String(input).replace(/\r\n?/g, '\n').split('\n');
+    const content = [];
+    let para = null, list = null;
+    const endPara = () => { para = null; };
+    const endList = () => { list = null; };
+    for (let k = 0; k < lines.length; k++) {
+      const line = lines[k];
+      const fence = /^\s*```\s*(\S*)\s*$/.exec(line);
+      if (fence) { // fenced code block, kept verbatim
+        endPara(); endList();
+        const code = [];
+        for (k++; k < lines.length && !/^\s*```\s*$/.test(lines[k]); k++) code.push(lines[k]);
+        content.push({ type: 'codeBlock', ...(fence[1] ? { attrs: { language: fence[1] } } : {}), content: code.length ? [{ type: 'text', text: code.join('\n') }] : [] });
+        continue;
+      }
+      const bullet = /^\s*[-*•]\s+(.*)$/.exec(line);
+      const num = /^\s*(\d+)[.)]\s+(.*)$/.exec(line);
+      if (bullet || num) {
+        endPara();
+        const type = bullet ? 'bulletList' : 'orderedList';
+        if (!list || list.type !== type) {
+          list = { type, content: [] };
+          if (num && +num[1] !== 1) list.attrs = { order: +num[1] };
+          content.push(list);
+        }
+        list.content.push({ type: 'listItem', content: [{ type: 'paragraph', content: adfInline(bullet ? bullet[1] : num[2]) }] });
+        continue;
+      }
+      const heading = /^\s*(#{1,6})\s+(.*)$/.exec(line);
+      if (heading) { endPara(); endList(); content.push({ type: 'heading', attrs: { level: heading[1].length }, content: adfInline(heading[2]) }); continue; }
+      const quote = /^\s*>\s?(.*)$/.exec(line);
+      if (quote) { endPara(); endList(); content.push({ type: 'blockquote', content: [{ type: 'paragraph', content: adfInline(quote[1]) }] }); continue; }
+      if (!line.trim()) { endPara(); endList(); continue; }
+      endList();
+      if (para) para.content.push({ type: 'hardBreak' }, ...adfInline(line));
+      else { para = { type: 'paragraph', content: adfInline(line) }; content.push(para); }
+    }
+    return { type: 'doc', version: 1, content: content.length ? content : [{ type: 'paragraph', content: [] }] };
+  };
+  // ADF → plain text for display (text nodes, mentions, emoji; lists with bullets/numbers).
   const adfText = (node) => {
     if (!node) return '';
     if (typeof node === 'string') return node;
@@ -321,12 +372,17 @@ const ClairJira = (() => {
     // Smart links (pasted URLs) keep the URL in attrs, not in text.
     if (['inlineCard', 'blockCard', 'embedCard'].includes(node.type)) return (node.attrs && node.attrs.url) ? node.attrs.url + (node.type === 'inlineCard' ? '' : '\n\n') : '';
     if (node.type === 'media' || node.type === 'mediaInline') return '[attachment]';
+    if (node.type === 'bulletList' || node.type === 'orderedList') {
+      const start = (node.attrs && node.attrs.order) || 1;
+      return (node.content || []).map((li, n) => `${node.type === 'bulletList' ? '•' : `${start + n}.`} ${adfText(li).replace(/\s+$/, '')}`).join('\n') + '\n\n';
+    }
     const inner = (node.content || []).map(adfText).join('');
     if (node.type === 'listItem') return inner.replace(/\n+$/, '') + '\n';
-    return ['paragraph', 'heading', 'codeBlock', 'blockquote', 'bulletList', 'orderedList'].includes(node.type) ? inner + '\n\n' : inner;
+    return ['paragraph', 'heading', 'codeBlock', 'blockquote'].includes(node.type) ? inner + '\n\n' : inner;
   };
   const compactComment = (c) => ({
     id: String(c.id), author: (c.author && c.author.displayName) || 'Unknown', authorId: (c.author && c.author.accountId) || '',
+    editor: (c.updateAuthor && c.updateAuthor.displayName) || '', editorId: (c.updateAuthor && c.updateAuthor.accountId) || '',
     text: adfText(c.body).replace(/\n{3,}/g, '\n\n').replace(/\s+$/, ''), created: c.created || '', updated: c.updated || ''
   });
 
@@ -378,8 +434,11 @@ const ClairJira = (() => {
     const out = [];
     let token = '';
     for (let page = 0; page < 5; page++) {
-      const data = await request(cfg, '/rest/api/3/search/jql', {}, { method: 'POST', body: { jql, fields: DASH_FIELDS, maxResults: 100, ...(token ? { nextPageToken: token } : {}) } });
-      (data.issues || []).forEach(i => out.push({ ...compactIssue(cfg.site, i), projectKey: (i.key || '').split('-')[0] }));
+      const data = await request(cfg, '/rest/api/3/search/jql', {}, { method: 'POST', body: { jql, fields: [...DASH_FIELDS, 'creator'], maxResults: 100, ...(token ? { nextPageToken: token } : {}) } });
+      (data.issues || []).forEach(i => {
+        const cr = (i.fields && i.fields.creator) || {};
+        out.push({ ...compactIssue(cfg.site, i), projectKey: (i.key || '').split('-')[0], creator: cr.displayName || '', creatorId: cr.accountId || '' });
+      });
       if (data.isLast === true || !data.nextPageToken) break;
       token = data.nextPageToken;
     }
@@ -406,5 +465,5 @@ const ClairJira = (() => {
     return (data.comments || []).map(compactComment);
   };
 
-  return { searchUpdated, getRecentHistory, getRecentComments, JIRA_KEY, normalizeSite, getPublicConfig, saveConfig, testConnection, disconnect, listProjects, searchIssues, fetchAllIssues, getProjectStatuses, getIssue, getTransitions, doTransition, addComment, getComments, getStatusChanges, toAdf };
+  return { searchUpdated, getRecentHistory, getRecentComments, JIRA_KEY, normalizeSite, getPublicConfig, saveConfig, testConnection, disconnect, listProjects, searchIssues, fetchAllIssues, getProjectStatuses, getIssue, getTransitions, doTransition, addComment, getComments, getStatusChanges, toAdf, adfPlain: (text) => adfText(toAdf(text)) };
 })();

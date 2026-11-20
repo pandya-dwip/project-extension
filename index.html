@@ -165,7 +165,7 @@
       </nav>
 
       <div class="sidebar-footer">
-        <div class="app-version-tag" id="appVersion">Version 4.1.0</div>
+        <div class="app-version-tag" id="appVersion">Version 4.2.0</div>
       </div>
     </aside>
 
@@ -368,6 +368,48 @@
           <!-- Rendered by JS -->
         </div>
         <div class="selected-statuses" id="selectedStatuses"></div>
+      </div>
+      <div class="form-section-title">Environments &amp; access</div>
+      <p class="env-note">Optional. Saved in Clair's local database and included in JSON backups — not encrypted.</p>
+      <div class="env-block">
+        <div class="env-block-title">QA</div>
+        <div class="form-group">
+          <label for="projectQaUrl">QA URL</label>
+          <input type="text" id="projectQaUrl" placeholder="https://qa.example.com" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="projectQaUser">Username / email / emp code</label>
+            <input type="text" id="projectQaUser" autocomplete="off" spellcheck="false" />
+          </div>
+          <div class="form-group">
+            <label for="projectQaPassword">Password</label>
+            <div class="pw-field">
+              <input type="password" id="projectQaPassword" autocomplete="new-password" spellcheck="false" />
+              <button type="button" class="pw-toggle" data-pw-toggle="projectQaPassword" aria-label="Show password" title="Show password"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="env-block">
+        <div class="env-block-title">Production</div>
+        <div class="form-group">
+          <label for="projectProdUrl">Production URL</label>
+          <input type="text" id="projectProdUrl" placeholder="https://app.example.com" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="projectProdUser">Username / email / emp code</label>
+            <input type="text" id="projectProdUser" autocomplete="off" spellcheck="false" />
+          </div>
+          <div class="form-group">
+            <label for="projectProdPassword">Password</label>
+            <div class="pw-field">
+              <input type="password" id="projectProdPassword" autocomplete="new-password" spellcheck="false" />
+              <button type="button" class="pw-toggle" data-pw-toggle="projectProdPassword" aria-label="Show password" title="Show password"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
     <div class="modal-footer">
