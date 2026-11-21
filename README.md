@@ -4,7 +4,7 @@
 
 **A local-first project & release tracker — built as a Chrome Extension**
 
-![Version](https://img.shields.io/badge/version-4.3.0-informational?style=flat-square)
+![Version](https://img.shields.io/badge/version-4.3.1-informational?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Chrome%20Extension-4285F4?style=flat-square&logo=googlechrome&logoColor=white)
 ![Manifest](https://img.shields.io/badge/manifest-V3-success?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-Vanilla%20JS%20%2F%20HTML%20%2F%20CSS-F7DF1E?style=flat-square)
@@ -52,6 +52,12 @@ The current app version is displayed in the sidebar footer and is always read di
 ---
 
 ## What's New
+
+### v4.3.1
+
+#### Fixes
+
+- **Release asks for the next version** — the project's Release button used to ask for the version to publish, with Patch / Minor / Major worked out from the previous release, so the current version was offered again as a choice. The dialog now shows the version being released (the project's current version) and asks for the **next** version: Patch, Minor or Major worked out from the version being released (Patch preselected), or any custom version. Example: previous 1.0.0, current 1.1.0 → releases 1.1.0 and offers 1.1.1 / 1.2.0 / 2.0.0; the choice becomes the new current version. A next version equal to the one being released is rejected. Applies to Web, Android and iOS.
 
 ### v4.3.0
 
@@ -516,6 +522,8 @@ Supports two project types with different version fields:
 - **Web** — single version track: previous release version + upcoming release version, displayed in a single rounded box.
 - **App** — dual platform tracks: Android (previous/upcoming) + iOS (previous/upcoming), each displayed in its own rounded box.
 
+**Release button** — releases the current (upcoming) version: it becomes the previous version and is added to the release history. The dialog asks for the next version (Patch, Minor or Major worked out from the version being released, or custom), which becomes the new current version.
+
 Projects support two types of status values independently:
 1. **Statuses (Concurrent)**: Up to three simultaneous tags drawn from: `N/A`, `Started`, `Stable`, `Testing`, `Automation`, `On Hold`, `Yet to Start`, `Completed`, `In Progress`, `Blocker`, `Issue Assigned`, `Developer`, `New Development`.
 2. **Overall Project Status (Lifecycle)**: A single lifecycle categorization: `Yet to Start`, `On Going`, `Completed`, `Monitoring`, `On Hold`.
@@ -882,7 +890,7 @@ DEVELOPER ─┬── PROJECT       (developer.projectIds[])
 
 ```
 project-extension/
-├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 4.3.0)
+├── manifest.json            Chrome MV3 metadata, permissions, CSP (wasm-unsafe-eval), version (currently 4.3.1)
 ├── background.js            Service worker — tab lifecycle, scheduled automatic backup, scheduled Jira sync
 ├── backup.js                Shared JSON backup format, Backup/ folder path, auto-backup filename
 ├── jira.js                  Jira Cloud client (API token auth): test connection, projects, issue search, full issue fetch, project statuses, transitions, comments (ADF), changelog

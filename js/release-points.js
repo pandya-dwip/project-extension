@@ -364,8 +364,9 @@ const openReleaseVersionModal = (projectId, platform) => {
     upVer = p.upcomingVersion || p.version || '';
   }
 
-  // Base version is strictly derived from the project's previous released version
-  const baseVer = prevVer || upVer || '1.0.0';
+  // The current (upcoming) version is what gets released now; the dialog asks for the
+  // version after it, with Patch / Minor / Major worked out from the one being released.
+  const releasingVer = upVer || (prevVer ? incrementVersion(prevVer) : '1.0.0');
 
   const platformName = platform === 'android' ? 'Android' : (platform === 'ios' ? 'iOS' : 'Web');
 
@@ -380,10 +381,14 @@ const openReleaseVersionModal = (projectId, platform) => {
   if (platInput) platInput.value = platform;
   if (pNameEl) pNameEl.textContent = p.name;
   if (pBadgeEl) pBadgeEl.textContent = platformName;
-  if (prevValEl) prevValEl.textContent = prevVer ? formatVersionLabel(prevVer) : 'None (Initial)';
+  if (prevValEl) prevValEl.textContent = prevVer ? formatVersionLabel(prevVer) : 'None (first release)';
+  const curInput = document.getElementById('releaseVersionCurrent');
+  const curValEl = document.getElementById('releaseVersionCurrentVal');
+  if (curInput) curInput.value = releasingVer;
+  if (curValEl) curValEl.textContent = formatVersionLabel(releasingVer);
 
-  // Compute dynamic suggestions strictly from previous released version
-  const suggestions = getSemverSuggestions(baseVer);
+  // Suggestions for the next version, from the version being released.
+  const suggestions = getSemverSuggestions(releasingVer);
   const patchEl = document.getElementById('presetPatchVer');
   const minorEl = document.getElementById('presetMinorVer');
   const majorEl = document.getElementById('presetMajorVer');
@@ -392,17 +397,9 @@ const openReleaseVersionModal = (projectId, platform) => {
   if (minorEl) minorEl.textContent = suggestions.minor;
   if (majorEl) majorEl.textContent = suggestions.major;
 
-  // Determine initial selection: if upVer matches any preset, select it, otherwise default to patch or minor
-  let selectedVer = upVer || suggestions.patch;
-  let activePresetType = '';
-
-  if (selectedVer === suggestions.patch) activePresetType = 'patch';
-  else if (selectedVer === suggestions.minor) activePresetType = 'minor';
-  else if (selectedVer === suggestions.major) activePresetType = 'major';
-  else {
-    activePresetType = 'patch';
-    selectedVer = suggestions.patch;
-  }
+  // Patch is preselected; Minor / Major or a custom version can be chosen instead.
+  const selectedVer = suggestions.patch;
+  const activePresetType = 'patch';
 
   document.querySelectorAll('#releaseVersionPresets .ver-preset-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.type === activePresetType);
@@ -423,19 +420,28 @@ const confirmReleaseVersion = async () => {
   const projectId = document.getElementById('releaseVersionProjectId')?.value;
   const platform = document.getElementById('releaseVersionPlatform')?.value;
   const nextInput = document.getElementById('nextReleaseVersionInput');
-  const releaseVer = (nextInput?.value || '').trim();
+  const releaseVer = (document.getElementById('releaseVersionCurrent')?.value || '').trim();
+  const nextVer = (nextInput?.value || '').trim();
 
-  if (!releaseVer) {
-    showToast('Please specify the version to release');
+  if (!nextVer) {
+    showToast('Please choose the next version');
+    if (nextInput) nextInput.focus();
+    return;
+  }
+  const norm = (v) => v.toLowerCase().replace(/^v/, '').trim();
+  if (releaseVer && norm(nextVer) === norm(releaseVer)) {
+    showToast('The next version must be different from the version being released', 'error');
     if (nextInput) nextInput.focus();
     return;
   }
 
   closeModals();
-  await releaseProjectVersion(projectId, platform, releaseVer);
+  await releaseProjectVersion(projectId, platform, releaseVer || null, nextVer);
 };
 
-const releaseProjectVersion = async (projectId, platform, releaseVer = null) => {
+// Marks releaseVer (default: the current upcoming version) as released and sets the
+// project's current version to nextVer (default: a patch bump of the released version).
+const releaseProjectVersion = async (projectId, platform, releaseVer = null, nextVer = null) => {
   const p = state.projects.find(proj => proj.id === projectId);
   if (!p) return;
   const now = new Date().toISOString();
@@ -452,14 +458,14 @@ const releaseProjectVersion = async (projectId, platform, releaseVer = null) => 
       releasedVersion = p.androidUpcomingVersion || incrementVersion(p.androidPreviousVersion || '1.0.0');
     }
     p.androidPreviousVersion = releasedVersion;
-    p.androidUpcomingVersion = incrementVersion(releasedVersion);
+    p.androidUpcomingVersion = nextVer || incrementVersion(releasedVersion);
     p.lastReleaseLog = `Android ${formatVersionLabel(releasedVersion)} released`;
   } else if (platform === 'ios') {
     if (!releasedVersion) {
       releasedVersion = p.iosUpcomingVersion || incrementVersion(p.iosPreviousVersion || '1.0.0');
     }
     p.iosPreviousVersion = releasedVersion;
-    p.iosUpcomingVersion = incrementVersion(releasedVersion);
+    p.iosUpcomingVersion = nextVer || incrementVersion(releasedVersion);
     p.lastReleaseLog = `iOS ${formatVersionLabel(releasedVersion)} released`;
   } else {
     // web
@@ -467,7 +473,7 @@ const releaseProjectVersion = async (projectId, platform, releaseVer = null) => 
       releasedVersion = p.upcomingVersion || p.version || incrementVersion(p.previousVersion || '1.0.0');
     }
     p.previousVersion = releasedVersion;
-    p.upcomingVersion = incrementVersion(releasedVersion);
+    p.upcomingVersion = nextVer || incrementVersion(releasedVersion);
     p.lastReleaseLog = `${formatVersionLabel(releasedVersion)} released`;
   }
 

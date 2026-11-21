@@ -165,7 +165,7 @@
       </nav>
 
       <div class="sidebar-footer">
-        <div class="app-version-tag" id="appVersion">Version 4.3.0</div>
+        <div class="app-version-tag" id="appVersion">Version 4.3.1</div>
       </div>
     </aside>
 
@@ -553,6 +553,7 @@
     <div class="modal-body">
       <input type="hidden" id="releaseVersionProjectId" />
       <input type="hidden" id="releaseVersionPlatform" />
+      <input type="hidden" id="releaseVersionCurrent" />
 
       <!-- Current Release Information -->
       <div class="release-ver-info-box">
@@ -565,16 +566,20 @@
           <span class="release-ver-info-val" id="releaseVersionPlatformBadge">—</span>
         </div>
         <div class="release-ver-info-row">
-          <span class="release-ver-info-label">Previous Released Version</span>
-          <span class="release-ver-info-val highlight" id="releaseVersionPrevVal">—</span>
+          <span class="release-ver-info-label">Previous released version</span>
+          <span class="release-ver-info-val" id="releaseVersionPrevVal">—</span>
+        </div>
+        <div class="release-ver-info-row">
+          <span class="release-ver-info-label">Releasing now</span>
+          <span class="release-ver-info-val highlight" id="releaseVersionCurrentVal">—</span>
         </div>
       </div>
 
       <!-- Release Version Selection & Manual Input -->
       <div class="form-group" style="margin-top:16px;">
         <label for="nextReleaseVersionInput" style="font-weight:600;display:flex;align-items:center;justify-content:space-between;">
-          <span>Release Version to publish:</span>
-          <span style="font-size:11px;font-weight:normal;color:var(--text-muted);">Major, Minor, Patch, or Custom</span>
+          <span>Next version (after this release)</span>
+          <span style="font-size:11px;font-weight:normal;color:var(--text-muted);">Patch, Minor, Major or custom</span>
         </label>
 
         <!-- Quick Semver Buttons (Dynamically Populated) -->
@@ -595,7 +600,7 @@
 
         <input type="text" id="nextReleaseVersionInput" placeholder="Enter version (e.g. 1.1.0 or v2.0.0)..." style="margin-top:10px;font-size:13.5px;font-weight:600;padding:9px 12px;width:100%;box-sizing:border-box;" />
         <span style="font-size:11.5px;color:var(--text-muted);margin-top:6px;display:block;">
-          Pick a dynamic increment above or manually enter any custom version.
+          Worked out from the version being released. This becomes the project's new current version.
         </span>
       </div>
     </div>
