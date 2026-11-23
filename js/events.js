@@ -119,6 +119,10 @@ const attachCardListeners = () => {
       else if (action === 'new-insight') openTestModal();
       else if (action === 'new-release') openReleaseModal();
       else if (action === 'new-release-pt') openReleasePtModal();
+      else if (action === 'go-calendar') setView('calendar');
+      else if (action === 'go-tasks') setView('tasks');
+      else if (action === 'go-timeline') setView('timeline');
+      else if (action === 'open-help') { if (typeof openHelpModal === 'function') openHelpModal(); }
       else if (action === 'open-release-pt') openReleasePointOnPage(cardId);
       else if (action === 'rpa-toggle') toggleRpAccordion(cardId);
       else if (action === 'jira-view') { state.jiraProjectId = cardId; state.jiraMappingOpen = false; state.jiraIssueOpen = null; jiraResetFilters(); render(); document.getElementById('mainContent').scrollTop = 0; }

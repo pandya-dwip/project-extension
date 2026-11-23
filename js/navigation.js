@@ -30,6 +30,7 @@ const setView = (view) => {
     dashboard: 'Dashboard',
     projects: 'Projects',
     tasks: 'Tasks',
+    timeline: 'Interactive Timeline / Gantt',
     calendar: 'Calendar',
     tests: 'Project Insights',
     releases: 'Release Management',
@@ -76,6 +77,7 @@ const render = () => {
     case 'dashboard': ct.innerHTML = renderDashboard(); initWeeklyChart(); break;
     case 'projects': ct.innerHTML = state.overviewProjectId ? renderProjectOverview() : renderProjects(); break;
     case 'tasks': ct.innerHTML = renderTasks(); break;
+    case 'timeline': ct.innerHTML = renderTimeline(); initTimelineEvents(); break;
     case 'calendar': ct.innerHTML = renderCalendar(); break;
     case 'tests': ct.innerHTML = renderTests(); break;
     case 'releases': ct.innerHTML = renderReleases(); break;

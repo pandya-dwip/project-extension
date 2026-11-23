@@ -116,7 +116,13 @@ const init = async () => {
 
   // Nav
   document.querySelectorAll('.nav-item').forEach(el => {
-    el.addEventListener('click', () => setView(el.dataset.view));
+    el.addEventListener('click', () => {
+      if (el.dataset.view) {
+        setView(el.dataset.view);
+      } else if (el.dataset.action === 'open-help') {
+        if (typeof openHelpModal === 'function') openHelpModal('overview');
+      }
+    });
   });
 
   // Modals
@@ -446,6 +452,15 @@ const init = async () => {
   document.getElementById('importInput').addEventListener('change', (e) => {
     if (e.target.files.length) importData(e.target.files[0]);
   });
+
+  // Help Triggers (Topbar + Sidebar + Footer)
+  const handleOpenHelp = (e) => {
+    if (e) { e.preventDefault(); e.stopPropagation(); }
+    if (typeof openHelpModal === 'function') openHelpModal('overview');
+  };
+  document.getElementById('topbarHelpBtn')?.addEventListener('click', handleOpenHelp);
+  document.getElementById('sidebarHelpNavBtn')?.addEventListener('click', handleOpenHelp);
+  document.getElementById('sidebarHelpPill')?.addEventListener('click', handleOpenHelp);
 
   // Search (Global search removed; guard if present, and delegate Ctrl+K to in-page search)
   const searchInput = document.getElementById('globalSearch');

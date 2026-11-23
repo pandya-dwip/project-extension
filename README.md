@@ -4,7 +4,7 @@
 
 **A local-first project & release tracker — built as a Chrome Extension**
 
-![Version](https://img.shields.io/badge/version-4.3.1-informational?style=flat-square)
+![Version](https://img.shields.io/badge/version-4.4.0-informational?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Chrome%20Extension-4285F4?style=flat-square&logo=googlechrome&logoColor=white)
 ![Manifest](https://img.shields.io/badge/manifest-V3-success?style=flat-square)
 ![Stack](https://img.shields.io/badge/stack-Vanilla%20JS%20%2F%20HTML%20%2F%20CSS-F7DF1E?style=flat-square)
@@ -52,6 +52,31 @@ The current app version is displayed in the sidebar footer and is always read di
 ---
 
 ## What's New
+
+### v4.4.0
+
+#### Interactive Timeline / Gantt Chart View
+- **Horizontal Gantt & Timeline scheduling** (`timeline` view) — visualize project spans, task overlaps, release milestones, and developer workloads on a continuous time grid.
+- **Multi-scale time view** — toggle between **Days**, **Weeks**, and **Months** zoom levels with `< Prev`, `Today`, and `Next >` navigation.
+- **Grouping options** — switch between **By Project** (project summary bars with progress % and nested tasks) and **By Developer** (swimlanes showing individual team workloads and bottlenecks).
+- **Release Milestone Diamonds** — release dates are plotted directly onto project tracks as interactive milestone diamonds with version tags; clicking opens release details.
+- **Today indicator & Navigation** — a vertical red line marks today's position with 1-click centering; collapsible groups (closed by default) with an **Expand All / Collapse All** toggle for a clean, distraction-free view.
+
+#### Command Palette Quick Actions (Ctrl+K Evolution)
+- **Interactive Command Mode** (`>`) — prefixing with `>` or typing action keywords enters Command Mode with quick-action badges:
+  - `> New Task: [title] @[developer] #[project]` — parses title, assignee, and project, pre-filling the task modal.
+  - `> Sync Jira Now` — immediately triggers the Jira sync pipeline.
+  - `> Toggle Dark/Light Mode` — switches between light and dark visual themes on the fly.
+  - `> Export Backup` — downloads a complete JSON archive of the workspace.
+  - `> Go to [Project Name]` — instant jump to any project's overview page.
+  - `> Help` — opens the comprehensive user guide.
+
+#### Comprehensive Help & System Architecture Guide
+- **Interactive Help Modal** — accessible from `> Help` in the command palette, the topbar `?` button, or typing `help`:
+  - **Core Architecture** — explanation of Clair's local-first design (SQLite via WebAssembly, IndexedDB, zero backend).
+  - **Module Relationships** — visual interactive relation diagram showing how Projects, Tasks, Releases, Release Points, Test Cases, Developers, and Jira connect.
+  - **Module Breakdown** — detailed cards for each of Clair's 14 modules with key capabilities and relations.
+  - **Commands & Shortcuts** — full syntax cheat sheet for Ctrl+K commands and hotkeys.
 
 ### v4.3.1
 
