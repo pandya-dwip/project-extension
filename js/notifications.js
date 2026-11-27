@@ -104,13 +104,33 @@ const runNotifyCheck = async () => {
   notifyChecking = true;
   render();
   try {
-    const r = await jiraWatchPollLocked();
-    if (r.busy) showToast('A check is already running');
-    else if (r.started) showToast('Started watching Jira — changes from now on will appear here');
-    else if (r.skipped === 'not connected') showToast('Connect Jira in Settings → Integrations first', 'error');
-    else if (r.skipped === 'no linked projects') showToast('Link a project to Jira first (project Edit form)', 'error');
-    else if (r.skipped) showToast('Notifications are available in the installed extension only', 'error');
-    else showToast(r.added ? `${r.added} new notification${r.added === 1 ? '' : 's'}` : 'No new changes in Jira');
+    // 1. Run watcher with a 24-hour lookback window so recent changes / changes while PC was off are caught
+    const watchPromise = jiraWatchPollLocked({ lookbackMinutes: 1440 });
+    // 2. Run QA Sync pipeline to detect Ready for QA tickets and create QA tasks
+    const qaPromise = (typeof runJiraQaSync === 'function' && jiraAvailable() && jiraConnected())
+      ? runJiraQaSync('manual', { silentToast: true })
+      : Promise.resolve(null);
+
+    const [watchRes, qaRes] = await Promise.all([watchPromise, qaPromise]);
+    await notifyLoad();
+
+    if (qaRes && qaRes.newQa > 0) {
+      const parts = [`${qaRes.newQa} Ready for QA ticket${qaRes.newQa === 1 ? '' : 's'} synced (${qaRes.tasks} QA task${qaRes.tasks === 1 ? '' : 's'} created)`];
+      if (watchRes && watchRes.added > 0) parts.push(`${watchRes.added} update notification${watchRes.added === 1 ? '' : 's'}`);
+      showToast(parts.join(' · '), 'success');
+    } else if (watchRes && watchRes.added > 0) {
+      showToast(`${watchRes.added} new notification${watchRes.added === 1 ? '' : 's'} from Jira`, 'success');
+    } else if (watchRes && watchRes.skipped === 'not connected') {
+      showToast('Connect Jira in Settings → Integrations first', 'error');
+    } else if (watchRes && watchRes.skipped === 'no linked projects') {
+      showToast('Link a project to Jira first (project Edit form)', 'error');
+    } else if (watchRes && watchRes.skipped) {
+      showToast('Notifications are available in the installed extension only', 'error');
+    } else if (qaRes && qaRes.busy) {
+      showToast('A Jira sync is already running');
+    } else {
+      showToast('No new changes in Jira — all tickets up to date');
+    }
   } catch (e) {
     showToast(`Couldn't check Jira — ${jiraErrorText(e)}`, 'error');
   } finally {

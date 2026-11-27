@@ -857,6 +857,18 @@ const init = async () => {
   setView(startView);
   updateStorageInfo();
   document.documentElement.dataset.ready = '1'; // start-up finished (used by tests and devtools)
+
+  // Catch up with Jira if connected (e.g. PC was asleep or off, or tickets moved to RFQA):
+  if (jiraAvailable() && jiraConnected()) {
+    setTimeout(async () => {
+      try {
+        await jiraWatchPollLocked({ lookbackMinutes: 1440 });
+        if (typeof runJiraQaSync === 'function') await runJiraQaSync('scheduled', { silentToast: true });
+      } catch (e) {
+        console.warn('Initial Jira catch-up sync skipped:', e);
+      }
+    }, 1500);
+  }
 };
 
 document.addEventListener('DOMContentLoaded', init);

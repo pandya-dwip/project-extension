@@ -26,7 +26,7 @@ const JIRA_AUTO = [
   ['notapplicable', ['not applicable', 'n/a', 'na', 'not relevant']],
   ['onhold', ['on hold', 'hold', 'blocked', 'paused', 'deferred', 'parked', 'postponed']],
   ['reopen', ['reopen', 'reopened', 're open', 're opened']],
-  ['qa', ['ready for qa', 'qa', 'in qa', 'qa review', 'ready for test', 'ready for testing', 'ready to test', 'testing', 'in test', 'in testing', 'uat', 'to verify', 'verify', 'verification']],
+  ['qa', ['ready for qa', 'rfqa', 'rfq', 'qa', 'in qa', 'qa review', 'ready for test', 'ready for testing', 'ready to test', 'testing', 'in test', 'in testing', 'uat', 'to verify', 'verify', 'verification']],
   ['inreview', ['in review', 'review', 'code review', 'in code review', 'under review', 'peer review', 'pr review', 'awaiting review', 'ready for review']],
   ['monitoring', ['monitoring', 'in monitoring', 'monitor', 'under observation', 'observation', 'watching']],
   ['inprogress', ['in progress', 'in development', 'in dev', 'doing', 'development', 'implementing', 'work in progress', 'wip']],
@@ -391,7 +391,7 @@ const JIRA_FIELD_IGNORE = new Set(['Rank', 'RemoteIssueLink', 'WorklogId', 'time
 // One watcher run: tickets updated since the last run in every linked Jira project →
 // comment / status / update notifications (your own changes skipped unless enabled).
 // The first run only records the starting point, so nothing old floods in.
-const jiraWatchPoll = async () => {
+const jiraWatchPoll = async (opts = {}) => {
   if (!hasChromeStorage() || typeof ClairJira === 'undefined') return { skipped: 'unavailable' };
   const cfg = await ClairJira.getPublicConfig();
   if (!cfg || !cfg.hasToken) return { skipped: 'not connected' };
@@ -400,9 +400,18 @@ const jiraWatchPoll = async () => {
   const st = await notifySettings();
   const w = (await chrome.storage.local.get(NOTIFY_WATCH_KEY))[NOTIFY_WATCH_KEY] || {};
   const now = Date.now();
-  if (!w.lastPollAt) { await chrome.storage.local.set({ [NOTIFY_WATCH_KEY]: { lastPollAt: now, seen: [] } }); return { started: true }; }
-  const since = w.lastPollAt - 60000; // one-minute overlap; duplicates are filtered by id
-  const minutes = Math.min(7 * 24 * 60, (now - since) / 60000 + 1);
+  const lookbackMs = (opts.lookbackMinutes || 0) * 60000;
+  let since;
+  if (!w.lastPollAt) {
+    // Initial run: look back up to 24h (or specified lookback) so recent activity isn't discarded
+    since = now - (lookbackMs || 24 * 60 * 60 * 1000);
+  } else if (lookbackMs) {
+    // Manual check or startup catch-up: look back at least lookbackMinutes
+    since = Math.min(w.lastPollAt - 60000, now - lookbackMs);
+  } else {
+    since = w.lastPollAt - 60000; // periodic poll
+  }
+  const minutes = Math.min(7 * 24 * 60, Math.max(1, (now - since) / 60000 + 1));
   const issues = await ClairJira.searchUpdated({ projectKeys: projects.map(p => p.key), minutes });
   const seen = new Set(w.seen || []);
   const mine = (id) => !st.own && cfg.accountId && id === cfg.accountId;
@@ -456,7 +465,7 @@ const jiraWatchPoll = async () => {
   await chrome.storage.local.set({ [NOTIFY_WATCH_KEY]: { lastPollAt: now, seen: [...seen].slice(-800) } });
   return { checked: issues.length, added: added.length };
 };
-const jiraWatchPollLocked = () => navigator.locks.request('clair-jira-watch', { ifAvailable: true }, async (lock) => lock ? jiraWatchPoll() : { busy: true });
+const jiraWatchPollLocked = (opts) => navigator.locks.request('clair-jira-watch', { ifAvailable: true }, async (lock) => lock ? jiraWatchPoll(opts) : { busy: true });
 
 // ─── QA checklist on "Ticket closing" tasks (shared by page and worker) ───
 // Each ticket of an automatic QA task gets an outcome — verified (closed) or reopened —

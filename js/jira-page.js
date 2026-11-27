@@ -61,7 +61,7 @@ const syncJiraProject = (projectId) => {
 // in-memory state stays the single writer; with no page open it runs them itself.
 let jiraQaRunning = false;
 let jiraQaProgressText = '';
-const runJiraQaSync = async (trigger) => {
+const runJiraQaSync = async (trigger, opts = {}) => {
   if (jiraQaRunning || !jiraAvailable() || !jiraConnected()) return null;
   jiraQaRunning = true;
   jiraQaProgressText = 'Starting…';
@@ -87,14 +87,17 @@ const runJiraQaSync = async (trigger) => {
         if (el) el.textContent = t;
       }
     });
-    if (res && res.busy) showToast('A Jira sync is already running', 'error');
-    else if (res) {
-      showToast(res.ok
-        ? `Jira sync done: ${res.newQa} new Ready for QA ticket${res.newQa === 1 ? '' : 's'}, ${res.tasks} task${res.tasks === 1 ? '' : 's'} created${res.qaCompleted ? `, ${res.qaCompleted} completed` : ''}`
-        : `Jira sync finished with ${res.failures.length} failure${res.failures.length === 1 ? '' : 's'}`, res.ok ? 'success' : 'error');
+    if (!opts.silentToast) {
+      if (res && res.busy) showToast('A Jira sync is already running', 'error');
+      else if (res) {
+        showToast(res.ok
+          ? `Jira sync done: ${res.newQa} new Ready for QA ticket${res.newQa === 1 ? '' : 's'}, ${res.tasks} task${res.tasks === 1 ? '' : 's'} created${res.qaCompleted ? `, ${res.qaCompleted} completed` : ''}`
+          : `Jira sync finished with ${res.failures.length} failure${res.failures.length === 1 ? '' : 's'}`, res.ok ? 'success' : 'error');
+      }
     }
   } catch (e) {
-    showToast(`Jira sync failed — ${jiraErrorText(e)}`, 'error');
+    if (!opts.silentToast) showToast(`Jira sync failed — ${jiraErrorText(e)}`, 'error');
+    else console.warn('Jira sync failed:', e);
   } finally {
     jiraQaRunning = false;
     jiraQaProgressText = '';

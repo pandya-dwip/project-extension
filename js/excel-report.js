@@ -864,7 +864,7 @@ const generateExcelReport = async () => {
       const linkedRps = releasePoints.filter(rp =>
         rp.releaseId === r.id ||
         (projectIdsOf(rp).some(pid => projectIdsOf(r).includes(pid)) &&
-         (rp.versions || []).some(v => (r.versions || [r.version]).includes(v)))
+          (rp.versions || []).some(v => (r.versions || [r.version]).includes(v)))
       );
       const linkedChecksDone = linkedRps.reduce((sum, rp) => sum + (rp.checklistItems || []).filter(it => it.done).length, 0);
       const linkedChecksTotal = linkedRps.reduce((sum, rp) => sum + (rp.checklistItems || []).length, 0);

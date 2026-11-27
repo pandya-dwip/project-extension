@@ -210,18 +210,23 @@ async function runJiraSyncHere() {
 }
 
 let jiraSyncInFlight = null;
-function maybeJiraSync() {
+function maybeJiraSync(opts = {}) {
   if (jiraSyncInFlight) return jiraSyncInFlight;
   jiraSyncInFlight = (async () => {
-    const { jiraQaLastSlot = 0 } = await chrome.storage.local.get('jiraQaLastSlot');
-    const slot = jiraQaDueSlot(new Date(), jiraQaLastSlot);
-    if (!slot) return;
+    const { jiraQaLastSlot = 0, jiraQaLastRunAt = 0 } = await chrome.storage.local.get(['jiraQaLastSlot', 'jiraQaLastRunAt']);
+    const now = new Date();
+    const nowMs = now.getTime();
+    const slot = jiraQaDueSlot(now, jiraQaLastSlot);
+    // Run if a slot is due, or if forceCatchup requested, or if more than 2 hours passed since last sync (e.g. PC was off)
+    const missedWhileOffline = (nowMs - jiraQaLastRunAt) > (2 * 60 * 60 * 1000);
+    if (!slot && !opts.forceCatchup && !missedWhileOffline) return;
     const cfg = await ClairJira.getPublicConfig();
     if (!cfg || !cfg.hasToken) return; // Jira not connected: nothing to do
-    await chrome.storage.local.set({ jiraQaLastSlot: slot }); // recorded first: a failure is retried at the next slot, never in a loop
+    if (slot) await chrome.storage.local.set({ jiraQaLastSlot: slot });
+    await chrome.storage.local.set({ jiraQaLastRunAt: nowMs });
     let handled = false;
     try {
-      const r = await chrome.runtime.sendMessage({ type: 'clair-jira-qa-sync', trigger: 'scheduled' });
+      const r = await chrome.runtime.sendMessage({ type: 'clair-jira-qa-sync', trigger: opts.forceCatchup ? 'manual' : 'scheduled' });
       handled = !!(r && r.handled);
     } catch (e) { /* no Clair page open */ }
     if (handled) return;
@@ -231,8 +236,13 @@ function maybeJiraSync() {
   return jiraSyncInFlight;
 }
 
-chrome.runtime.onInstalled.addListener(() => { syncJiraAlarm(); maybeJiraSync(); });
-chrome.runtime.onStartup.addListener(() => { syncJiraAlarm(); maybeJiraSync(); });
+chrome.runtime.onInstalled.addListener(() => { syncJiraAlarm(); maybeJiraSync({ forceCatchup: true }); });
+chrome.runtime.onStartup.addListener(() => {
+  syncJiraAlarm();
+  maybeJiraSync({ forceCatchup: true });
+  syncWatchAlarm();
+  jiraWatchPollLocked({ lookbackMinutes: 1440 }).catch(() => {});
+});
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== JIRA_ALARM) return;
   await maybeJiraSync();
