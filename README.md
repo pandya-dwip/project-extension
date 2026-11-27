@@ -21,6 +21,7 @@ Track projects, tasks, releases, test cases, and your team — entirely in your 
 ## Table of Contents
 
 - [Overview](#overview)
+- [Future Roadmap & Commercial Plans](ROADMAP.md)
 - [What's New](#whats-new)
 - [Features](#features)
 - [Quick Start](#quick-start)

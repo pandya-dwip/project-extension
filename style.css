@@ -10400,7 +10400,6 @@ a.st-btn { text-decoration: none; }
 .jd-copy-btn:hover { color: var(--accent); background: var(--accent-subtle); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
 .jd-open:hover { color: var(--info); background: var(--info-light); border-color: color-mix(in srgb, var(--info) 30%, transparent); }
 .jd-copy-btn svg, .jd-open svg { width: 15px; height: 15px; }
-.qa-copy-btn:hover { color: var(--accent) !important; }
 .rp-copy-ticket-btn:hover { color: var(--accent) !important; }
 .jd-pill { --c: var(--text-muted); display: inline-block; padding: 2px 9px; border-radius: var(--radius-pill); background: color-mix(in srgb, var(--c) 15%, transparent); color: color-mix(in srgb, var(--c) 72%, var(--text)); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
 .jd-mapping-actions { display: flex; gap: 6px; flex-wrap: wrap; }

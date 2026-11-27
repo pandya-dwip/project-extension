@@ -82,7 +82,7 @@ const renderQaChecklist = (task) => {
       <div class="qa-item ${out ? out.result : ''} ${open ? 'open' : ''}">
         <div class="qa-item-top">
           <div class="qa-item-main">
-            <div class="qa-item-title">${url ? `<span class="qa-key-wrap" style="display:inline-flex;align-items:center;gap:3px;"><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="qa-key">${escapeHtml(t.key)}</a><button type="button" class="icon-btn qa-copy-btn" data-action="jira-copy-ticket" data-url="${escapeHtml(url)}" data-key="${escapeHtml(t.key)}" title="Copy Jira ticket link" style="width:20px;height:20px;padding:0;display:inline-flex;align-items:center;justify-content:center;color:var(--text-muted);border:none;background:transparent;cursor:pointer;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button></span>` : `<span class="qa-key">${escapeHtml(t.key)}</span>`}<span class="qa-sum">${escapeHtml(t.summary || (iss && iss.summary) || '')}</span></div>
+            <div class="qa-item-title">${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="qa-key">${escapeHtml(t.key)}</a>` : `<span class="qa-key">${escapeHtml(t.key)}</span>`}<span class="qa-sum">${escapeHtml(t.summary || (iss && iss.summary) || '')}</span></div>
             <div class="qa-item-meta">${t.assignee ? `Developer: ${escapeHtml(t.assignee)}` : 'Unassigned'}${iss ? ` · Jira: <strong>${escapeHtml(iss.status)}</strong>` : ''}</div>
             ${savedImages.length ? `
               <div class="qa-saved-images">
