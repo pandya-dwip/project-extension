@@ -269,7 +269,7 @@ const jiraCreateQaTask = (data, project, entries, trigger, runAt, part = '') => 
 // worker); `save` persists them. Returns the run summary (also stored in jiraQa).
 const jiraQaSync = async ({ data, trigger, save, onProgress = () => {} }) => {
   const runAt = Date.now();
-  const projects = (data.projects || []).filter(p => p.jira && p.jira.projectKey);
+  const projects = (data.projects || []).filter(p => p.jira && p.jira.projectKey && !p.jira.hiddenFromBoard);
   jiraQaReroute(data); // earlier tasks in the wrong one of several projects sharing a Jira project
   const qaEvents = [];
   const sum = { kind: 'run', id: `run:${runAt}`, trigger, startedAt: new Date(runAt).toISOString(), finishedAt: '', projects: projects.length, synced: 0, tickets: 0, newQa: 0, tasks: 0, taskProjects: [], skipped: 0, failures: [], ok: false };

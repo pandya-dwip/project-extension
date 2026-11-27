@@ -59,7 +59,7 @@ const notifyLoad = async () => {
 let watchProjectsSig = null;
 const syncWatchProjects = () => {
   if (!hasChromeStorage()) return;
-  const list = (state.projects || []).filter(p => p.jira && p.jira.projectKey).map(p => ({ key: p.jira.projectKey, name: p.name }));
+  const list = (state.projects || []).filter(p => p.jira && p.jira.projectKey && !p.jira.hiddenFromBoard).map(p => ({ key: p.jira.projectKey, name: p.name }));
   const sig = JSON.stringify(list);
   if (sig === watchProjectsSig) return;
   watchProjectsSig = sig;

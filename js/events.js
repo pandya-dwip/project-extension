@@ -128,6 +128,8 @@ const attachCardListeners = () => {
       else if (action === 'jira-view') { state.jiraProjectId = cardId; state.jiraMappingOpen = false; state.jiraIssueOpen = null; jiraResetFilters(); render(); document.getElementById('mainContent').scrollTop = 0; }
       else if (action === 'jira-home') { state.jiraProjectId = null; state.jiraMappingOpen = false; render(); }
       else if (action === 'jira-refresh') syncJiraProject(cardId);
+      else if (action === 'jira-hide-project') hideJiraProject(cardId);
+      else if (action === 'jira-display-projects') openJiraDisplayModal();
       else if (action === 'jira-sync-now') runJiraQaSync('manual');
       else if (action === 'jira-refresh-all') {
         // One project at a time: gentler on Jira's rate limits than firing them all at once.

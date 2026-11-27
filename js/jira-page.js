@@ -13,7 +13,8 @@ const jiraSyncInFlight = new Map(); // clair projectId -> promise (no overlappin
 const jiraSyncProgress = {};        // clair projectId -> tickets fetched so far (UI only)
 
 
-const jiraLinkedProjects = () => state.projects.filter(p => p.jira && p.jira.projectKey);
+const jiraAllLinkedProjects = () => state.projects.filter(p => p.jira && p.jira.projectKey);
+const jiraLinkedProjects = () => state.projects.filter(p => p.jira && p.jira.projectKey && !p.jira.hiddenFromBoard);
 // The cache for a project, only if it belongs to the project's current Jira link.
 const jiraRecordFor = (p) => {
   const r = (state.jiraSync || []).find(x => x.id === p.id);
@@ -168,9 +169,11 @@ const JD_I = {
 };
 
 const renderJiraPage = () => {
+  const allLinked = jiraAllLinkedProjects();
   const linked = jiraLinkedProjects();
+  const hiddenCount = allLinked.length - linked.length;
   if (state.jiraProjectId) {
-    const p = linked.find(x => x.id === state.jiraProjectId);
+    const p = allLinked.find(x => x.id === state.jiraProjectId);
     if (p) return renderJiraDetails(p);
     state.jiraProjectId = null;
   }
@@ -200,6 +203,9 @@ const renderJiraPage = () => {
         <div class="jd-card-foot">
           <div class="jd-card-sync">${jiraSyncStatusHtml(p, rec)}</div>
           <div class="jd-card-actions">
+            <button type="button" class="btn-ghost st-btn" data-action="jira-hide-project" data-id="${p.id}" title="Remove project from Jira board display and exclude from sync" style="color:var(--text-muted);">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px;margin-right:3px;"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>Remove Display
+            </button>
             <button type="button" class="btn-ghost st-btn" data-action="jira-refresh" data-id="${p.id}" ${!connected || jiraSyncInFlight.has(p.id) ? 'disabled' : ''}>${JD_I.refresh}Refresh</button>
             <button type="button" class="btn-primary st-btn" data-action="jira-view" data-id="${p.id}">View Details</button>
           </div>
@@ -225,14 +231,24 @@ const renderJiraPage = () => {
         </div>
       </section>
       ${notice ? `<div class="jd-notice">${escapeHtml(notice)}${jiraAvailable() && !connected ? ` <button type="button" class="rpa-link" data-action="jira-go-settings">Open Settings</button>` : ''}</div>` : ''}
-      ${linked.length ? renderJiraQaCard(connected) : ''}
-      ${linked.length ? `
+      ${allLinked.length ? renderJiraQaCard(connected) : ''}
+      ${allLinked.length ? `
         <div class="rpa-toolbar">
-          <span class="rpa-showing">${linked.length} linked project${linked.length === 1 ? '' : 's'} · counts use each project’s status mapping</span>
+          <span class="rpa-showing">Showing ${linked.length} of ${allLinked.length} linked project${allLinked.length === 1 ? '' : 's'}${hiddenCount > 0 ? ` (${hiddenCount} hidden)` : ''} · counts use each project’s status mapping</span>
           <div class="rpa-toolbar-right">
+            <button type="button" class="btn-primary st-btn" data-action="jira-display-projects" title="Select which Jira projects to display and sync on the board">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;margin-right:4px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Display Projects${hiddenCount > 0 ? ` (${hiddenCount})` : ''}
+            </button>
           </div>
-        </div>
-        <div class="jd-grid">${recs.map(card).join('')}</div>` : `
+        </div>` : ''}
+      ${linked.length ? `
+        <div class="jd-grid">${recs.map(card).join('')}</div>` : allLinked.length ? `
+        <div class="rpa-empty">
+          <span class="rpa-empty-icon">${JD_I.jira}</span>
+          <h3>All Jira projects are hidden from display</h3>
+          <p>You have ${allLinked.length} project${allLinked.length === 1 ? '' : 's'} linked to Jira, but all are currently removed from board display and sync.</p>
+          <button type="button" class="btn-primary" data-action="jira-display-projects" style="margin-top:12px;">Display Projects</button>
+        </div>` : `
         <div class="rpa-empty">
           <span class="rpa-empty-icon">${JD_I.jira}</span>
           <h3>No projects linked to Jira</h3>
@@ -600,3 +616,76 @@ const renderJiraIssuePanel = (p, rec, i) => {
 };
 
 const jiraResetFilters = () => { state.jiraFilters = { q: '', cat: '', type: '', assignee: '', sort: 'key-desc', page: 1, size: (state.jiraFilters && state.jiraFilters.size) || 25 }; };
+
+// ─── Project Display Management on Jira Board ────────────────────────
+const openJiraDisplayModal = () => {
+  const container = document.getElementById('jiraDisplayProjectsList');
+  if (!container) return;
+  const allLinked = jiraAllLinkedProjects();
+  if (!allLinked.length) {
+    container.innerHTML = emptyNote('No projects are currently connected to Jira. Link a project in the Project edit form.');
+    showModal('jiraDisplayProjectsModal');
+    return;
+  }
+  container.innerHTML = allLinked.map(p => {
+    const isDisplayed = !p.jira.hiddenFromBoard;
+    const rec = jiraRecordFor(p);
+    const count = rec && rec.issues ? rec.issues.length : 0;
+    return `
+      <label class="dev-project-label" style="display:flex; align-items:center; justify-content:space-between; padding:8px 10px; border-radius:6px; margin-bottom:4px; cursor:pointer; background:var(--bg-card); border:1px solid var(--border-light);">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <input type="checkbox" name="jiraDisplayProjectCheck" value="${p.id}" ${isDisplayed ? 'checked' : ''} style="cursor:pointer;" />
+          <span style="font-weight:600; color:var(--text-primary); font-size:13px;">${escapeHtml(p.name)}</span>
+          <span class="jira-key" style="font-size:11px;">${escapeHtml(p.jira.projectKey)}</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:12px; color:var(--text-muted);">${escapeHtml(p.jira.projectName || '')}</span>
+          <span class="badge" style="font-size:11px; padding:2px 7px;">${count} tickets</span>
+          ${!isDisplayed ? `<span class="dev-pill" style="font-size:10px; padding:2px 6px; background:#fef3c7; color:#b45309;">Hidden</span>` : `<span class="dev-pill" style="font-size:10px; padding:2px 6px; background:#dcfce7; color:#15803d;">Displayed</span>`}
+        </div>
+      </label>
+    `;
+  }).join('');
+
+  showModal('jiraDisplayProjectsModal');
+};
+
+const jiraDisplaySelectAll = () => {
+  document.querySelectorAll('input[name="jiraDisplayProjectCheck"]').forEach(cb => { cb.checked = true; });
+};
+
+const jiraDisplaySelectNone = () => {
+  document.querySelectorAll('input[name="jiraDisplayProjectCheck"]').forEach(cb => { cb.checked = false; });
+};
+
+const saveJiraDisplayProjects = async () => {
+  const checkboxes = Array.from(document.querySelectorAll('input[name="jiraDisplayProjectCheck"]'));
+  let changed = false;
+  checkboxes.forEach(cb => {
+    const p = state.projects.find(x => x.id === cb.value);
+    if (!p || !p.jira) return;
+    const shouldHide = !cb.checked;
+    if (!!p.jira.hiddenFromBoard !== shouldHide) {
+      p.jira.hiddenFromBoard = shouldHide;
+      changed = true;
+    }
+  });
+  if (changed) {
+    await storage.save();
+    syncWatchProjects();
+    const displayedCount = jiraLinkedProjects().length;
+    showToast(`Jira board display updated: ${displayedCount} project${displayedCount === 1 ? '' : 's'} displayed`);
+  }
+  closeModals();
+  if (state.view === 'jira') render();
+};
+
+const hideJiraProject = async (projectId) => {
+  const p = state.projects.find(x => x.id === projectId);
+  if (!p || !p.jira) return;
+  p.jira.hiddenFromBoard = true;
+  await storage.save();
+  syncWatchProjects();
+  showToast(`Removed "${p.name}" from Jira board. Click "Display Projects" to show it again.`);
+  if (state.view === 'jira') render();
+};

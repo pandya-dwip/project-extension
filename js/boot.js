@@ -276,6 +276,11 @@ const init = async () => {
   document.getElementById('cancelFolderModal').addEventListener('click', closeModals);
   document.getElementById('closeMoveNoteModal').addEventListener('click', closeModals);
   document.getElementById('cancelMoveNoteModal').addEventListener('click', closeModals);
+  document.getElementById('closeJiraDisplayProjectsModal')?.addEventListener('click', closeModals);
+  document.getElementById('cancelJiraDisplayProjectsModal')?.addEventListener('click', closeModals);
+  document.getElementById('jiraDisplaySelectAllBtn')?.addEventListener('click', jiraDisplaySelectAll);
+  document.getElementById('jiraDisplaySelectNoneBtn')?.addEventListener('click', jiraDisplaySelectNone);
+  document.getElementById('saveJiraDisplayProjectsBtn')?.addEventListener('click', saveJiraDisplayProjects);
   document.getElementById('generateReportBtn').addEventListener('click', async () => {
     const btn = document.getElementById('generateReportBtn');
     const originalHTML = btn.innerHTML;
