@@ -145,13 +145,48 @@ const attachCardListeners = () => {
         if (rec) { rec.statusMap = {}; storage.save(); showToast('Status mapping reset to Automatic'); render(); }
       }
       else if (action === 'jira-issue') {
-        if (e.target.closest('a, select, textarea, input')) return;
+        if (e.target.closest('a, button, select, textarea, input')) return;
         const id = btn.dataset.issue;
         state.jiraIssueOpen = state.jiraIssueOpen === id ? null : id;
         render();
         const rec = (state.jiraSync || []).find(r => r.id === state.jiraProjectId);
         const iss = state.jiraIssueOpen && rec && rec.issues.find(x => x.id === id);
         if (iss && jiraConnected()) jiraLoadTicket(iss.key);
+      }
+      else if (action === 'jira-copy-ticket') {
+        e.stopPropagation();
+        e.preventDefault();
+        const url = btn.dataset.url || '';
+        const key = btn.dataset.key || '';
+        if (url) {
+          const onDone = () => {
+            showToast(key ? `Copied ${key} link to clipboard!` : 'Copied Jira link to clipboard!', 'success');
+            const orig = btn.innerHTML;
+            btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:13px;height:13px;color:var(--accent);"><polyline points="20 6 9 17 4 12"/></svg>`;
+            setTimeout(() => { btn.innerHTML = orig; }, 1500);
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(url).then(onDone).catch(() => {
+              const ta = document.createElement('textarea');
+              ta.value = url;
+              ta.style.position = 'fixed';
+              ta.style.opacity = '0';
+              document.body.appendChild(ta);
+              ta.select();
+              try { document.execCommand('copy'); onDone(); } catch (err) { showToast('Could not copy link', 'error'); }
+              document.body.removeChild(ta);
+            });
+          } else {
+            const ta = document.createElement('textarea');
+            ta.value = url;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); onDone(); } catch (err) { showToast('Could not copy link', 'error'); }
+            document.body.removeChild(ta);
+          }
+        }
       }
       else if (action === 'jira-queue-comment') {
         const rec = (state.jiraSync || []).find(r => r.id === state.jiraProjectId);
@@ -273,7 +308,14 @@ const attachCardListeners = () => {
       else if (action === 'qa-report-week') { const d = +btn.dataset.dir; state.qaReportWeek = d === 0 ? 0 : Math.min(0, (state.qaReportWeek || 0) + d); render(); }
       else if (action === 'qa-report-copy') navigator.clipboard.writeText(qaReportText(qaReportData(state.qaReportWeek || 0))).then(() => showToast('Report copied — paste it into an email'), () => showToast('Could not copy', 'error'));
       else if (action === 'qa-report-csv') qaReportDownload();
-      else if (action === 'qa-tpl-add') { state.qaTemplates = [...(state.qaTemplates || []), { id: uid(), name: btn.dataset.kind === 'verified' ? 'New verified template' : 'New reopen template', kind: btn.dataset.kind, text: '' }]; qaSaveTemplates(); render(); }
+      else if (action === 'qa-tpl-add') {
+        const name = btn.dataset.kind === 'verified' ? 'New verified template'
+          : btn.dataset.kind === 'still_open' ? 'New still open template'
+          : 'New reopen template';
+        state.qaTemplates = [...(state.qaTemplates || []), { id: uid(), name, kind: btn.dataset.kind, text: '' }];
+        qaSaveTemplates();
+        render();
+      }
       else if (action === 'qa-tpl-delete') { state.qaTemplates = (state.qaTemplates || []).filter((_, i) => i !== +btn.dataset.i); qaSaveTemplates(); render(); }
       else if (action === 'qa-tpl-reset') { state.qaTemplates = QA_DEFAULT_TEMPLATES.map(t => ({ ...t })); qaSaveTemplates(); render(); showToast('Default templates restored'); }
       else if (action === 'notif-filter') { state.notifyFilter = btn.dataset.filter; render(); }
@@ -319,7 +361,7 @@ const attachCardListeners = () => {
       else if (action === 'edit-release-pt') openReleasePtModal(cardId);
       else if (action === 'delete-release-pt') confirmDeleteReleasePt(cardId);
       else if (action === 'toggle-checklist-item') {
-        if (e.target.closest('.rp-item-ticket') || e.target.closest('.rp-item-dev') || e.target.closest('.rp-item-edit-btn') || e.target.closest('.editing')) {
+        if (e.target.closest('.rp-item-ticket') || e.target.closest('.rp-copy-ticket-btn') || e.target.closest('.rp-item-dev') || e.target.closest('.rp-item-status') || e.target.closest('.rp-item-edit-btn') || e.target.closest('.editing')) {
           return;
         }
         const rpId = btn.dataset.rpId;
@@ -352,6 +394,8 @@ const attachCardListeners = () => {
               item.text = textVal;
               item.ticket = ticketVal;
               item.developerId = devVal;
+              const mk = ticketVal.match(/\/browse\/([A-Z][A-Z0-9_]*-\d+)/i) || ticketVal.match(/\b([A-Z][A-Z0-9_]+-\d+)\b/i);
+              if (mk) item.jiraKey = mk[1].toUpperCase();
               rp.updatedAt = new Date().toISOString();
               await storage.save();
               showToast('Checklist item updated!');

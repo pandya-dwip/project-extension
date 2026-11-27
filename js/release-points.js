@@ -42,6 +42,81 @@ const rpMiniRing = (pct, complete) => {
     </span>`;
 };
 
+// Resolve ticket status and status category for a checklist item (Jira cache, tasks, or item properties)
+const rpItemTicketStatus = (item) => {
+  if (!item) return null;
+  const raw = String(item.jiraKey || item.ticket || '').trim();
+  let key = item.jiraKey ? String(item.jiraKey).toUpperCase() : '';
+  if (!key && raw) {
+    const m = raw.match(/\/browse\/([A-Z][A-Z0-9_]*-\d+)/i) || raw.match(/\b([A-Z][A-Z0-9_]+-\d+)\b/i);
+    if (m) key = m[1].toUpperCase();
+    else if (!raw.includes('/') && !raw.includes(' ') && /^[A-Z][A-Z0-9_]*-\d+$/i.test(raw)) key = raw.toUpperCase();
+  }
+
+  // 1. Check live Jira cache in state.jiraSync
+  if (state.jiraSync && (key || item.jiraIssueId)) {
+    for (const rec of state.jiraSync) {
+      const iss = (rec.issues || []).find(i =>
+        (key && i.key && i.key.toUpperCase() === key) ||
+        (item.jiraIssueId && String(i.id) === String(item.jiraIssueId))
+      );
+      if (iss && iss.status) {
+        const cat = typeof jiraCategoryOf === 'function' ? jiraCategoryOf(rec, iss.statusId, iss.status) : (iss.statusCategory || '');
+        return { status: iss.status, category: cat };
+      }
+    }
+  }
+
+  // 2. Check item stored Jira status (if imported or stored)
+  if (item.jiraStatus) {
+    const cat = item.jiraStatusCategory || (typeof jiraAutoCategory === 'function' ? jiraAutoCategory(item.jiraStatus) : '');
+    return { status: item.jiraStatus, category: cat };
+  }
+
+  // 3. Check tasks (e.g. QA ticket verification tasks)
+  if (key && state.tasks) {
+    for (const t of state.tasks) {
+      if (t.autoQa) {
+        const out = t.autoQa.outcomes && t.autoQa.outcomes[key];
+        if (out) {
+          if (out.result === 'verified') return { status: 'Verified', category: 'done' };
+          if (out.result === 'reopened') return { status: 'Reopened', category: 'reopen' };
+          if (out.result === 'still_open') return { status: 'Still open', category: 'inprogress' };
+        }
+        const tick = (t.autoQa.tickets || []).find(x => x.key && x.key.toUpperCase() === key);
+        if (tick && tick.status) {
+          const cat = typeof jiraAutoCategory === 'function' ? jiraAutoCategory(tick.status) : '';
+          return { status: tick.status, category: cat };
+        }
+      }
+    }
+  }
+
+  return null;
+};
+
+const rpStatusColor = (cat, statusName = '') => {
+  if (typeof JIRA_CATS !== 'undefined') {
+    const found = JIRA_CATS.find(c => c.key === cat);
+    if (found) return found.color;
+  }
+  if (cat === 'done') return 'var(--accent)';
+  if (cat === 'qa') return 'var(--info)';
+  if (cat === 'inprogress' || cat === 'indeterminate') return 'var(--warning)';
+  if (cat === 'inreview') return 'var(--indigo)';
+  if (cat === 'reopen') return 'var(--jd-reopen, #db2777)';
+  if (cat === 'todo' || cat === 'new') return 'var(--status-planned, #64748b)';
+  if (statusName) {
+    const s = statusName.toLowerCase();
+    if (s.includes('done') || s.includes('closed') || s.includes('resolved') || s.includes('verified')) return 'var(--accent)';
+    if (s.includes('qa') || s.includes('test') || s.includes('rfqa')) return 'var(--info)';
+    if (s.includes('progress') || s.includes('dev') || s.includes('doing')) return 'var(--warning)';
+    if (s.includes('review')) return 'var(--indigo)';
+    if (s.includes('reopen')) return 'var(--jd-reopen, #db2777)';
+  }
+  return 'var(--text-muted)';
+};
+
 const renderRpChecklistItems = (rp) => {
   const renderTicketInline = (ticket) => {
     if (!ticket) return '';
@@ -57,10 +132,15 @@ const renderRpChecklistItems = (rp) => {
       display = segments.length ? decodeURIComponent(segments[segments.length - 1]) : url.hostname.replace('www.', '');
     } catch (e) { /* keep raw */ }
     return `
-      <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="rp-item-ticket link" title="View Ticket: ${escapeHtml(t)}">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
-        <span>${escapeHtml(display)}</span>
-      </a>`;
+      <span class="rp-item-ticket-wrap" style="display:inline-flex;align-items:center;gap:2px;">
+        <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="rp-item-ticket link" title="View Ticket: ${escapeHtml(t)}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
+          <span>${escapeHtml(display)}</span>
+        </a>
+        <button type="button" class="icon-btn rp-copy-ticket-btn" data-action="jira-copy-ticket" data-url="${escapeHtml(href)}" data-key="${escapeHtml(display)}" title="Copy ticket link" style="width:16px;height:16px;padding:0;display:inline-flex;align-items:center;justify-content:center;color:var(--text-muted);border:none;background:transparent;cursor:pointer;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:10px;height:10px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        </button>
+      </span>`;
   };
 
   return (rp.checklistItems || []).map(item => {
@@ -94,6 +174,12 @@ const renderRpChecklistItems = (rp) => {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
         <span>${escapeHtml(assigneeName)}</span>
       </span>` : '';
+    const ticketStatus = rpItemTicketStatus(item);
+    const statusHtml = ticketStatus ? `
+      <span class="rp-item-status" style="--c:${rpStatusColor(ticketStatus.category, ticketStatus.status)}" title="Ticket status: ${escapeHtml(ticketStatus.status)}">
+        <span class="rp-item-status-dot"></span>
+        <span>${escapeHtml(ticketStatus.status)}</span>
+      </span>` : '';
     return `
       <div class="rp-checklist-item ${item.done ? 'done' : ''}" data-action="toggle-checklist-item" data-rp-id="${rp.id}" data-item-id="${item.id}" role="checkbox" aria-checked="${item.done ? 'true' : 'false'}" tabindex="0">
         <div class="rp-check-circle">
@@ -101,7 +187,7 @@ const renderRpChecklistItems = (rp) => {
         </div>
         <div class="rp-checklist-item-content">
           <span class="rp-checklist-item-text">${escapeHtml(item.text)}</span>
-          ${(ticketHtml || devHtml) ? `<div class="rp-checklist-item-meta">${ticketHtml}${devHtml}</div>` : ''}
+          ${(ticketHtml || devHtml || statusHtml) ? `<div class="rp-checklist-item-meta">${ticketHtml}${devHtml}${statusHtml}</div>` : ''}
         </div>
         <button class="rp-item-edit-btn" data-action="edit-checklist-item-inline" data-rp-id="${rp.id}" data-item-id="${item.id}" aria-label="Edit item" title="Edit item">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -189,8 +275,13 @@ const renderReleasePoints = () => {
   const overallPct = totalChecks ? Math.round(doneChecks / totalChecks * 100) : 0;
 
   // Filters. Search also looks inside checklist items (text, ticket, Jira key) and opens matches.
-  const itemMatches = (rp) => (rp.checklistItems || []).some(i =>
-    (i.text || '').toLowerCase().includes(q) || (i.ticket || '').toLowerCase().includes(q) || (i.jiraKey || '').toLowerCase().includes(q));
+  const itemMatches = (rp) => (rp.checklistItems || []).some(i => {
+    const st = rpItemTicketStatus(i);
+    return (i.text || '').toLowerCase().includes(q) ||
+      (i.ticket || '').toLowerCase().includes(q) ||
+      (i.jiraKey || '').toLowerCase().includes(q) ||
+      (st && st.status.toLowerCase().includes(q));
+  });
   let list = rps.filter(rp => {
     if (q && !(
       (rp.title || '').toLowerCase().includes(q) ||
@@ -640,6 +731,13 @@ const renderChecklistEditor = () => {
     const devOptions = `<option value="">${item.jiraAssignee ? `Jira: ${escapeHtml(item.jiraAssignee)}` : '— Assignee —'}</option>` +
       filteredDevs.map(d => `<option value="${d.id}" ${item.developerId === d.id ? 'selected' : ''}>${d.name}</option>`).join('');
 
+    const st = rpItemTicketStatus(item);
+    const statusHtml = st ? `
+      <span class="rp-item-status" style="--c:${rpStatusColor(st.category, st.status)}" title="Status: ${escapeHtml(st.status)}">
+        <span class="rp-item-status-dot"></span>
+        <span>${escapeHtml(st.status)}</span>
+      </span>` : '';
+
     return `
       <div class="rp-checklist-row" data-cl-idx="${idx}">
         <div class="rp-cl-fields">
@@ -649,6 +747,7 @@ const renderChecklistEditor = () => {
             <select class="rp-cl-developer" data-idx="${idx}">
               ${devOptions}
             </select>
+            ${statusHtml}
           </div>
         </div>
         <button type="button" class="rp-checklist-remove-btn" data-idx="${idx}" aria-label="Remove item" title="Remove item">

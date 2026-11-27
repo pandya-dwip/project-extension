@@ -716,7 +716,8 @@ const importSelectedJiraIssues = () => {
     const dev = issue.assignee ? state.developers.find(d => (d.name || '').trim().toLowerCase() === issue.assignee.trim().toLowerCase()) : null;
     rpChecklistItems.push({
       id: uid(), text: issue.summary, ticket: issue.url, developerId: dev ? dev.id : '', done: false,
-      jiraKey: issue.key, jiraIssueId: issue.id, jiraAssignee: issue.assignee || ''
+      jiraKey: issue.key, jiraIssueId: issue.id, jiraAssignee: issue.assignee || '',
+      jiraStatus: issue.status || '', jiraStatusCategory: issue.statusCategory || ''
     });
     existing.add(key);
     added++;

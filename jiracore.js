@@ -480,19 +480,41 @@ const jiraQaTickets = (task) => (task.autoQa && task.autoQa.tickets && task.auto
   : ((task.autoQa && task.autoQa.keys) || []).map(key => ({ key, summary: '', assignee: '', readyAt: '', url: '' }));
 const jiraQaOutcome = (task, key) => (task.autoQa && task.autoQa.outcomes && task.autoQa.outcomes[key]) || null;
 
-const jiraQaRecord = (data, task, key, result, by, note = '') => {
-  if (jiraQaOutcome(task, key)) return false;
+const jiraQaRecord = (data, task, key, result, by, note = '', images = []) => {
+  const prev = jiraQaOutcome(task, key);
+  if (prev && prev.result !== 'still_open' && prev.result === result) return false;
   const now = new Date().toISOString();
-  task.autoQa = { ...task.autoQa, outcomes: { ...(task.autoQa.outcomes || {}), [key]: { result, at: now, by, note } } };
-  const line = `${result === 'verified' ? '✓' : '↺'} ${key} — ${result === 'verified' ? 'Verified and closed' : 'Reopened'}${by === 'jira' ? ' in Jira' : ''} · ${jiraFmt(Date.now())}${note ? `\n   ${note}` : ''}`;
+  task.autoQa = { ...task.autoQa, outcomes: { ...(task.autoQa.outcomes || {}), [key]: { result, at: now, by, note, images } } };
+  let icon = '✓';
+  let label = 'Verified and closed';
+  if (result === 'reopened') {
+    icon = '↺';
+    label = 'Reopened';
+  } else if (result === 'still_open') {
+    icon = '⏳';
+    label = 'Still open (In Progress)';
+  }
+  const imgNote = images && images.length ? ` [${images.length} screenshot${images.length === 1 ? '' : 's'} attached]` : '';
+  const line = `${icon} ${key} — ${label}${by === 'jira' ? ' in Jira' : ''} · ${jiraFmt(Date.now())}${note ? `\n   ${note}` : ''}${imgNote}`;
   task.workDone = task.workDone ? `${task.workDone}\n${line}` : line;
+  if (result === 'still_open') {
+    task.status = 'In Progress';
+    task.completedDate = null;
+  }
   task.updatedAt = now;
   return true;
 };
 
 const jiraQaMaybeComplete = (data, task) => {
   const tickets = jiraQaTickets(task);
-  if (!tickets.length || task.status === 'Done' || !tickets.every(t => jiraQaOutcome(task, t.key))) return false;
+  if (!tickets.length || task.status === 'Done') return false;
+  const outcomes = tickets.map(t => jiraQaOutcome(task, t.key));
+  if (!outcomes.every(Boolean)) return false;
+  if (outcomes.some(o => o.result === 'still_open')) {
+    task.status = 'In Progress';
+    task.completedDate = null;
+    return false;
+  }
   const now = new Date().toISOString();
   task.status = 'Done';
   task.completedDate = now;
@@ -526,6 +548,7 @@ const jiraQaReconcile = (data) => {
 const QA_TEMPLATES_KEY = 'clairQaTemplates';
 const QA_DEFAULT_TEMPLATES = [
   { id: 'verified-default', name: 'Verified and closed', kind: 'verified', text: 'Verified the fix for {key} — {summary}.\n\n- Tested the reported scenario; it now works as expected.\n- Checked the related flows for regressions.\n\n**QA verification completed and ticket closed.**' },
+  { id: 'stillopen-default', name: 'Still open — checkpoints remaining', kind: 'still_open', text: 'Tested {key} — {summary}.\n\nPartially verified, but some checkpoints are still remaining:\n- Verified: \n- Still Remaining: \n\nTicket is kept In Progress for developer to address remaining items.' },
   { id: 'reopen-default', name: 'Reopen — still failing', kind: 'reopen', text: 'Reopening {key} — the issue still occurs.\n\n- Steps: \n- Expected: \n- Actual: \n\nPlease fix and move it back to Ready for QA.' }
 ];
 const qaFillTemplate = (text, vars) => String(text || '').replace(/\{(key|summary|developer|project|date)\}/g, (m, k) => vars[k] != null ? vars[k] : m);

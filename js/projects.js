@@ -615,7 +615,19 @@ const renderProjectOverview = () => {
       : verPair('Version', p.previousVersion, p.upcomingVersion || p.version)}
         ${metaItem('Created', p.createdAt ? fmtDate(p.createdAt) : '—')}
         ${metaItem('Last Updated', p.updatedAt ? timeAgo(p.updatedAt) : '—')}
-        ${p.jira ? metaItem('Jira Project', `${esc(p.jira.projectKey)} · ${esc(p.jira.projectName)}`) : ''}
+        ${p.jira ? metaItem('Jira Project', `
+          <div style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <span>${esc(p.jira.projectKey)} · ${esc(p.jira.projectName)}</span>
+            <span style="display:inline-flex;align-items:center;gap:3px;">
+              <button type="button" class="icon-btn" data-action="jira-copy-ticket" data-url="${esc(`${p.jira.site}/browse/${p.jira.projectKey}`)}" data-key="${esc(p.jira.projectKey)}" title="Copy Jira project link" style="width:20px;height:20px;padding:0;display:inline-flex;align-items:center;justify-content:center;color:var(--text-muted);">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+              </button>
+              <a class="icon-btn" href="${esc(`${p.jira.site}/browse/${p.jira.projectKey}`)}" target="_blank" rel="noopener noreferrer" title="Open in Jira" style="width:20px;height:20px;padding:0;display:inline-flex;align-items:center;justify-content:center;color:var(--text-muted);">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px;"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>
+              </a>
+            </span>
+          </div>
+        `) : ''}
       </div>
     </section>`;
 

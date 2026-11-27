@@ -73,6 +73,19 @@ const render = () => {
     }
   }
 
+  let taskColumnScrollTops = state.tasksKanbanColumnScrollTops || {};
+  if (state.view === 'tasks') {
+    taskColumnScrollTops = {};
+    document.querySelectorAll('.tk-board .kanban-column').forEach(col => {
+      const status = col.dataset.status;
+      const tasksEl = col.querySelector('.kanban-tasks');
+      if (status && tasksEl) {
+        taskColumnScrollTops[status] = tasksEl.scrollTop;
+      }
+    });
+    state.tasksKanbanColumnScrollTops = taskColumnScrollTops;
+  }
+
   switch (state.view) {
     case 'dashboard': ct.innerHTML = renderDashboard(); initWeeklyChart(); break;
     case 'projects': ct.innerHTML = state.overviewProjectId ? renderProjectOverview() : renderProjects(); break;
@@ -106,9 +119,17 @@ const render = () => {
     }
   }
 
-  if (state.view === 'testcases' || state.view === 'releasepoints') {
-    if (ct) ct.scrollTop = scrollPos;
+  if (state.view === 'tasks') {
+    document.querySelectorAll('.tk-board .kanban-column').forEach(col => {
+      const status = col.dataset.status;
+      const tasksEl = col.querySelector('.kanban-tasks');
+      if (status && tasksEl && taskColumnScrollTops[status] !== undefined) {
+        tasksEl.scrollTop = taskColumnScrollTops[status];
+      }
+    });
   }
+
+  if (ct) ct.scrollTop = scrollPos;
   if (state.view === 'testcases') {
     const textareas = document.querySelectorAll('.table-inline-textarea');
     textareas.forEach(ta => {

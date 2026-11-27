@@ -192,7 +192,7 @@ const ClairJira = (() => {
     const jql = `project = ${jqlString(projectKey)}${filter} ORDER BY created DESC`;
     let data;
     try {
-      data = await request(cfg, '/rest/api/3/search/jql', { jql, fields: 'summary,assignee', maxResults: 50, nextPageToken });
+      data = await request(cfg, '/rest/api/3/search/jql', { jql, fields: 'summary,assignee,status', maxResults: 50, nextPageToken });
     } catch (e) {
       // A well-formed key that doesn't exist (or isn't visible) is "no results", not an error.
       if (e.status === 400 && filter.startsWith(' AND key')) return { site: cfg.site, issues: [], nextPageToken: null };
@@ -206,6 +206,8 @@ const ClairJira = (() => {
         key: i.key,
         summary: (i.fields && i.fields.summary) || '(no summary)',
         assignee: (i.fields && i.fields.assignee && i.fields.assignee.displayName) || '',
+        status: (i.fields && i.fields.status && i.fields.status.name) || '',
+        statusCategory: (i.fields && i.fields.status && i.fields.status.statusCategory && i.fields.status.statusCategory.key) || '',
         url: `${cfg.site}/browse/${i.key}`
       })),
       nextPageToken: data.isLast === false && data.nextPageToken ? data.nextPageToken : null
@@ -391,6 +393,37 @@ const ClairJira = (() => {
     return compactComment(await request(cfg, `${issuePath(key)}/comment`, {}, { method: 'POST', body: { body: toAdf(text) } }));
   };
 
+  const addAttachment = async (key, fileBlob, filename = 'screenshot.png') => {
+    const cfg = await requireConfig();
+    const url = new URL(`${cfg.site}${issuePath(key)}/attachments`);
+    const formData = new FormData();
+    formData.append('file', fileBlob, filename);
+    const headers = {
+      Authorization: `Basic ${b64(`${cfg.email}:${cfg.token}`)}`,
+      Accept: 'application/json',
+      'X-Atlassian-Token': 'no-check'
+    };
+    try {
+      const res = await fetch(url.toString(), {
+        method: 'POST',
+        credentials: 'omit',
+        cache: 'no-store',
+        headers,
+        body: formData
+      });
+      if (!res.ok) {
+        let err = '';
+        try { err = await res.text(); } catch (e) {}
+        console.warn('Failed to upload attachment to Jira:', res.status, err);
+        return null;
+      }
+      return await res.json();
+    } catch (e) {
+      console.warn('Attachment upload failed:', e);
+      return null;
+    }
+  };
+
   // All comments, oldest first, following startAt pagination.
   const getComments = async (key) => {
     const cfg = await requireConfig();
@@ -465,5 +498,5 @@ const ClairJira = (() => {
     return (data.comments || []).map(compactComment);
   };
 
-  return { searchUpdated, getRecentHistory, getRecentComments, JIRA_KEY, normalizeSite, getPublicConfig, saveConfig, testConnection, disconnect, listProjects, searchIssues, fetchAllIssues, getProjectStatuses, getIssue, getTransitions, doTransition, addComment, getComments, getStatusChanges, toAdf, adfPlain: (text) => adfText(toAdf(text)) };
+  return { searchUpdated, getRecentHistory, getRecentComments, JIRA_KEY, normalizeSite, getPublicConfig, saveConfig, testConnection, disconnect, listProjects, searchIssues, fetchAllIssues, getProjectStatuses, getIssue, getTransitions, doTransition, addComment, addAttachment, getComments, getStatusChanges, toAdf, adfPlain: (text) => adfText(toAdf(text)) };
 })();
